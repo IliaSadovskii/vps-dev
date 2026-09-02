@@ -8,9 +8,12 @@
     state: present
 
 - name: Ansible {{ pull_ansible_version }}
+  # --include-deps: сам пакет ansible объявляет только ansible-community,
+  # а ansible-playbook и ansible-galaxy лежат в его зависимости ansible-core —
+  # без флага pipx не вывел бы их в {{ pull_pipx_bin }}.
   ansible.builtin.command:
-    cmd: "pipx install ansible=={{ pull_ansible_version }}"
-    creates: "{{ pull_pipx_home }}/venvs/ansible"
+    cmd: "pipx install --include-deps --force ansible=={{ pull_ansible_version }}"
+    creates: "{{ pull_pipx_bin }}/ansible-playbook"
   environment:
     PIPX_HOME: "{{ pull_pipx_home }}"
     PIPX_BIN_DIR: "{{ pull_pipx_bin }}"
