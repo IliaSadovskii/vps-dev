@@ -102,19 +102,44 @@
     group: "{{ base_deploy_user }}"
     mode: '0755'
 
-- name: Настройки по умолчанию — один раз
-  # force: false — только если файла ещё нет. Дальше им владеет aoe:
-  # настройки из TUI и веб-панели пишутся сюда, затирать их нельзя.
-  ansible.builtin.template:
-    src: "{{ item }}.j2"
-    dest: "/home/{{ base_deploy_user }}/.config/agent-of-empires/{{ item }}"
+# Файлами настроек владеет сам aoe: TUI и веб-панель пишут в них при каждом
+# сохранении и держат все ключи. Поэтому не шаблон целиком, а правка ровно
+# двух строк — остальное остаётся как выставил человек.
+
+- name: Раздел [session] в config.toml есть
+  ansible.builtin.lineinfile:
+    path: "/home/{{ base_deploy_user }}/.config/agent-of-empires/config.toml"
+    regexp: '^\[session\]\s*$'
+    line: "[session]"
+    create: true
     owner: "{{ base_deploy_user }}"
     group: "{{ base_deploy_user }}"
     mode: '0644'
-    force: false
-  loop:
-    - config.toml
-    - state.toml
+
+- name: Агент для новых сессий — первый из dev_agent_clis
+  ansible.builtin.lineinfile:
+    path: "/home/{{ base_deploy_user }}/.config/agent-of-empires/config.toml"
+    regexp: '^default_tool\s*='
+    line: 'default_tool = "{{ dev_agent_clis[0] | default("claude") }}"'
+    insertafter: '^\[session\]\s*$'
+    owner: "{{ base_deploy_user }}"
+    group: "{{ base_deploy_user }}"
+    mode: '0644'
+
+- name: Обзор папок в диалоге новой сессии начинается с {{ base_projects_dir }}
+  # last_browse_dir — служебная запись aoe (state.toml), обычно её пишет сам
+  # диалог после первого выбора; на новой машине выбирать ещё нечего, и без
+  # неё обзор начинался бы из домашнего каталога. Ключ верхнего уровня —
+  # кладём в начало файла, до любых [секций].
+  ansible.builtin.lineinfile:
+    path: "/home/{{ base_deploy_user }}/.config/agent-of-empires/state.toml"
+    regexp: '^last_browse_dir\s*='
+    line: 'last_browse_dir = "{{ base_projects_dir }}"'
+    insertbefore: BOF
+    create: true
+    owner: "{{ base_deploy_user }}"
+    group: "{{ base_deploy_user }}"
+    mode: '0644'
 
 - name: Веб-панель
   when: aoe_web_enabled
