@@ -1,4 +1,23 @@
-# Всё, что инвентарь знает, но машиной не является.
-# Пока пусто: реестр машин лежит в servers.yml в корне репозитория.
+# Управляющая машина — та, с которой запускается настройка.
+#
+# Здесь это контейнер с Ansible: домашнего каталога пользователя в нём нет
+# (/etc/passwd смонтирован с хоста, а /home — нет), поэтому временные файлы
+# кладём во /tmp. Задавать это глобально нельзя — на сервере домашние
+# каталоги есть, а общий /tmp там создал бы каталог с правами root, куда
+# потом не запишется задача от dev.
+#
+# Сюда попадают задачи с delegate_to: localhost — проверка нашего ключа
+# в roles/base/tasks/user.yml и проверка входа в verify-access.yml. Без
+# этого файла первый же прогон падал в CI с «Failed to create temporary
+# directory /home/runner/.ansible/tmp».
+#
+# Реестр самих машин — servers.yml в корне репозитория.
+
 all:
-  vars: {}
+  children:
+    local:
+      hosts:
+        localhost:
+          ansible_connection: local
+          ansible_remote_tmp: /tmp/.ansible-tmp
+          ansible_python_interpreter: "{{ ansible_playbook_python }}"
