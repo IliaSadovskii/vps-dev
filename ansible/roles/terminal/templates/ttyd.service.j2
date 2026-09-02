@@ -1,0 +1,21 @@
+# Управляется Ansible: roles/terminal/templates/ttyd.service.j2
+[Unit]
+Description=Терминал в браузере (ttyd) в каталоге проектов
+After=network-online.target
+
+[Service]
+Type=simple
+# Тот же пользователь, что у Kandev и aoe: общий $HOME, общий вход в CLI
+# агентов — то, что залогинили здесь, увидят и доска, и чат.
+User={{ base_deploy_user }}
+WorkingDirectory={{ terminal_cwd }}
+# Только loopback: в частную сеть отдаёт ports-web с TLS на том же порту.
+# -W — можно печатать (по умолчанию ttyd только показывает).
+# Команда: одна общая tmux-сессия «console» — все вкладки видят одно и то же,
+# и она переживает закрытие браузера.
+ExecStart={{ terminal_install_dir }}/ttyd -i 127.0.0.1 -p {{ terminal_port }} -W -w {{ terminal_cwd }} -t titleFixed=dev-vps -t fontSize=14 tmux new -A -s console
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,7 @@
+# Заготовка от Ansible: roles/aoe/templates/config.toml.j2.
+# Кладётся один раз, дальше файлом владеет сам aoe (настройки в TUI по «s»
+# и в веб-панели пишут сюда) — повторный прогон его не трогает.
+
+[session]
+# Агент для новых сессий — первый из списка dev_agent_clis в servers.yml.
+default_tool = "{{ dev_agent_clis[0] | default('claude') }}"

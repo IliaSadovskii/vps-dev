@@ -35,9 +35,11 @@ dnsname="$(tailscale status --json 2>/dev/null | grep -m1 '"DNSName"' | cut -d'"
 [[ -n "$dnsname" ]] || { echo "ports-web: tailscale не в сети, выхожу" >&2; exit 0; }
 
 # --- инфра-сервисы (не в реестре проектов) ---
-declare -A INFRA_LABEL=( [8060]="Dozzle" [8061]="DbGate" [$DASH_PORT]="Дашборд" [8064]="Kandev" [8065]="Agent of Empires" )
+declare -A INFRA_LABEL=( [8060]="Dozzle" [8061]="DbGate" [$DASH_PORT]="Дашборд" [8064]="Kandev" [8065]="Agent of Empires"
+                         [8066]="Терминал" [8067]="Файлы" )
 declare -A INFRA_DESC=( [8060]="логи docker-контейнеров" [8061]="клиент баз данных" [$DASH_PORT]="эта страница"
-                        [8064]="доска задач для агентов" [8065]="чат с агентом в браузере" )
+                        [8064]="доска задач для агентов" [8065]="чат с агентом в браузере"
+                        [8066]="консоль в /projects: клонировать, войти в CLI агента" [8067]="файлы проектов: посмотреть, скачать, загрузить" )
 
 # --- разбор реестра: порт → проект и порт → человекочитаемое имя сервиса ------
 declare -A PORT_PROJECT PORT_LABEL
@@ -272,10 +274,20 @@ cat <<HEAD
  .desc{opacity:.6;font-size:.88rem}
  .int{opacity:.45}
  .int .name{font-weight:500}
+ .warn{background:color-mix(in srgb,#f59e0b 18%,transparent);border:1px solid color-mix(in srgb,#f59e0b 50%,transparent);
+       border-radius:8px;padding:.6rem .9rem;margin:0 0 1.2rem;font-size:.9rem}
+ code{font-size:.9em}
 </style></head><body>
 <h1>Сервисы VPS</h1>
 <div class="sub">$dnsname · обновляется автоматически · порт = его же адрес в tailnet</div>
 HEAD
+# Машина просит перезагрузки после обновления ядра — сказать здесь, где
+# человек и так бывает, а не ждать, пока он заглянет в журнал прогона.
+if [[ -f /var/run/reboot-required ]]; then
+  cat <<WARN
+<div class="warn">⚠ Установлены обновления, машина просит перезагрузки. Когда удобно: в GitHub → Actions → «Сервер разработки» → режим <code>reboot</code>, либо <code>sudo reboot</code> в терминале.</div>
+WARN
+fi
 
 # порядок групп: инфраструктура первой, потом проекты по алфавиту, «без реестра» в конце
 groups="$(cut -d$'\x1f' -f2 <<<"$rows" | sort -u)"

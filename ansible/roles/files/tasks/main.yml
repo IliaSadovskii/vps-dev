@@ -1,0 +1,103 @@
+# File Browser — один статический бинарник с GitHub Releases, версия закреплена.
+
+- name: Имя архитектуры в имени файла релиза
+  ansible.builtin.set_fact:
+    files_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
+
+- name: Текущая установленная версия
+  ansible.builtin.command:
+    cmd: "{{ files_install_dir }}/filebrowser version"
+  register: files_current
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Нужна установка или обновление
+  # `filebrowser version` печатает «File Browser v2.63.23/e8a388f8».
+  ansible.builtin.set_fact:
+    files_needs_install: "{{ files_current.rc != 0 or ('v' ~ files_version ~ '/') not in files_current.stdout }}"
+
+- name: Сказать, что в сухом прогоне File Browser не скачивается
+  ansible.builtin.debug:
+    msg: "Сухой прогон: File Browser {{ files_version }} будет скачан и установлен в {{ files_install_dir }}."
+  when: files_needs_install and ansible_check_mode
+
+- name: Поставить File Browser {{ files_version }}
+  when: files_needs_install and not ansible_check_mode
+  block:
+    - name: Скачать архив релиза с проверкой контрольной суммы
+      ansible.builtin.get_url:
+        url: "https://github.com/filebrowser/filebrowser/releases/download/v{{ files_version }}/linux-{{ files_arch }}-filebrowser.tar.gz"
+        dest: "/tmp/filebrowser-{{ files_version }}-{{ files_arch }}.tar.gz"
+        checksum: "sha256:https://github.com/filebrowser/filebrowser/releases/download/v{{ files_version }}/filebrowser_{{ files_version }}_checksums.txt"
+        mode: '0644'
+      register: files_download
+
+    - name: Распаковать бинарник во временный каталог
+      # В архиве: filebrowser, README.md, LICENSE — берём только бинарник.
+      ansible.builtin.unarchive:
+        src: "{{ files_download.dest }}"
+        dest: /tmp
+        remote_src: true
+        include: [filebrowser]
+
+    - name: Поставить бинарник
+      ansible.builtin.copy:
+        src: /tmp/filebrowser
+        dest: "{{ files_install_dir }}/filebrowser"
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0755'
+      register: files_installed
+
+    - name: Убрать временные файлы
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ files_download.dest }}"
+        - /tmp/filebrowser
+
+- name: Каталог состояния
+  ansible.builtin.file:
+    path: "{{ files_state_dir }}"
+    state: directory
+    owner: "{{ base_deploy_user }}"
+    group: "{{ base_deploy_user }}"
+    mode: '0750'
+
+- name: Служба
+  ansible.builtin.template:
+    src: filebrowser.service.j2
+    dest: /etc/systemd/system/vps-dev-files.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: files_unit
+
+# Намеренно не обработчик: службу поднимает следующая задача, обработчик опоздал бы.
+- name: Перечитать systemd, если юнит изменился  # noqa: no-handler
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: files_unit.changed
+
+- name: Есть ли уже юнит
+  ansible.builtin.stat:
+    path: /etc/systemd/system/vps-dev-files.service
+  register: files_unit_exists
+  check_mode: false
+  # Только в сухом прогоне: на настоящем это лишний круг по SSH,
+  # а условия ниже без сухого прогона и так истинны.
+  when: ansible_check_mode
+
+- name: Служба включена и работает
+  ansible.builtin.systemd:
+    name: vps-dev-files
+    enabled: true
+    state: "{{ 'restarted' if (files_installed.changed | default(false) or files_unit.changed) else 'started' }}"
+  when: not (ansible_check_mode and not (files_unit_exists.stat.exists | default(false)))
+
+- name: Куда смотреть
+  ansible.builtin.debug:
+    msg: "Файлы: порт {{ files_port }} на дашборде https://<машина>.ts.net/ — корень {{ files_root }}."

@@ -92,6 +92,30 @@
         - "{{ aoe_download.dest }}"
         - "/tmp/aoe-linux-{{ aoe_arch }}"
 
+- name: Каталог настроек aoe
+  # Linux: $XDG_CONFIG_HOME/agent-of-empires, по умолчанию ~/.config/… —
+  # у пользователя, под которым работают и панель, и TUI.
+  ansible.builtin.file:
+    path: "/home/{{ base_deploy_user }}/.config/agent-of-empires"
+    state: directory
+    owner: "{{ base_deploy_user }}"
+    group: "{{ base_deploy_user }}"
+    mode: '0755'
+
+- name: Настройки по умолчанию — один раз
+  # force: false — только если файла ещё нет. Дальше им владеет aoe:
+  # настройки из TUI и веб-панели пишутся сюда, затирать их нельзя.
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/home/{{ base_deploy_user }}/.config/agent-of-empires/{{ item }}"
+    owner: "{{ base_deploy_user }}"
+    group: "{{ base_deploy_user }}"
+    mode: '0644'
+    force: false
+  loop:
+    - config.toml
+    - state.toml
+
 - name: Веб-панель
   when: aoe_web_enabled
   block:

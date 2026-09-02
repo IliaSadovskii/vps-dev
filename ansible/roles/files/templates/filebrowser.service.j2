@@ -1,0 +1,18 @@
+# Управляется Ansible: roles/files/templates/filebrowser.service.j2
+[Unit]
+Description=Файлы проектов в браузере (File Browser)
+After=network-online.target
+
+[Service]
+Type=simple
+# Тот же пользователь, что владеет /projects: файлы, созданные из браузера,
+# принадлежат ему же, а не root.
+User={{ base_deploy_user }}
+# Только loopback: в частную сеть отдаёт ports-web с TLS на том же порту.
+# --noauth: границу держит Tailscale, как у остальных служб машины.
+ExecStart={{ files_install_dir }}/filebrowser -a 127.0.0.1 -p {{ files_port }} -r {{ files_root }} -d {{ files_state_dir }}/filebrowser.db --noauth
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -27,6 +27,10 @@ server:
   # выключена (docs/run-as-a-service, «Network security»).
   host: 127.0.0.1
   port: {{ kandev_port }}
+  # Перед Kandev стоят tailscale serve и vps-proxy — оба на loopback.
+  # Их X-Forwarded-* Kandev принимает, только если прокси в этом списке.
+  trustedProxies:
+    - 127.0.0.1
 
 # Массив через переменные окружения зависит от Viper и ведёт себя не всегда
 # предсказуемо — сама документация Kandev рекомендует для него YAML
