@@ -1,0 +1,19 @@
+# Управляется Ansible: roles/monitor/templates/vps-dev-monitor-agent.service.j2
+[Unit]
+Description=Мониторинг машины и контейнеров (Beszel, агент)
+After=network-online.target vps-dev-monitor.service docker.service
+Wants=vps-dev-monitor.service
+
+[Service]
+Type=simple
+# Под {{ base_deploy_user }}: он в группе docker, отсюда статистика контейнеров.
+User={{ base_deploy_user }}
+# Хаб на этой же машине — его открытый ключ читаем прямо из его данных.
+Environment=KEY_FILE={{ monitor_state_dir }}/beszel_data/id_ed25519.pub
+Environment=LISTEN=127.0.0.1:{{ monitor_agent_port }}
+ExecStart={{ monitor_install_dir }}/beszel-agent
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

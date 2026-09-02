@@ -1,0 +1,47 @@
+# Ловушка почты — контейнер, как Dozzle и DbGate. См. defaults/main.yml.
+
+- name: Каталог с описанием контейнера
+  ansible.builtin.file:
+    path: "{{ mail_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Есть ли уже описание контейнера
+  ansible.builtin.stat:
+    path: "{{ mail_dir }}/compose.yaml"
+  register: mail_compose_exists
+  check_mode: false
+
+- name: Описание контейнера
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: "{{ mail_dir }}/compose.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+  register: mail_compose
+
+- name: Сказать, почему в сухом прогоне не поднимаю
+  ansible.builtin.debug:
+    msg:
+      - "Сухой прогон на ненастроенной машине: подъём пропускаю."
+      - "Описания контейнера ещё нет, а создавать его сухой прогон не должен."
+  when:
+    - ansible_check_mode
+    - not mail_compose_exists.stat.exists
+
+- name: Поднять
+  community.docker.docker_compose_v2:
+    project_src: "{{ mail_dir }}"
+    state: present
+    recreate: "{{ 'always' if mail_compose.changed else 'auto' }}"
+    pull: missing
+  when: not (ansible_check_mode and not mail_compose_exists.stat.exists)
+
+- name: Куда смотреть
+  ansible.builtin.debug:
+    msg:
+      - "Почта: порт {{ mail_port }} на дашборде https://<машина>.ts.net/."
+      - "Проектам: SMTP host.docker.internal:{{ mail_smtp_port }} (с хоста — 127.0.0.1:{{ mail_smtp_port }}), без логина и TLS."

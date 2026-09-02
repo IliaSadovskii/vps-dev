@@ -1,0 +1,20 @@
+# Управляется Ansible: roles/monitor/templates/vps-dev-monitor.service.j2
+[Unit]
+Description=Мониторинг машины и контейнеров (Beszel, хаб)
+After=network-online.target
+
+[Service]
+Type=simple
+User={{ base_deploy_user }}
+# Данные (база, ключ для агентов) хаб кладёт в beszel_data/ в рабочем каталоге.
+WorkingDirectory={{ monitor_state_dir }}
+# USER_EMAIL/USER_PASSWORD — первый пользователь, AUTO_LOGIN — без входа,
+# APP_URL — адрес в частной сети для ссылок. См. tasks/main.yml.
+EnvironmentFile={{ monitor_state_dir }}/hub.env
+# Только loopback: в частную сеть отдаёт ports-web с TLS на том же порту.
+ExecStart={{ monitor_install_dir }}/beszel serve --http 127.0.0.1:{{ monitor_port }}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

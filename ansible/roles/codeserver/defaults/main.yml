@@ -1,0 +1,13 @@
+# VS Code в браузере (code-server, MIT): редактор, файлы, терминал, git —
+# всё в одном окне. Рядом с ttyd и File Browser, а не вместо них: на телефоне
+# VS Code тесен, а простой терминал и крупный файловый менеджер удобнее.
+#
+# Пароля нет (--auth none): границу держит Tailscale, как у остальных служб.
+#
+# Релизы code-server контрольных сумм не публикуют — скачивается по HTTPS
+# с GitHub с закреплённой версией, это единственная гарантия.
+codeserver_version: "4.135.0"
+codeserver_install_dir: /opt/code-server
+# Порт из инфра-заповедника 8060-8069 (см. roles/ports/files/ports).
+codeserver_port: 8063
+codeserver_workspace: "{{ base_projects_dir }}"

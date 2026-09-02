@@ -1,0 +1,36 @@
+# Управляется Ansible: roles/mail/templates/compose.yaml.j2
+# Правки здесь переживут ровно до следующей выкатки.
+#
+# Ловушка почты для проектов. Веб-интерфейс — только loopback, в частную
+# сеть отдаёт ports-web. SMTP — loopback и адрес docker0, чтобы до него
+# достали контейнеры проектов (см. defaults/main.yml).
+
+name: vps-dev-mail
+
+services:
+  mailpit:
+    image: {{ mail_image }}
+    container_name: {{ mail_container_name }}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ mail_port }}:8025"
+      - "127.0.0.1:{{ mail_smtp_port }}:1025"
+      - "{{ mail_docker_gateway }}:{{ mail_smtp_port }}:1025"
+    volumes:
+      - {{ mail_volume }}:/data
+    environment:
+      MP_DATABASE: /data/mailpit.db
+      MP_MAX_MESSAGES: "{{ mail_max_messages }}"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: {{ mail_memory_limit }}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  {{ mail_volume }}:

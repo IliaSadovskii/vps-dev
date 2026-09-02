@@ -1,0 +1,20 @@
+# Ловушка почты (Mailpit): проекты шлют письма «в никуда», ты читаешь их
+# в браузере. Стандарт для разработки: ни один тестовый заказ не уйдёт
+# настоящему человеку, а письма видно сразу, с вложениями и HTML.
+mail_dir: /srv/vps-dev/mail
+# Версия закреплена — тот же смысл, что у logs_image и dbclient_image.
+mail_image: axllent/mailpit:v1.31.0
+mail_container_name: vps-dev-mail
+# Веб-интерфейс: порт из инфра-заповедника 8060-8069.
+mail_port: 8069
+# SMTP для проектов. Слушает loopback (для процессов на хосте) и адрес
+# docker0 — через него до хоста достают контейнеры любого compose-проекта:
+# в compose `extra_hosts: ["host.docker.internal:host-gateway"]`, и хост
+# почты — host.docker.internal:1025. Наружу не смотрит: адрес docker0
+# закрыт цепочкой DOCKER-USER (см. roles/firewall).
+mail_smtp_port: 1025
+mail_docker_gateway: 172.17.0.1
+mail_volume: vps-dev-mail-data
+mail_memory_limit: 128m
+# Сколько писем хранить: это ловушка, не архив.
+mail_max_messages: 1000

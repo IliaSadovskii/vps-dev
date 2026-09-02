@@ -1,0 +1,20 @@
+# Управляется Ansible: roles/codeserver/templates/code-server.service.j2
+[Unit]
+Description=VS Code в браузере (code-server)
+After=network-online.target
+
+[Service]
+Type=simple
+# Тот же пользователь, что у Kandev, aoe и терминала: общий $HOME, общий
+# вход в CLI агентов, файлы проектов принадлежат ему.
+User={{ base_deploy_user }}
+WorkingDirectory={{ codeserver_workspace }}
+# Только loopback: в частную сеть отдаёт ports-web с TLS на том же порту.
+# --auth none: границу держит Tailscale. --disable-workspace-trust: это
+# твоя машина, спрашивать «доверять ли папке» незачем.
+ExecStart={{ codeserver_install_dir }}/bin/code-server --bind-addr 127.0.0.1:{{ codeserver_port }} --auth none --disable-telemetry --disable-update-check --disable-workspace-trust {{ codeserver_workspace }}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

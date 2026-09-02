@@ -1,0 +1,101 @@
+# code-server — архив с GitHub Releases, версия закреплена.
+
+- name: Имя архитектуры в имени файла релиза
+  ansible.builtin.set_fact:
+    codeserver_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
+
+- name: Текущая установленная версия
+  ansible.builtin.command:
+    cmd: "{{ codeserver_install_dir }}/bin/code-server --version"
+  register: codeserver_current
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Нужна установка или обновление
+  # Первая строка вывода: «4.135.0 <хэш> with Code <версия>».
+  ansible.builtin.set_fact:
+    codeserver_needs_install: >-
+      {{ codeserver_current.rc != 0
+         or not codeserver_current.stdout.startswith(codeserver_version ~ ' ') }}
+
+- name: Сказать, что в сухом прогоне code-server не скачивается
+  ansible.builtin.debug:
+    msg: "Сухой прогон: code-server {{ codeserver_version }} будет скачан и установлен в {{ codeserver_install_dir }}."
+  when: codeserver_needs_install and ansible_check_mode
+
+- name: Поставить code-server {{ codeserver_version }}
+  when: codeserver_needs_install and not ansible_check_mode
+  block:
+    - name: Скачать архив релиза
+      ansible.builtin.get_url:
+        url: "https://github.com/coder/code-server/releases/download/v{{ codeserver_version }}/code-server-{{ codeserver_version }}-linux-{{ codeserver_arch }}.tar.gz"
+        dest: "/tmp/code-server-{{ codeserver_version }}.tar.gz"
+        mode: '0644'
+      register: codeserver_download
+
+    - name: Каталог версии
+      ansible.builtin.file:
+        path: "{{ codeserver_install_dir }}-{{ codeserver_version }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Распаковать
+      # В архиве один каталог code-server-<версия>-linux-<arch>/ — снимаем его.
+      ansible.builtin.unarchive:
+        src: "{{ codeserver_download.dest }}"
+        dest: "{{ codeserver_install_dir }}-{{ codeserver_version }}"
+        remote_src: true
+        extra_opts: [--strip-components=1]
+
+    - name: Переключить ссылку на новую версию
+      # Символьная ссылка, а не копирование: обновление — это смена ссылки,
+      # откат — смена обратно.
+      ansible.builtin.file:
+        src: "{{ codeserver_install_dir }}-{{ codeserver_version }}"
+        dest: "{{ codeserver_install_dir }}"
+        state: link
+        force: true
+      register: codeserver_installed
+
+    - name: Убрать архив
+      ansible.builtin.file:
+        path: "{{ codeserver_download.dest }}"
+        state: absent
+
+- name: Служба
+  ansible.builtin.template:
+    src: code-server.service.j2
+    dest: /etc/systemd/system/vps-dev-code.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: codeserver_unit
+
+# Намеренно не обработчик: службу поднимает следующая задача, обработчик опоздал бы.
+- name: Перечитать systemd, если юнит изменился  # noqa: no-handler
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: codeserver_unit.changed
+
+- name: Есть ли уже юнит
+  ansible.builtin.stat:
+    path: /etc/systemd/system/vps-dev-code.service
+  register: codeserver_unit_exists
+  check_mode: false
+  # Только в сухом прогоне: на настоящем это лишний круг по SSH,
+  # а условия ниже без сухого прогона и так истинны.
+  when: ansible_check_mode
+
+- name: Служба включена и работает
+  ansible.builtin.systemd:
+    name: vps-dev-code
+    enabled: true
+    state: "{{ 'restarted' if (codeserver_installed.changed | default(false) or codeserver_unit.changed) else 'started' }}"
+  when: not (ansible_check_mode and not (codeserver_unit_exists.stat.exists | default(false)))
+
+- name: Куда смотреть
+  ansible.builtin.debug:
+    msg: "VS Code: порт {{ codeserver_port }} на дашборде https://<машина>.ts.net/ — открывается в {{ codeserver_workspace }}."

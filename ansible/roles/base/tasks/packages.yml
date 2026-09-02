@@ -25,6 +25,8 @@
                           # здесь только пакет
       - fail2ban          # настраивается ниже, в fail2ban.yml
       - tmux              # нужен agent-of-empires: сессии агентов живут в tmux
+      - mosh              # SSH с телефона: переживает смену сети и сон устройства.
+                          # Порты UDP 60000-61000 открыты только на tailscale0
       - ca-certificates
     state: present
 

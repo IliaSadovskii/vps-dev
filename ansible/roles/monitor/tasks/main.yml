@@ -1,0 +1,187 @@
+# Beszel — хаб и агент, оба с GitHub Releases, версия закреплена, суммы
+# проверяются по файлу checksums из того же релиза.
+
+- name: Имя архитектуры в имени файла релиза
+  ansible.builtin.set_fact:
+    monitor_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
+
+- name: Текущая установленная версия хаба
+  ansible.builtin.command:
+    cmd: "{{ monitor_install_dir }}/beszel --version"
+  register: monitor_current
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Нужна установка или обновление
+  ansible.builtin.set_fact:
+    monitor_needs_install: "{{ monitor_current.rc != 0 or monitor_version not in monitor_current.stdout }}"
+
+- name: Сказать, что в сухом прогоне Beszel не скачивается
+  ansible.builtin.debug:
+    msg: "Сухой прогон: Beszel {{ monitor_version }} (хаб и агент) будет скачан и установлен."
+  when: monitor_needs_install and ansible_check_mode
+
+- name: Поставить Beszel {{ monitor_version }}
+  when: monitor_needs_install and not ansible_check_mode
+  block:
+    - name: Скачать хаб и агент с проверкой контрольных сумм
+      ansible.builtin.get_url:
+        url: "https://github.com/henrygd/beszel/releases/download/v{{ monitor_version }}/{{ item }}_linux_{{ monitor_arch }}.tar.gz"
+        dest: "/tmp/{{ item }}-{{ monitor_version }}.tar.gz"
+        checksum: "sha256:https://github.com/henrygd/beszel/releases/download/v{{ monitor_version }}/beszel_{{ monitor_version }}_checksums.txt"
+        mode: '0644'
+      loop: [beszel, beszel-agent]
+
+    - name: Распаковать бинарники
+      ansible.builtin.unarchive:
+        src: "/tmp/{{ item }}-{{ monitor_version }}.tar.gz"
+        dest: /tmp
+        remote_src: true
+        include: ["{{ item }}"]
+      loop: [beszel, beszel-agent]
+
+    - name: Поставить бинарники
+      ansible.builtin.copy:
+        src: "/tmp/{{ item }}"
+        dest: "{{ monitor_install_dir }}/{{ item }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0755'
+      loop: [beszel, beszel-agent]
+      register: monitor_installed
+
+    - name: Убрать временные файлы
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/beszel-{{ monitor_version }}.tar.gz
+        - /tmp/beszel-agent-{{ monitor_version }}.tar.gz
+        - /tmp/beszel
+        - /tmp/beszel-agent
+
+- name: Каталог состояния
+  ansible.builtin.file:
+    path: "{{ monitor_state_dir }}"
+    state: directory
+    owner: "{{ base_deploy_user }}"
+    group: "{{ base_deploy_user }}"
+    mode: '0750'
+
+- name: Имя машины в частной сети
+  # APP_URL хаба: без него ссылки в уведомлениях ведут на localhost.
+  ansible.builtin.shell:
+    cmd: set -o pipefail; tailscale status --json | jq -r '.Self.DNSName // empty' | sed 's/\.$//'
+    executable: /bin/bash
+  register: monitor_dnsname
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Файл окружения хаба — один раз
+  # Пароль первого пользователя генерируется здесь и живёт только в этом
+  # файле (читает root и служба). Вход в интерфейс отключён AUTO_LOGIN,
+  # пароль нужен лишь роли, чтобы зарегистрировать агента через API.
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      umask 077
+      pw="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)"
+      cat > {{ monitor_state_dir }}/hub.env <<ENV
+      USER_EMAIL={{ base_deploy_user }}@{{ inventory_hostname }}.local
+      USER_PASSWORD=${pw}
+      AUTO_LOGIN={{ base_deploy_user }}@{{ inventory_hostname }}.local
+      ENV
+      chown {{ base_deploy_user }}:{{ base_deploy_user }} {{ monitor_state_dir }}/hub.env
+    creates: "{{ monitor_state_dir }}/hub.env"
+    executable: /bin/bash
+
+- name: Адрес хаба в файле окружения
+  # Отдельной строкой, а не в блоке выше: имя машины в сети может появиться
+  # позже первого прогона, и строка должна обновиться.
+  ansible.builtin.lineinfile:
+    path: "{{ monitor_state_dir }}/hub.env"
+    regexp: '^APP_URL='
+    line: "APP_URL=https://{{ monitor_dnsname.stdout | trim }}:{{ monitor_port }}"
+  when: monitor_dnsname.rc == 0 and (monitor_dnsname.stdout | trim | length > 0)
+
+- name: Службы хаба и агента
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - vps-dev-monitor.service
+    - vps-dev-monitor-agent.service
+  register: monitor_units
+
+# Намеренно не обработчик: службы поднимает следующая задача, обработчик опоздал бы.
+- name: Перечитать systemd, если юниты изменились  # noqa: no-handler
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: monitor_units.changed
+
+- name: Есть ли уже юнит хаба
+  ansible.builtin.stat:
+    path: /etc/systemd/system/vps-dev-monitor.service
+  register: monitor_unit_exists
+  check_mode: false
+  # Только в сухом прогоне: на настоящем это лишний круг по SSH,
+  # а условия ниже без сухого прогона и так истинны.
+  when: ansible_check_mode
+
+- name: Хаб включён и работает
+  ansible.builtin.systemd:
+    name: vps-dev-monitor
+    enabled: true
+    state: "{{ 'restarted' if (monitor_installed.changed | default(false) or monitor_units.changed) else 'started' }}"
+  when: not (ansible_check_mode and not (monitor_unit_exists.stat.exists | default(false)))
+
+- name: Дождаться, пока хаб ответит и создаст ключ
+  ansible.builtin.wait_for:
+    path: "{{ monitor_state_dir }}/beszel_data/id_ed25519.pub"
+    timeout: 60
+  when: not ansible_check_mode
+
+- name: Агент включён и работает
+  # После хаба: агенту нужен его открытый ключ (KEY_FILE в юните).
+  ansible.builtin.systemd:
+    name: vps-dev-monitor-agent
+    enabled: true
+    state: "{{ 'restarted' if (monitor_installed.changed | default(false) or monitor_units.changed) else 'started' }}"
+  when: not (ansible_check_mode and not (monitor_unit_exists.stat.exists | default(false)))
+
+- name: Зарегистрировать эту машину в хабе
+  # Хаб опрашивает агентов по списку «систем»; без записи он не знает
+  # о собственной машине. Запись — через API хаба под первым пользователем
+  # из hub.env. Идемпотентно: есть запись с этим адресом — ничего не делаем.
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      . {{ monitor_state_dir }}/hub.env
+      api="http://127.0.0.1:{{ monitor_port }}/api"
+      for _ in $(seq 1 20); do curl -fs "$api/health" >/dev/null && break; sleep 1; done
+      auth="$(curl -fsS -X POST "$api/collections/users/auth-with-password" \
+        -H 'Content-Type: application/json' \
+        -d "{\"identity\":\"$USER_EMAIL\",\"password\":\"$USER_PASSWORD\"}")"
+      token="$(printf '%s' "$auth" | jq -r .token)"
+      user="$(printf '%s' "$auth" | jq -r .record.id)"
+      have="$(curl -fsS "$api/collections/systems/records?filter=host%3D%27127.0.0.1%27" \
+        -H "Authorization: $token" | jq -r .totalItems)"
+      if [ "$have" != "0" ]; then echo "already"; exit 0; fi
+      curl -fsS -X POST "$api/collections/systems/records" \
+        -H "Authorization: $token" -H 'Content-Type: application/json' \
+        -d "{\"name\":\"{{ inventory_hostname }}\",\"host\":\"127.0.0.1\",\"port\":\"{{ monitor_agent_port }}\",\"users\":[\"$user\"]}" >/dev/null
+      echo "registered"
+    executable: /bin/bash
+  register: monitor_register
+  changed_when: "'registered' in monitor_register.stdout"
+  when: not ansible_check_mode
+
+- name: Куда смотреть
+  ansible.builtin.debug:
+    msg: "Мониторинг: порт {{ monitor_port }} на дашборде https://<машина>.ts.net/ — без входа, границу держит Tailscale."
