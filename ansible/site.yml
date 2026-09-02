@@ -51,6 +51,25 @@
       when: ansible_user == "root"
       tags: [always, upgrade]
 
+    - name: Есть ли уже Docker
+      # Нужно ниже роли dockerd: в сухом прогоне на машине без Docker
+      # готовая geerlingguy.docker падает на группе docker, которой ещё нет,
+      # и обойти это изнутри чужой роли нельзя — только пропустить её целиком.
+      ansible.builtin.stat:
+        path: /usr/bin/dockerd
+      register: dev_dockerd
+      check_mode: false
+      tags: always
+
+    - name: Сказать, что в сухом прогоне Docker пропускается
+      ansible.builtin.debug:
+        msg: >-
+          Сухой прогон: Docker ещё не установлен — роль dockerd пропускаю.
+          Настоящий прогон поставит движок и запишет daemon.json
+          (см. roles/dockerd/defaults/main.yml).
+      when: ansible_check_mode and not dev_dockerd.stat.exists
+      tags: always
+
   roles:
     # ═══ Машина ══════════════════════════════════════════════════════════
 
@@ -103,6 +122,8 @@
     # Ansible передаёт переменные уровня роли и в её зависимости.
     - role: dockerd
       tags: [docker, dockerd]
+      # Сухой прогон на машине без Docker — см. pre_tasks «Есть ли уже Docker».
+      when: not (ansible_check_mode and not dev_dockerd.stat.exists)
       vars:
         docker_install_compose_plugin: true
         docker_install_compose: false
