@@ -21,6 +21,15 @@ agents_npm_packages:
   gemini: "@google/gemini-cli"
   opencode: "opencode-ai"
 
+# ACP-адаптеры для Agent of Empires: его «структурный вид» говорит с CLI
+# по протоколу ACP, и у Claude Code и Codex он живёт в отдельном npm-пакете
+# (`aoe acp doctor` показывает, какой). Gemini и OpenCode умеют ACP сами.
+# Ставим глобально под root, как и сами CLI: `npm -g` под dev в /usr/lib
+# не пишет, и без этого `aoe acp doctor --fix` упирался бы в EACCES.
+agents_acp_adapters:
+  claude: "@agentclientprotocol/claude-agent-acp"
+  codex: "@agentclientprotocol/codex-acp"
+
 # Версии пакетов НЕ закрепляем, в отличие от Kandev. У Kandev риск —
 # автомигрирующая база, которую нельзя откатить; у этих CLI локального
 # состояния с миграциями нет, а разработчик, наоборот, хочет свежую
