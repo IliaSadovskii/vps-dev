@@ -80,15 +80,19 @@ jobs:
       - name: Проверить, что секреты на месте
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+          # Два клиента OAuth, как у боевого сервера: одним раннер сам
+          # входит в сеть (tag:ci), другим выпускает машине ключ на один
+          # прогон (tag:server). Отзываются независимо.
           TS_ID: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
           TS_SECRET: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          TS_SERVER_ID: ${{ secrets.TAILSCALE_OAUTH_SERVER_CLIENT_ID }}
+          TS_SERVER_SECRET: ${{ secrets.TAILSCALE_OAUTH_SERVER_SECRET }}
           # Без него обвязка останавливается сама (scripts/lib.sh,
           # ensure_machine_secrets) — но здесь, а не в середине прогона.
           VPS_DEV_ROOT_PASSWORD: ${{ secrets.VPS_DEV_ROOT_PASSWORD }}
         run: |
           missing=0
-          for name in SSH_PRIVATE_KEY TAILSCALE_AUTHKEY TS_ID TS_SECRET VPS_DEV_ROOT_PASSWORD; do
+          for name in SSH_PRIVATE_KEY TS_ID TS_SECRET TS_SERVER_ID TS_SERVER_SECRET VPS_DEV_ROOT_PASSWORD; do
             [ -n "${!name}" ] || { echo "✖ не задан секрет $name"; missing=1; }
           done
           [ "$missing" -eq 0 ] || {
@@ -128,7 +132,8 @@ jobs:
         env:
           # Режим у кнопки называется так же, как цель make: расхождение имён
           # означало бы, что в одном месте надо помнить перевод в другое.
-          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+          TAILSCALE_OAUTH_SERVER_CLIENT_ID: ${{ secrets.TAILSCALE_OAUTH_SERVER_CLIENT_ID }}
+          TAILSCALE_OAUTH_SERVER_SECRET: ${{ secrets.TAILSCALE_OAUTH_SERVER_SECRET }}
           VPS_DEV_ROOT_PASSWORD: ${{ secrets.VPS_DEV_ROOT_PASSWORD }}
           VPS_DEV_NTFY_TOPIC: ${{ secrets.VPS_DEV_NTFY_TOPIC }}
           # Разовое доверие ключу новой машины. По умолчанию выключено:

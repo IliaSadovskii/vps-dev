@@ -23,7 +23,19 @@
 Нужна чистая **Ubuntu 24.04** и SSH-ключ у root.
 
 1. Форкни этот репозиторий и включи в форке Actions.
-2. Положи в секреты форка: ключ SSH, ключ Tailscale, пароль root.
+2. Положи в секреты форка (Settings → Secrets and variables → Actions):
+
+   | Секрет | Что это |
+   |---|---|
+   | `SSH_PRIVATE_KEY` | закрытый SSH-ключ; открытая половина — в `servers.yml` и у root новой машины |
+   | `TAILSCALE_OAUTH_CLIENT_ID`, `TAILSCALE_OAUTH_SECRET` | клиент OAuth с тегом `tag:ci`: им раннер входит в сеть на время прогона |
+   | `TAILSCALE_OAUTH_SERVER_CLIENT_ID`, `TAILSCALE_OAUTH_SERVER_SECRET` | клиент OAuth с тегом `tag:server` и правом `auth_keys` на запись: им машине выпускается ключ на один прогон |
+   | `VPS_DEV_ROOT_PASSWORD` | пароль root для веб-консоли провайдера |
+   | `VPS_DEV_NTFY_TOPIC` | имя топика уведомлений, любая строка |
+
+   В ACL Tailscale должны быть объявлены `tag:ci` и `tag:server`, `tag:ci`
+   и твои устройства должны иметь доступ к `tag:server`. В Settings → DNS
+   нужны MagicDNS и HTTPS Certificates: без них не поднимется дашборд.
 3. Actions → «Сервер разработки» → Run workflow: адрес машины, режим `apply`.
 4. Зайди на машину и один раз войди в каждый CLI агентов — браузером.
 
