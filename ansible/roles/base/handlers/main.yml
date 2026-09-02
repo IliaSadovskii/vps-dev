@@ -28,6 +28,11 @@
   ansible.builtin.systemd_service:
     name: fail2ban
     state: reloaded
+  # В сухом прогоне на свежей машине пакета ещё нет, а обработчик всё равно
+  # вызывается (geerlingguy.docker делает flush_handlers посреди прогона) —
+  # и падал бы на несуществующей службе. base_fail2ban_unit регистрирует
+  # tasks/fail2ban.yml.
+  when: not (ansible_check_mode and not (base_fail2ban_unit.stat.exists | default(false)))
 
 - name: Подключить новый файл подкачки при загрузке
   # fstab-запись нужна только на будущие перезагрузки: сам файл уже
