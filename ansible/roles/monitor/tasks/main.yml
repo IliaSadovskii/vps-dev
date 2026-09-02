@@ -141,10 +141,24 @@
     state: "{{ 'restarted' if (monitor_installed.changed | default(false) or monitor_units.changed) else 'started' }}"
   when: not (ansible_check_mode and not (monitor_unit_exists.stat.exists | default(false)))
 
-- name: Дождаться, пока хаб ответит и создаст ключ
+- name: Дождаться, пока хаб создаст ключ для агентов
+  # Хаб пишет только закрытую половину (id_ed25519); открытую, которую
+  # ждёт агент, выводим из неё сами задачей ниже.
   ansible.builtin.wait_for:
-    path: "{{ monitor_state_dir }}/beszel_data/id_ed25519.pub"
+    path: "{{ monitor_state_dir }}/beszel_data/id_ed25519"
     timeout: 60
+  when: not ansible_check_mode
+
+- name: Открытая половина ключа хаба — для агента
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail;
+      ssh-keygen -y -f {{ monitor_state_dir }}/beszel_data/id_ed25519
+      > {{ monitor_state_dir }}/beszel_data/id_ed25519.pub
+    creates: "{{ monitor_state_dir }}/beszel_data/id_ed25519.pub"
+    executable: /bin/bash
+  become: true
+  become_user: "{{ base_deploy_user }}"
   when: not ansible_check_mode
 
 - name: Агент включён и работает

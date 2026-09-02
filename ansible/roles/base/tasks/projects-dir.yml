@@ -75,7 +75,7 @@
       удали пустой {{ base_projects_dir }} и прогони настройку заново.
   when: base_projects_old_contents is not skipped
 
-- name: Убрать пустой каталог {{ base_projects_dir }}, чтобы поставить ссылку
+- name: Убрать пустой старый каталог, чтобы поставить ссылку {{ base_projects_dir }}
   ansible.builtin.command:
     cmd: "rmdir {{ base_projects_dir }}"
   when:
@@ -84,7 +84,7 @@
     - not base_projects_link_stat.stat.islnk
   changed_when: true
 
-- name: Ссылка {{ base_projects_dir }} → {{ base_projects_real_dir }}
+- name: Ссылка на настоящий каталог проектов — {{ base_projects_dir }}
   ansible.builtin.file:
     src: "{{ base_projects_real_dir }}"
     dest: "{{ base_projects_dir }}"
