@@ -39,14 +39,27 @@ ansible_run ansible-lint site.yml
 # обвязки могли уехать в main непроверенными, а единственным следом была
 # строка в журнале, которую никто не читает. Молчаливо пропущенная проверка
 # хуже отсутствующей: на неё рассчитывают.
+# Проверяем не только обвязку: роли кладут на машину bash-скрипты (ports,
+# ports-web — вместе больше, чем все scripts/*.sh), и они оставались вне
+# проверки. Ищем по shebang, а не списком: добавленный скрипт попадёт под
+# проверку сам, без правки этого файла. Шаблоны (*.j2) пропускаем — до
+# подстановки Jinja это не разбираемый bash.
+# Пути собираем от корня репозитория, а не глобом от текущего каталога:
+# иначе результат зависит от того, откуда позвали (из корня зовёт make, но
+# не обязан звать человек), а незаданный глоб уехал бы в shellcheck строкой.
+shell_files=()
+while IFS= read -r f; do
+    head -n1 "$f" | grep -qE '^#!.*(bash|sh)\b' && shell_files+=( "${f#"${ROOT_DIR}/"}" )
+done < <(find "${ROOT_DIR}/scripts" "${ROOT_DIR}/ansible" -type f ! -name '*.j2' | sort)
+
 if docker image inspect koalaman/shellcheck:stable >/dev/null 2>&1 \
    || docker pull -q koalaman/shellcheck:stable >/dev/null 2>&1; then
     echo ""
-    echo "→ Проверяю скрипты обвязки"
+    echo "→ Проверяю скрипты обвязки и скрипты ролей"
     docker run --rm -v "${ROOT_DIR}:/mnt" -w /mnt koalaman/shellcheck:stable \
         --external-sources --source-path=/mnt/scripts \
-        scripts/*.sh \
-        && echo "  без замечаний"
+        "${shell_files[@]}" \
+        && echo "  без замечаний (проверено файлов: ${#shell_files[@]})"
 elif [ -n "${CI:-}" ]; then
     echo ""
     echo "  ✖ shellcheck недоступен: образ koalaman/shellcheck:stable не достался."

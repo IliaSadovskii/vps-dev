@@ -18,7 +18,6 @@
 set -uo pipefail
 
 PORTS_DIR="${PORTS_DIR:-/var/lib/vps-dev/ports}"
-PROJECTS_DIR="/projects"
 
 # Диапазон раздачи и заповедники.
 LO=8010                            # ниже не раздаём: 8000-8009 оставлено под ручное/системное
@@ -177,7 +176,7 @@ cmd_map(){
     free+=("$b")
   done
   if (( ${#free[@]} )); then
-    printf "${c_c}Свободно:${c_0} %s-%s" "${free[0]}" "$(( ${free[0]}+9 ))"
+    printf "${c_c}Свободно:${c_0} %s-%s" "${free[0]}" "$(( free[0]+9 ))"
     (( ${#free[@]} > 1 )) && printf ", далее %s, %s…" "${free[1]}" "${free[2]:-}"
     echo
   else
