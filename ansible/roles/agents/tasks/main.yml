@@ -56,12 +56,26 @@
         name: nodejs
         state: present
 
+    - name: Есть ли уже npm
+      # Сухой прогон на свежей машине Node.js не ставит, а модуль npm
+      # спрашивает у самого npm, что установлено, — без него упал бы.
+      ansible.builtin.stat:
+        path: /usr/bin/npm
+      register: agents_npm_bin
+      check_mode: false
+
+    - name: Сказать, почему в сухом прогоне CLI не проверяются
+      ansible.builtin.debug:
+        msg: "Сухой прогон: npm ещё не установлен, проверку CLI агентов пропускаю."
+      when: ansible_check_mode and not agents_npm_bin.stat.exists
+
     - name: "CLI агентов: {{ dev_agent_clis | join(', ') }}"
       community.general.npm:
         name: "{{ agents_npm_packages[item] }}"
         global: true
         state: "{{ agents_npm_state }}"
       loop: "{{ dev_agent_clis }}"
+      when: not (ansible_check_mode and not agents_npm_bin.stat.exists)
 
     - name: Чеклист — куда войти человеку
       # Автоматизировать нельзя: свой OAuth в чужом коде запрещён условиями

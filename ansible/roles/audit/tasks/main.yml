@@ -38,6 +38,20 @@
     group: root
   notify: Перечитать правила журнала
 
+- name: Есть ли уже auditd на машине
+  # Сухой прогон на свежей машине пакет не ставит: без него нет ни файла
+  # настроек для задачи ниже, ни службы для последней. Пропускаем обе
+  # вслух, а не роняем прогон.
+  ansible.builtin.stat:
+    path: /etc/audit/auditd.conf
+  register: audit_conf
+  check_mode: false
+
+- name: Сказать, почему в сухом прогоне журнал действий не проверяется
+  ansible.builtin.debug:
+    msg: "Сухой прогон: auditd ещё не установлен, настройку размера и запуск службы пропускаю."
+  when: ansible_check_mode and not audit_conf.stat.exists
+
 - name: Размер журнала
   # Без предела журнал растёт, пока не кончится диск, и тогда auditd
   # по умолчанию останавливает систему. Предел и действие задаём явно.
@@ -55,9 +69,11 @@
     - { key: admin_space_left_action, value: SYSLOG }
     - { key: disk_full_action, value: SYSLOG }
   notify: Перезапустить журнал действий
+  when: not (ansible_check_mode and not audit_conf.stat.exists)
 
 - name: Служба журнала работает
   ansible.builtin.systemd_service:
     name: auditd
     state: started
     enabled: true
+  when: not (ansible_check_mode and not audit_conf.stat.exists)

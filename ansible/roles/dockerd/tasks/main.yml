@@ -75,7 +75,11 @@
   ansible.builtin.systemd:
     name: docker
     state: restarted
-  when: dockerd_daemon_json_write is changed
+  # В сухом прогоне на свежей машине движка ещё нет, и systemd не умеет
+  # перезапускать то, чего нет.
+  when:
+    - dockerd_daemon_json_write is changed
+    - not (ansible_check_mode and dockerd_service_before.status.LoadState | default('') != 'loaded')
 
 - name: Найти контейнеры, всё ещё слушающие 0.0.0.0
   # Адрес, на котором публикуется порт, контейнер выбирает при СВОЁМ старте,

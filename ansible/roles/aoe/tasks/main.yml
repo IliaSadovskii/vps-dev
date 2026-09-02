@@ -45,8 +45,15 @@
   ansible.builtin.set_fact:
     aoe_needs_install: "{{ aoe_current.rc != 0 or (aoe_version | regex_replace('^v', '')) not in aoe_current.stdout }}"
 
+- name: Сказать, что в сухом прогоне aoe не скачивается
+  # Архив не скачан — распаковывать нечего, и unarchive упал бы на
+  # отсутствующем файле. Говорим, что будет сделано, и идём дальше.
+  ansible.builtin.debug:
+    msg: "Сухой прогон: aoe {{ aoe_version }} будет скачан и установлен в {{ aoe_install_dir }}."
+  when: aoe_needs_install and ansible_check_mode
+
 - name: Поставить aoe {{ aoe_version }}
-  when: aoe_needs_install
+  when: aoe_needs_install and not ansible_check_mode
   block:
 
     - name: Скачать архив релиза с проверкой контрольной суммы
@@ -104,6 +111,14 @@
         daemon_reload: true
       when: aoe_web_unit.changed
 
+    - name: Есть ли уже юнит веб-панели
+      # Сухой прогон файл юнита не создаёт, а systemd не умеет включать то,
+      # чего нет. На настроенной машине юнит на месте.
+      ansible.builtin.stat:
+        path: /etc/systemd/system/aoe-web.service
+      register: aoe_web_unit_exists
+      check_mode: false
+
     - name: Веб-панель включена и работает
       # restarted — если сменился бинарник или юнит, иначе просто started:
       # рестарт ради рестарта на каждом прогоне сбрасывал бы сессии агентов.
@@ -111,6 +126,7 @@
         name: aoe-web
         enabled: true
         state: "{{ 'restarted' if (aoe_installed.changed | default(false) or aoe_web_unit.changed) else 'started' }}"
+      when: not (ansible_check_mode and not aoe_web_unit_exists.stat.exists)
 
     - name: Куда смотреть
       ansible.builtin.debug:

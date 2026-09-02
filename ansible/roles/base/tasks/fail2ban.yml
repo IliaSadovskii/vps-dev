@@ -14,8 +14,18 @@
     group: root
   notify: Перечитать fail2ban
 
+- name: Есть ли уже служба fail2ban
+  # Сухой прогон на свежей машине пакет не ставит, а systemd не умеет
+  # проверять службу, которой нет, — задача ниже упала бы. На настроенной
+  # машине служба на месте, и здесь всё проверяется как обычно.
+  ansible.builtin.stat:
+    path: /usr/lib/systemd/system/fail2ban.service
+  register: base_fail2ban_unit
+  check_mode: false
+
 - name: Служба fail2ban включена
   ansible.builtin.systemd_service:
     name: fail2ban
     state: started
     enabled: true
+  when: not (ansible_check_mode and not base_fail2ban_unit.stat.exists)

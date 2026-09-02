@@ -137,11 +137,20 @@
     daemon_reload: true
   when: ports_web_service_unit.changed or ports_web_timer_unit.changed
 
+- name: Есть ли уже таймер дашборда
+  # Сухой прогон файл юнита не создаёт, а systemd не умеет включать то,
+  # чего нет. На настроенной машине таймер на месте.
+  ansible.builtin.stat:
+    path: /etc/systemd/system/ports-web.timer
+  register: ports_web_timer_exists
+  check_mode: false
+
 - name: Включить и запустить таймер дашборда
   ansible.builtin.systemd:
     name: ports-web.timer
     enabled: true
     state: started
+  when: not (ansible_check_mode and not ports_web_timer_exists.stat.exists)
 
 - name: Первый прогон ports-web
   # Не ждать до минуты таймера: сразу разложить serve и сгенерить страницу,
