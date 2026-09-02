@@ -238,7 +238,7 @@ secrets_env_lines() {
 #
 # Секреты доезжают файлом на tmpfs (/dev/shm) с правами 0600, через stdin
 # SSH, и стираются до запуска playbook: в аргументах команды и в `ps`
-# их нет. Открытая половина ключа обвязки передаётся переменной — она
+# их нет. Тем же файлом едет открытая половина ключа обвязки — она
 # и так публична, а роль base по ней проверяет, что не стирает наш ключ.
 # Относительно домашнего каталога dev на машине — и для rsync, и для cd.
 readonly PULL_SRC='.vps-dev/src'
@@ -274,12 +274,15 @@ ansible_pull_run() {
     # оболочки: имена машин, метки и -e без пробелов, но %q не даст
     # ошибиться, если что-то появится.
     local args="" a
-    for a in "$@" "-e" "dev_pull_mode=true" "-e" "dev_control_pubkey=${pubkey}"; do
+    for a in "$@" "-e" "dev_pull_mode=true"; do
         args+=" $(printf '%q' "$a")"
     done
 
+    # Открытая половина ключа — тем же файлом окружения: в ней пробел,
+    # а через аргументы удалённой команды он не переживает двух оболочек.
     # shellcheck disable=SC2086,SC2029  # флаги должны разбиться на слова; подстановки — намеренно здесь
-    secrets_env_lines | ssh $opts "dev@${addr}" "umask 077; cat > ${env_remote}" \
+    { secrets_env_lines; printf 'DEV_CONTROL_PUBKEY=%s\n' "$pubkey"; } \
+        | ssh $opts "dev@${addr}" "umask 077; cat > ${env_remote}" \
         || die "Не смог передать секреты на ${name}"
 
     # Файл окружения читается и тут же стирается — до запуска playbook.

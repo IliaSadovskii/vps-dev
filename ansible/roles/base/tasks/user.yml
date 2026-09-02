@@ -99,13 +99,14 @@
   when: not (dev_pull_mode | default(false) | bool)
 
 - name: Открытая половина ключа обвязки — когда прогон идёт на самой машине
-  # В pull-режиме (см. scripts/run-playbook.sh) закрытого ключа на машине
-  # нет — обвязка присылает открытую половину переменной dev_control_pubkey.
-  # Форма та же, что у задачи выше, чтобы проверка ниже не менялась.
+  # В pull-режиме (см. scripts/lib.sh, ansible_pull_run) закрытого ключа
+  # на машине нет — обвязка присылает открытую половину в окружении,
+  # DEV_CONTROL_PUBKEY. Форма та же, что у задачи выше, чтобы проверка
+  # ниже не менялась.
   ansible.builtin.set_fact:
     base_current_pubkey:
-      rc: "{{ 0 if (dev_control_pubkey | default('') | trim | length > 0) else 1 }}"
-      stdout: "{{ dev_control_pubkey | default('') | trim }}"
+      rc: "{{ 0 if (lookup('env', 'DEV_CONTROL_PUBKEY') | trim | length > 0) else 1 }}"
+      stdout: "{{ lookup('env', 'DEV_CONTROL_PUBKEY') | trim }}"
   when: dev_pull_mode | default(false) | bool
 
 - name: Открытые половины из списка, без подписей
