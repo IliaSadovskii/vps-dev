@@ -56,6 +56,32 @@
         name: nodejs
         state: present
 
+    - name: Репозиторий GitHub CLI
+      # gh нужен и агентам (PR, issues из CLI), и Kandev: один из его
+      # способов входа в GitHub — «взять логин из gh auth». Сам Kandev gh
+      # не ставит. Файл тот же, что кладёт инструкция GitHub, только
+      # модулем, а не curl | sh.
+      ansible.builtin.deb822_repository:
+        name: github-cli
+        types: deb
+        uris: "https://cli.github.com/packages"
+        suites: stable
+        components: main
+        architectures: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
+        signed_by: "https://cli.github.com/packages/githubcli-archive-keyring.gpg"
+      register: agents_gh_repo
+
+    # Намеренно не обработчик: пакет ставится следующей задачей.
+    - name: Перечитать индекс apt, если репозиторий gh только что появился  # noqa: no-handler
+      ansible.builtin.apt:
+        update_cache: true
+      when: agents_gh_repo.changed
+
+    - name: GitHub CLI
+      ansible.builtin.apt:
+        name: gh
+        state: present
+
     - name: Есть ли уже npm
       # Сухой прогон на свежей машине Node.js не ставит, а модуль npm
       # спрашивает у самого npm, что установлено, — без него упал бы.
@@ -86,4 +112,4 @@
       ansible.builtin.debug:
         msg: >-
           Войти в {{ item }}: {{ agents_login_commands[item] }}
-      loop: "{{ dev_agent_clis }}"
+      loop: "{{ dev_agent_clis + ['gh'] }}"

@@ -41,6 +41,7 @@ agents_npm_state: latest
 #               (github.com/google-gemini/gemini-cli)
 #   opencode -> `opencode auth login`             (opencode.ai/docs/cli)
 agents_login_commands:
+  gh: "gh auth login   # GitHub: нужен агентам для PR и Kandev для входа «через gh»"
   claude: "claude auth login"
   codex: "codex   # в меню выбрать «Sign in with ChatGPT»"
   gemini: "gemini   # в меню выбрать «Sign in with Google»"

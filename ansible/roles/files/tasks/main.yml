@@ -100,4 +100,4 @@
 
 - name: Куда смотреть
   ansible.builtin.debug:
-    msg: "Файлы: порт {{ files_port }} на дашборде https://<машина>.ts.net/ — корень {{ files_root }}."
+    msg: "Файлы: порт {{ files_port }} на дашборде https://<машина>.ts.net/ — открывается в {{ base_projects_dir }}, корень {{ files_root }}."

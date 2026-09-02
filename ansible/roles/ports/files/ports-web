@@ -39,7 +39,9 @@ declare -A INFRA_LABEL=( [8060]="Dozzle" [8061]="DbGate" [$DASH_PORT]="Дашб�
                          [8066]="Терминал" [8067]="Файлы" )
 declare -A INFRA_DESC=( [8060]="логи docker-контейнеров" [8061]="клиент баз данных" [$DASH_PORT]="эта страница"
                         [8064]="доска задач для агентов" [8065]="чат с агентом в браузере"
-                        [8066]="консоль в /projects: клонировать, войти в CLI агента" [8067]="файлы проектов: посмотреть, скачать, загрузить" )
+                        [8066]="консоль в /projects: клонировать, войти в CLI агента" [8067]="файлы всей машины, открывается в /projects" )
+# Куда ведёт ссылка, если не в корень службы.
+declare -A INFRA_PATH=( [8067]="/files/projects" )
 
 # --- разбор реестра: порт → проект и порт → человекочитаемое имя сервиса ------
 declare -A PORT_PROJECT PORT_LABEL
@@ -301,8 +303,8 @@ while IFS= read -r g; do
     [[ "$group" == "$g" ]] || continue
     ename="$(printf '%s' "$name" | esc)"; edesc="$(printf '%s' "$desc" | esc)"
     if [[ "$web" == 1 ]]; then
-      printf '  <div class="row"><span class="port">%s</span><a href="https://%s:%s/">%s</a><span class="desc">%s</span></div>\n' \
-        "$p" "$dnsname" "$p" "$ename" "$edesc"
+      printf '  <div class="row"><span class="port">%s</span><a href="https://%s:%s%s">%s</a><span class="desc">%s</span></div>\n' \
+        "$p" "$dnsname" "$p" "${INFRA_PATH[$p]:-/}" "$ename" "$edesc"
     else
       printf '  <div class="row int"><span class="port">%s</span><span class="name">%s</span><span class="desc">%s</span></div>\n' \
         "$p" "$ename" "$edesc"
