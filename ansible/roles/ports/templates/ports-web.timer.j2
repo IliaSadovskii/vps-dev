@@ -1,0 +1,14 @@
+# Управляется Ansible: roles/ports/templates/ports-web.timer.j2
+#
+# Раз в минуту: поднял новый проект — он сам появится и в tailnet,
+# и на дашборде, без ручного шага.
+[Unit]
+Description=Обновлять раскладку tailnet и дашборд сервисов
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=20s
+
+[Install]
+WantedBy=timers.target

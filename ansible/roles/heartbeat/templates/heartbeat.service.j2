@@ -1,0 +1,9 @@
+# Управляется Ansible: roles/heartbeat/templates/heartbeat.service.j2
+[Unit]
+Description=Проверка машины и уведомление через ntfy при беде
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/vps-dev-heartbeat

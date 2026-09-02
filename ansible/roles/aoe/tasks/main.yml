@@ -1,0 +1,131 @@
+# Agent of Empires — установка официальным релизным архивом и (опционально)
+# служба веб-панели. TUI не служба: это `aoe`, который человек запускает
+# сам по SSH, когда нужно поговорить с агентом.
+
+- name: Проверить, что tmux установлен
+  # Обязательная зависимость aoe. Её ставит роль base — этот прогон обычно
+  # уже после неё, но если кто-то запустил только тег aoe в обход base,
+  # лучше сказать явно, чем упасть глубоко внутри aoe непонятной ошибкой.
+  ansible.builtin.command:
+    cmd: tmux -V
+  register: aoe_tmux
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Предупредить, если tmux не найден
+  ansible.builtin.debug:
+    msg:
+      - "tmux не найден — aoe без него не запустится (обязательная зависимость)."
+      - "Его ставит роль base. Прогони site.yml по порядку, без пропуска тегов."
+  when: aoe_tmux.rc != 0
+
+- name: Архитектура поддержана официальными сборками aoe
+  ansible.builtin.assert:
+    that: ansible_architecture in ['x86_64', 'aarch64']
+    fail_msg: >-
+      aoe публикует бинарники только для amd64 и arm64
+      (github.com/agent-of-empires/agent-of-empires/releases). Здесь:
+      {{ ansible_architecture }}.
+
+- name: Имя архитектуры в имени файла релиза
+  ansible.builtin.set_fact:
+    aoe_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
+
+- name: Текущая установленная версия
+  ansible.builtin.command:
+    cmd: "{{ aoe_install_dir }}/aoe --version"
+  register: aoe_current
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Нужна установка или обновление
+  # `aoe --version` печатает "aoe 1.15.2", без "v" — сравниваем без него.
+  ansible.builtin.set_fact:
+    aoe_needs_install: "{{ aoe_current.rc != 0 or (aoe_version | regex_replace('^v', '')) not in aoe_current.stdout }}"
+
+- name: Поставить aoe {{ aoe_version }}
+  when: aoe_needs_install
+  block:
+
+    - name: Скачать архив релиза с проверкой контрольной суммы
+      # checksum: sha256:<url файла .sha256> — тот же файл, который
+      # публикует релиз рядом с архивом; get_url сам его читает и сверяет.
+      ansible.builtin.get_url:
+        url: "https://github.com/agent-of-empires/agent-of-empires/releases/download/{{ aoe_version }}/aoe-linux-{{ aoe_arch }}.tar.gz"
+        dest: "/tmp/aoe-{{ aoe_version }}-linux-{{ aoe_arch }}.tar.gz"
+        checksum: "sha256:https://github.com/agent-of-empires/agent-of-empires/releases/download/{{ aoe_version }}/aoe-linux-{{ aoe_arch }}.tar.gz.sha256"
+        mode: '0644'
+      register: aoe_download
+
+    - name: Распаковать во временный каталог
+      # Внутри архива — один файл aoe-linux-<arch>, без обёртки каталогом
+      # (проверено распаковкой релиза при подготовке роли).
+      ansible.builtin.unarchive:
+        src: "{{ aoe_download.dest }}"
+        dest: /tmp
+        remote_src: true
+
+    - name: Поставить бинарник
+      ansible.builtin.copy:
+        src: "/tmp/aoe-linux-{{ aoe_arch }}"
+        dest: "{{ aoe_install_dir }}/aoe"
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0755'
+      register: aoe_installed
+
+    - name: Убрать временные файлы
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ aoe_download.dest }}"
+        - "/tmp/aoe-linux-{{ aoe_arch }}"
+
+- name: Веб-панель
+  when: aoe_web_enabled
+  block:
+
+    - name: Служба веб-панели
+      ansible.builtin.template:
+        src: aoe-web.service.j2
+        dest: /etc/systemd/system/aoe-web.service
+        owner: root
+        group: root
+        mode: '0644'
+      register: aoe_web_unit
+
+    # Намеренно не обработчик: службу поднимает следующая задача, обработчик опоздал бы.
+    - name: Перечитать systemd, если юнит изменился  # noqa: no-handler
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: aoe_web_unit.changed
+
+    - name: Веб-панель включена и работает
+      # restarted — если сменился бинарник или юнит, иначе просто started:
+      # рестарт ради рестарта на каждом прогоне сбрасывал бы сессии агентов.
+      ansible.builtin.systemd:
+        name: aoe-web
+        enabled: true
+        state: "{{ 'restarted' if (aoe_installed.changed | default(false) or aoe_web_unit.changed) else 'started' }}"
+
+    - name: Куда смотреть
+      ansible.builtin.debug:
+        msg: >-
+          Веб-панель aoe: http://127.0.0.1:{{ aoe_web_port }} — только
+          из частной сети, наружу отдаёт ports-web. Ссылка с токеном входа
+          печатается в `journalctl -u aoe-web` при каждом старте службы.
+
+- name: Веб-панель выключена
+  ansible.builtin.debug:
+    msg: "aoe_web_enabled: false — веб-панель aoe не поднимаю, доступ только через TUI по SSH."
+  when: not aoe_web_enabled
+
+- name: TUI
+  ansible.builtin.debug:
+    msg: >-
+      TUI: команда `aoe` по SSH. Сессии — те же CLI агентов и тот же вход,
+      что видит Kandev (общий $HOME пользователя {{ base_deploy_user }}).

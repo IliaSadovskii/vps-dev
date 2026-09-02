@@ -1,0 +1,106 @@
+# dockerd — дополнение к geerlingguy.docker (ставится как её зависимость,
+# см. meta/main.yml, и потому гарантированно отрабатывает уже после неё):
+# то, чего готовая роль не делает.
+#
+# Перенесено из /home/dev/vps/setup-dev.sh (step_docker), где это было
+# опробовано и объяснено. daemon.json пишет только эта роль (почему —
+# см. defaults/main.yml): читаем то, что уже лежит на диске, и ДОПИСЫВАЕМ
+# к нему dockerd_daemon_extra, не трогая чужие ключи, — так повторный
+# прогон ничего не меняет, а ключ, добавленный руками, не пропадает.
+
+- name: Каталог настроек Docker
+  # geerlingguy.docker создаёт его только когда сама пишет daemon.json,
+  # а мы ей этого не поручаем.
+  ansible.builtin.file:
+    path: /etc/docker
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Есть ли уже daemon.json
+  ansible.builtin.stat:
+    path: /etc/docker/daemon.json
+  register: dockerd_daemon_json_stat
+  check_mode: false
+
+- name: Прочитать текущий daemon.json
+  ansible.builtin.slurp:
+    src: /etc/docker/daemon.json
+  register: dockerd_daemon_json_raw
+  when: dockerd_daemon_json_stat.stat.exists
+  check_mode: false
+
+- name: Разобрать текущий daemon.json (пусто, если файла ещё нет)
+  ansible.builtin.set_fact:
+    dockerd_daemon_json_current: >-
+      {{ (dockerd_daemon_json_raw.content | b64decode | from_json)
+         if dockerd_daemon_json_stat.stat.exists else {} }}
+
+- name: Узнать, работает ли Docker прямо сейчас
+  # Не меняет состояние — только читает его через systemctl show. Нужно,
+  # чтобы решить, требуется ли ниже dockerd --validate перед перезапуском:
+  # правим конфиг уже работающего движка, а не только что поставленного.
+  ansible.builtin.systemd:
+    name: docker
+  register: dockerd_service_before
+  check_mode: false
+
+- name: Собрать daemon.json = то, что уже на диске + наши ключи
+  ansible.builtin.set_fact:
+    dockerd_daemon_json_merged: "{{ dockerd_daemon_json_current | combine(dockerd_daemon_extra, recursive=True) }}"
+
+- name: Записать дополненный daemon.json
+  ansible.builtin.copy:
+    content: "{{ dockerd_daemon_json_merged | to_nice_json(indent=2) }}\n"
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+  register: dockerd_daemon_json_write
+
+# Намеренно не обработчик: проверка обязана идти ДО перезапуска, а обработчик ничего не гейтит.
+- name: Проверить новый конфиг перед перезапуском (dockerd --validate)  # noqa: no-handler
+  # Пишем ДО перезапуска: если конфиг битый, а мы уже дёрнули systemctl
+  # restart, движок останется мёртвым и разом уронит все проекты на машине.
+  # dockerd читает daemon.json только при старте — просто перезапустить
+  # и понадеяться мало, файл нужно проверить заранее.
+  ansible.builtin.command:
+    cmd: dockerd --validate --config-file /etc/docker/daemon.json
+  changed_when: false
+  when: dockerd_daemon_json_write is changed
+
+# Намеренно не обработчик: перезапуск в конце прогона дёрнул бы контейнеры, поднятые ролями ниже.
+- name: Перезапустить Docker, чтобы новый daemon.json подхватился  # noqa: no-handler
+  ansible.builtin.systemd:
+    name: docker
+    state: restarted
+  when: dockerd_daemon_json_write is changed
+
+- name: Найти контейнеры, всё ещё слушающие 0.0.0.0
+  # Адрес, на котором публикуется порт, контейнер выбирает при СВОЁМ старте,
+  # а не при старте демона — перезапуск docker его не переподключает.
+  # Контейнеры, поднятые до правки daemon.json, продолжат слушать 0.0.0.0,
+  # пока их не пересоздадут явно: сам конфиг они не подхватят.
+  ansible.builtin.shell:
+    cmd: >
+      set -o pipefail;
+      docker ps --format '{% raw %}{{.Names}}\t{{.Ports}}{% endraw %}' 2>/dev/null
+      | grep -F '0.0.0.0:' | cut -f1 || true
+    executable: /bin/bash
+  register: dockerd_stale_containers
+  changed_when: false
+  when:
+    - dockerd_daemon_json_write is changed
+    - dockerd_service_before.status.ActiveState | default('') == 'active'
+
+- name: Предупредить про контейнеры со старой привязкой портов
+  ansible.builtin.debug:
+    msg:
+      - "Эти контейнеры подняты до правки daemon.json и всё ещё слушают 0.0.0.0 —"
+      - "сам конфиг они не подхватят, пересоздай их явно (в каталоге проекта:"
+      - "docker compose up -d --force-recreate):"
+      - "{{ dockerd_stale_containers.stdout_lines }}"
+  when:
+    - dockerd_stale_containers is defined and dockerd_stale_containers is not skipped
+    - dockerd_stale_containers.stdout | default('') | trim | length > 0

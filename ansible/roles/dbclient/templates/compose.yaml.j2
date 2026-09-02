@@ -1,0 +1,43 @@
+# Управляется Ansible: roles/dbclient/templates/compose.yaml.j2
+# Правки здесь переживут ровно до следующей выкатки.
+#
+# DbGate — веб-клиент баз данных. Одна морда на все базы всех проектов
+# вместо клиента в каждом контейнере отдельно.
+#
+# Порты баз проектов наружу не публикуются и не должны: контракт машины
+# запрещает открывать наружу что бы то ни было, включая порт БД внутри
+# докера. Вместо этого клиент подключают (см. tasks/main.yml) к
+# docker-сетям, где живут базы проектов, и он достаёт до них по ИМЕНИ
+# КОНТЕЙНЕРА — ни одного порта наружу открывать не надо.
+#
+# Имя контейнера здесь зафиксировано явно (container_name), а не отдано
+# на волю compose: задача подключения к чужим сетям находит клиента
+# по этому имени.
+
+name: vps-dev-dbclient
+
+services:
+  dbgate:
+    image: {{ dbclient_image }}
+    container_name: {{ dbclient_container_name }}
+    restart: unless-stopped
+    ports:
+      # Только адрес частной сети — то же самое решение и та же гонка
+      # с Tailscale при перезагрузке, что и в roles/logs.
+      - "{{ dbclient_tailscale_address }}:{{ dbclient_port }}:3000"
+    volumes:
+      # Сохранённые подключения переживают пересоздание контейнера.
+      - {{ dbclient_volume }}:/root/.dbgate
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: {{ dbclient_memory_limit }}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  {{ dbclient_volume }}:

@@ -1,0 +1,58 @@
+# Основа сервера разработки. Одна тема — один файл: через год настройка
+# fail2ban ищется в fail2ban.yml, а не грепом по общему сценарию.
+#
+# Порядок принципиален и его нельзя менять:
+#   1. Завести пользователя, дать ему ключи и sudo.
+#   2. Убедиться, что под ним реально можно войти (пока root ещё открыт).
+#   3. Только теперь закрывать вход под root — отступать уже некуда.
+#   4. Переключиться самим на нового пользователя — дальше root не нужен.
+#   5. Всё остальное (пакеты, своп, fail2ban, каталог проектов).
+# Переставить местами — значит один раз рискнуть остаться снаружи без
+# доступа к машине вообще.
+
+- name: Пользователь для работы
+  ansible.builtin.import_tasks: user.yml
+  tags: [base, user]
+
+# Между выдачей ключей и закрытием входа под root. Порядок принципиален:
+# сначала убеждаемся, что новая дверь открывается, потом заколачиваем
+# старую — не наоборот.
+- name: Проверить, что новый доступ работает
+  ansible.builtin.import_tasks: verify-access.yml
+  tags: [base, ssh, verify]
+
+- name: Укрепление SSH
+  ansible.builtin.import_tasks: ssh.yml
+  tags: [base, ssh]
+
+# Дальше работаем уже под {{ base_deploy_user }}. Пользователь заведён
+# и его вход проверен двумя шагами выше, так что переключаться безопасно —
+# и переключаемся заранее, не дожидаясь перезапуска sshd (он произойдёт
+# позже, обработчиком в конце всего прогона, см. handlers/main.yml).
+- name: Дальше работаем под {{ base_deploy_user }}
+  ansible.builtin.set_fact:
+    ansible_user: "{{ base_deploy_user }}"
+  when: ansible_user == "root"
+  tags: [base, ssh]
+
+- name: Переподключиться под новым пользователем
+  # Соединение под root надо разорвать явно: без этого Ansible держит его
+  # открытым и продолжает работать через уже неактуальную дверь. Работало
+  # бы до первого обрыва связи — то есть до самого неудобного момента.
+  ansible.builtin.meta: reset_connection
+
+- name: Пакеты и таймзона
+  ansible.builtin.import_tasks: packages.yml
+  tags: [base, packages]
+
+- name: Fail2ban
+  ansible.builtin.import_tasks: fail2ban.yml
+  tags: [base, fail2ban]
+
+- name: Файл подкачки
+  ansible.builtin.import_tasks: swap.yml
+  tags: [base, swap]
+
+- name: Каталог проектов
+  ansible.builtin.import_tasks: projects-dir.yml
+  tags: [base, projects]

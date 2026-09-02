@@ -1,0 +1,15 @@
+# Управляется Ansible: roles/kandev/templates/kandev-backup.timer.j2
+[Unit]
+Description=Снимок базы Kandev — раз в сутки
+
+[Timer]
+OnCalendar=*-*-* {{ kandev_backup_hour }}:00:00
+# Не все снимки ровно в 03:00: машина в парке не одна, и одновременный
+# VACUUM INTO у всех — источник ненужной нагрузки строго по будильнику.
+RandomizedDelaySec=20m
+# Пропущенный из-за выключенной машины прогон не теряется, а наверстывается
+# при следующей загрузке.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,21 @@
+# fail2ban для sshd.
+#
+# Обоснование мягких порогов — в defaults/main.yml, дословно из старого
+# setup-server.sh: вход только по ключу, поэтому перебор пароля невозможен
+# в принципе, а жёсткие пороги с эскалацией срока раньше приводили
+# к самобану владельца при входе с динамического IP.
+
+- name: Настройки fail2ban для sshd
+  ansible.builtin.template:
+    src: jail.local.j2
+    dest: /etc/fail2ban/jail.local
+    mode: '0644'
+    owner: root
+    group: root
+  notify: Перечитать fail2ban
+
+- name: Служба fail2ban включена
+  ansible.builtin.systemd_service:
+    name: fail2ban
+    state: started
+    enabled: true

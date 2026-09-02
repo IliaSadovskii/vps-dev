@@ -1,0 +1,17 @@
+# Управляется Ansible: roles/kandev/templates/kandev-backup.service.j2
+#
+# Снимок базы Kandev и ключа шифрования. Запускается таймером
+# kandev-backup.timer, руками — `systemctl start kandev-backup.service`.
+[Unit]
+Description=Снимок базы Kandev и ключа шифрования
+# Не «Requires»: снимок нужен и когда служба Kandev сейчас не работает
+# (например, после сбоя) — тогда просто нечего снимать, и скрипт молча
+# выходит (см. backup.sh.j2), а не роняет таймер навсегда.
+After=kandev.service
+
+[Service]
+Type=oneshot
+# Тот же пользователь, что владеет каталогом данных Kandev: иначе снимку
+# банально не хватит прав на чтение master.key.
+User={{ base_deploy_user }}
+ExecStart=/usr/local/bin/kandev-backup.sh

@@ -1,0 +1,72 @@
+# CLI агентов на хост.
+#
+# Ставим на хост, а не в контейнер: бинарники нужны и Kandev, и
+# agent-of-empires одновременно, у них общий вход (OAuth одного и того же
+# провайдера, сделанный один раз человеком), а общий вход означает общий
+# $HOME. Раздели их по контейнерам — входить пришлось бы в каждый провайдер
+# дважды.
+#
+# Ни один провайдер здесь не зашит: набор — dev_agent_clis из servers.yml,
+# соответствие имени и npm-пакета — agents_npm_packages в defaults/.
+
+- name: Провайдеры не выбраны
+  ansible.builtin.debug:
+    msg:
+      - "dev_agent_clis пуст — CLI агентов ставить нечего."
+      - "Node.js тоже не ставлю: незачем занимать место ради пустого списка."
+  when: dev_agent_clis | length == 0
+
+- name: Установка и чеклист входа
+  when: dev_agent_clis | length > 0
+  block:
+
+    - name: Все имена из dev_agent_clis известны
+      # Опечатка в servers.yml иначе всплыла бы глубоко внутри npm
+      # непонятной ошибкой «пакет не найден». Здесь причина видна сразу.
+      ansible.builtin.assert:
+        that: item in agents_npm_packages
+        fail_msg: >-
+          "{{ item }}" из dev_agent_clis не описан в agents_npm_packages
+          (roles/agents/defaults/main.yml). Известные имена:
+          {{ agents_npm_packages.keys() | join(', ') }}.
+      loop: "{{ dev_agent_clis }}"
+
+    - name: Ключ и репозиторий NodeSource
+      # Тот же файл, что пишет их собственный setup-скрипт
+      # (deb.nodesource.com/setup_22.x): Types/URIs/Suites/Components/Signed-By.
+      # Собираем его модулем, а не curl | bash — сухой прогон и второй запуск
+      # тогда ведут себя предсказуемо, а не как попало от смены сети.
+      ansible.builtin.deb822_repository:
+        name: nodesource
+        types: deb
+        uris: "https://deb.nodesource.com/node_{{ agents_node_major }}.x"
+        suites: nodistro
+        components: main
+        signed_by: "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
+      register: agents_node_repo
+
+    # Намеренно не обработчик: обработчик сработал бы в конце прогона, а пакеты ставятся следующей задачей.
+    - name: Перечитать индекс apt, если репозиторий только что появился  # noqa: no-handler
+      ansible.builtin.apt:
+        update_cache: true
+      when: agents_node_repo.changed
+
+    - name: Node.js
+      ansible.builtin.apt:
+        name: nodejs
+        state: present
+
+    - name: "CLI агентов: {{ dev_agent_clis | join(', ') }}"
+      community.general.npm:
+        name: "{{ agents_npm_packages[item] }}"
+        global: true
+        state: "{{ agents_npm_state }}"
+      loop: "{{ dev_agent_clis }}"
+
+    - name: Чеклист — куда войти человеку
+      # Автоматизировать нельзя: свой OAuth в чужом коде запрещён условиями
+      # всех провайдеров. Вход — браузером, руками, один раз на машину.
+      ansible.builtin.debug:
+        msg: >-
+          Войти в {{ item }}: {{ agents_login_commands[item] }}
+      loop: "{{ dev_agent_clis }}"

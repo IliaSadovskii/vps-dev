@@ -1,0 +1,128 @@
+# Kandev службой на хосте.
+#
+# Порядок: пакет и каталоги -> настройка -> служба -> снимки. Настройка
+# ложится на диск до первого запуска, чтобы Kandev стартовал сразу
+# с нужным портом и адресом, а не поднимался на минуту с настройками
+# по умолчанию (0.0.0.0, аутентификация выключена) и не переставал.
+
+- name: Пакет kandev — версия точная, без latest
+  # Почему точная — см. комментарий у kandev_version в servers.yml:
+  # миграции схемы применяются автоматически при старте, откат старой
+  # версии на уже мигрированную базу не гарантирован.
+  community.general.npm:
+    name: kandev
+    version: "{{ kandev_version }}"
+    global: true
+    state: present
+  register: kandev_npm
+
+- name: Утилита sqlite3 — им же снимаем базу
+  ansible.builtin.apt:
+    name: sqlite3
+    state: present
+
+- name: Каталоги службы
+  # Домашний каталог службы и его logs/ — установщик Kandev не создаёт
+  # /var/lib/kandev сам и требует, чтобы каталог уже существовал и был
+  # в собственности выбранного --run-as до `service install --system`
+  # (docs/run-as-a-service, «System service»).
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ base_deploy_user }}"
+    group: "{{ base_deploy_user }}"
+    mode: '0755'
+  loop:
+    - "{{ kandev_home_dir }}"
+    - "{{ kandev_home_dir }}/logs"
+    - "{{ kandev_backup_dir }}"
+
+- name: Настройка Kandev
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: "{{ kandev_home_dir }}/config.yaml"
+    owner: "{{ base_deploy_user }}"
+    group: "{{ base_deploy_user }}"
+    mode: '0644'
+  register: kandev_config
+
+- name: Уже установлена системной службой?
+  ansible.builtin.stat:
+    path: /etc/systemd/system/kandev.service
+  register: kandev_service_unit
+
+- name: Установить Kandev системной службой
+  # --run-as выбирает тот же пользователь, что логинится в CLI агентов
+  # (roles/agents): Kandev запускает их от имени своего процесса, и без
+  # общего логина ему было бы просто нечем говорить с провайдерами.
+  #
+  # Флаг --port сюда намеренно не идёт — он ненадёжен (см. комментарий
+  # в config.yaml.j2), порт задаёт файл настройки.
+  ansible.builtin.command:
+    cmd: >-
+      kandev service install --system
+      --run-as {{ base_deploy_user }}
+      --home-dir {{ kandev_home_dir }}
+  when: not kandev_service_unit.stat.exists
+  changed_when: true
+
+- name: Перечитать systemd после первой установки
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: not kandev_service_unit.stat.exists
+
+- name: Перезапустить — обновилась версия или настройка
+  # Новый бинарник и новый config.yaml сами по себе процесс не подхватывают
+  # («The explicit restart is required to load the new executable»,
+  # docs/run-as-a-service, «Upgrade safely»).
+  ansible.builtin.systemd:
+    name: kandev
+    state: restarted
+  when:
+    - kandev_service_unit.stat.exists
+    - kandev_npm.changed or kandev_config.changed
+
+# ═══ Резервное копирование ═══════════════════════════════════════════════
+#
+# Снимок раз в сутки: база (VACUUM INTO) + копия master.key рядом. Без ключа
+# секреты в восстановленной базе не расшифровать — почему это одна операция,
+# а не две, объяснено в backup.sh.j2.
+
+- name: Скрипт снимка
+  ansible.builtin.template:
+    src: backup.sh.j2
+    dest: /usr/local/bin/kandev-backup.sh
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Служба и таймер снимка
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - kandev-backup.service
+    - kandev-backup.timer
+  register: kandev_backup_units
+
+# Намеренно не обработчик: службу поднимает следующая задача, обработчик опоздал бы.
+- name: Перечитать systemd, если служба или таймер снимка изменились  # noqa: no-handler
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: kandev_backup_units.changed
+
+- name: Включить и запустить таймер снимка
+  ansible.builtin.systemd:
+    name: kandev-backup.timer
+    enabled: true
+    state: started
+
+- name: Куда смотреть
+  ansible.builtin.debug:
+    msg: >-
+      Kandev: http://127.0.0.1:{{ kandev_port }} — только из частной сети,
+      наружу отдаёт ports-web. Доску (промпты, цепочки шагов, провайдер
+      уведомлений) эта роль не наполняет — это отдельная задача владельца.

@@ -1,0 +1,154 @@
+# Учёт портов проектов + публикация веб-сервисов в частную сеть.
+# Откуда что взято и почему — см. defaults/main.yml.
+
+- name: Каталог состояния платформы
+  ansible.builtin.file:
+    path: "{{ ports_base_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Каталоги реестра портов, дашборда и прокси
+  # Владелец — {{ ports_service_user }}: и CLI `ports` (claim/free, пишет
+  # .lock и *.env), и таймер ports-web (пишет index.html и Caddyfile)
+  # работают от его имени, не от root — см. ports-web.service.j2.
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ ports_service_user }}"
+    group: "{{ ports_service_user }}"
+    mode: "0755"
+  loop:
+    - "{{ ports_registry_dir }}"
+    - "{{ ports_state_dir }}"
+    - "{{ ports_proxy_dir }}"
+
+# ═══ CLI учёта портов ═══════════════════════════════════════════════════
+#
+# Самообслуживание для проектов: `ports claim <имя>` атомарно бронирует
+# свободный блок из 10 портов, `ports map` показывает занятое/свободное.
+# Файл перенесён из /home/dev/vps/bin/ports БЕЗ ПЕРЕПИСЫВАНИЯ — правка
+# только в путях по умолчанию (PORTS_DIR → {{ ports_registry_dir }}, см.
+# files/ports). Ставим системно в /usr/local/bin, а не в ~/.local/bin:
+# роль настраивает машину, а не профиль одного пользователя.
+
+- name: Команда ports (учёт блоков портов)
+  ansible.builtin.copy:
+    src: ports
+    dest: /usr/local/bin/ports
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Команда ports-web (публикация в tailnet + дашборд)
+  # Тоже без переписывания — правка только в PORTS_DIR/STATE_DIR/PROXY_DIR
+  # (см. files/ports-web). Регэксп портов `8[0-9][0-9][0-9]` в обоих файлах
+  # уже актуален (не `80[0-9][0-9]`) — трогать не нужно.
+  ansible.builtin.copy:
+    src: ports-web
+    dest: /usr/local/bin/ports-web
+    owner: root
+    group: root
+    mode: "0755"
+
+# ═══ Прокси проектов (Caddy) ════════════════════════════════════════════
+
+- name: Заготовка конфига прокси
+  # Только если файла ещё нет (force: no ≈ старое `[[ ! -f ... ]]`):
+  # рабочий Caddyfile с блоком на каждый веб-сервис генерит ports-web,
+  # затирать его повторным прогоном роли нельзя.
+  ansible.builtin.copy:
+    src: Caddyfile
+    dest: "{{ ports_proxy_dir }}/Caddyfile"
+    owner: "{{ ports_service_user }}"
+    group: "{{ ports_service_user }}"
+    mode: "0644"
+    force: false
+
+- name: Есть ли уже описание контейнера прокси
+  ansible.builtin.stat:
+    path: "{{ ports_proxy_dir }}/compose.yaml"
+  register: ports_proxy_compose_exists
+  check_mode: false
+
+- name: Описание контейнера прокси
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: "{{ ports_proxy_dir }}/compose.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+  register: ports_proxy_compose
+
+- name: Сказать, почему в сухом прогоне не поднимаю прокси
+  ansible.builtin.debug:
+    msg:
+      - "Сухой прогон на ненастроенной машине: подъём vps-proxy пропускаю."
+      - "Описания контейнера ещё нет, а создавать его сухой прогон не должен."
+  when:
+    - ansible_check_mode
+    - not ports_proxy_compose_exists.stat.exists
+
+- name: Поднять vps-proxy
+  community.docker.docker_compose_v2:
+    project_src: "{{ ports_proxy_dir }}"
+    state: present
+    recreate: "{{ 'always' if ports_proxy_compose.changed else 'auto' }}"
+    pull: missing
+  when: not (ansible_check_mode and not ports_proxy_compose_exists.stat.exists)
+
+# ═══ Дашборд сервисов (таймер) ══════════════════════════════════════════
+#
+# ports-web отдаёт каждый веб-сервис проекта в tailnet НА ТОМ ЖЕ номере
+# порта (tailnet :8050 → host :8050) и рисует index.html со ссылками на всё
+# занятое. Таймер раз в минуту держит и раскладку serve, и страницу
+# в актуальном виде.
+#
+# ПРОВЕРИТЬ: в /home/dev/vps/setup-dev.sh (step_dashboard) это
+# `systemctl --user` юнит — работает, пока владелец залогинен, либо после
+# `loginctl enable-linger {{ ports_service_user }}`. На этом сервере таймер
+# должен тикать без чьей-либо интерактивной сессии (агенты работают сами
+# по себе), поэтому здесь это СИСТЕМНЫЙ юнит с User=, а не user-юнит —
+# так лингеринг не нужен вовсе. Поведение то же (раз в минуту, от имени
+# {{ ports_service_user }}), но убедись, что это осознанное расхождение,
+# а не то, что стоило перенести как есть.
+
+- name: Юнит ports-web.service
+  ansible.builtin.template:
+    src: ports-web.service.j2
+    dest: /etc/systemd/system/ports-web.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: ports_web_service_unit
+
+- name: Юнит ports-web.timer
+  ansible.builtin.template:
+    src: ports-web.timer.j2
+    dest: /etc/systemd/system/ports-web.timer
+    owner: root
+    group: root
+    mode: "0644"
+  register: ports_web_timer_unit
+
+- name: Перечитать systemd, если юниты изменились
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: ports_web_service_unit.changed or ports_web_timer_unit.changed
+
+- name: Включить и запустить таймер дашборда
+  ansible.builtin.systemd:
+    name: ports-web.timer
+    enabled: true
+    state: started
+
+- name: Первый прогон ports-web
+  # Не ждать до минуты таймера: сразу разложить serve и сгенерить страницу,
+  # если это возможно. Best-effort — как и в шаге-источнике: если Tailscale
+  # ещё не поднялся, ports-web сам тихо выходит, и таймер повторит попытку.
+  ansible.builtin.command: /usr/local/bin/ports-web
+  become: true
+  become_user: "{{ ports_service_user }}"
+  changed_when: false
+  failed_when: false

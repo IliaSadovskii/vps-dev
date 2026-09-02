@@ -1,0 +1,26 @@
+# Дополнительные наборы модулей Ansible.
+# Ставятся в образ при сборке: см. runner/Dockerfile.
+#
+# Версии закреплены точно, а не «не ниже»: иначе пересборка образа через
+# полгода принесёт другое поведение, и воспроизводимость окажется мнимой.
+
+collections:
+  # posix: authorized_keys, точки монтирования, тайминги задач
+  - name: ansible.posix
+    version: "2.1.0"
+  # general: ufw, часовой пояс и прочие общие вещи
+  - name: community.general
+    version: "11.3.0"
+  # tailscale: вход сервера в частную сеть
+  - name: artis3n.tailscale
+    version: "1.2.1"
+  # docker: запуск контейнеров вспомогательных служб через compose.
+  # Модуль работает через саму команду docker, а не через библиотеку
+  # Python, — значит ставить в образ ничего больше не надо.
+  - name: community.docker
+    version: "5.2.2"
+
+roles:
+  # Установка Docker. Свою писать незачем.
+  - name: geerlingguy.docker
+    version: "7.4.7"

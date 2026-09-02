@@ -1,0 +1,46 @@
+# Управляется Ansible: roles/ntfy/templates/compose.yaml.j2
+# Правки здесь переживут ровно до следующей выкатки.
+#
+# Свой сервер уведомлений вместо публичного ntfy.sh: на публичном сервере
+# топик — по сути пароль (угадал строку — читаешь всё), а сюда летят
+# заголовки задач и вопросы агентов. Свой сервер за Tailscale снимает
+# этот риск: снаружи частной сети до него не достать вообще, поэтому
+# внутри самого ntfy отдельная аутентификация не включена — границу
+# держит Tailscale, а не пароль на топик.
+
+name: vps-dev-ntfy
+
+services:
+  ntfy:
+    image: {{ ntfy_image }}
+    container_name: {{ ntfy_container_name }}
+    restart: unless-stopped
+    # У образа ntfy нет команды по умолчанию — serve запускает веб- и
+    # приёмный сервер (в отличие от ntfy publish/subscribe — это клиентские
+    # команды того же бинарника, здесь не нужны).
+    command: serve
+    ports:
+      # Только адрес частной сети — то же решение и та же гонка с Tailscale
+      # при перезагрузке, что и в roles/logs и roles/dbclient.
+      - "{{ ntfy_tailscale_address }}:{{ ntfy_port }}:80"
+    volumes:
+      - {{ ntfy_volume }}:/var/cache/ntfy
+    environment:
+      NTFY_BASE_URL: "http://{{ ntfy_tailscale_address }}:{{ ntfy_port }}"
+      NTFY_CACHE_FILE: /var/cache/ntfy/cache.db
+      # Сутки-двое: это оповещения, а не архив. Старые сообщения ntfy
+      # подчищает сам, по расписанию внутри процесса.
+      NTFY_CACHE_DURATION: "{{ ntfy_cache_duration }}"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: {{ ntfy_memory_limit }}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  {{ ntfy_volume }}:

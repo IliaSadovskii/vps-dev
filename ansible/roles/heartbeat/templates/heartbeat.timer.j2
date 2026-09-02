@@ -1,0 +1,13 @@
+# Управляется Ansible: roles/heartbeat/templates/heartbeat.timer.j2
+[Unit]
+Description=Проверять машину каждые {{ heartbeat_interval }}
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec={{ heartbeat_interval }}
+# Разброс в полминуты: иначе, случись беда сразу у нескольких машин,
+# все они стучались бы в ntfy одновременно.
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

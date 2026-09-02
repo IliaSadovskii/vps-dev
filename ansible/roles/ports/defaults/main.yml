@@ -1,0 +1,50 @@
+---
+# Учёт портов проектов и публикация веб-сервисов в частную сеть.
+#
+# Три вещи из /home/dev/vps/setup-dev.sh, которым нет аналога у листейта
+# (боевой сервер бьёт трафик доменами и Cloudflare — здесь входа снаружи
+# нет вообще, только Tailscale):
+#
+#   ports      CLI-команда: блок из 10 портов на проект (`ports claim`),
+#              карта занятости (`ports map`). Реестр — файлы *.env,
+#              по одному на проект.
+#   vps-proxy  общий Caddy в режиме host-сети: Tailscale отдаёт байты
+#              как есть, без сжатия и без Cache-Control, и мегабайт вёрстки
+#              перекачивается заново при каждой перезагрузке страницы.
+#   ports-web  таймер, который классифицирует живые docker-порты на веб
+#              и внутренние ПО ОБРАЗУ контейнера (не HTTP-пробой — проба
+#              капризна, образ детерминирован), заводит каждому веб-сервису
+#              теневой порт +1000 у vps-proxy, публикует сервис в tailnet
+#              на его исходном номере и рисует дашборд на :8062.
+
+# Каталог состояния платформы. /var/lib, а не $HOME: службы (systemd-таймер,
+# контейнер) должны работать без активного логина владельца — домашний
+# каталог для этого не подходит.
+ports_base_dir: /var/lib/vps-dev
+
+# Реестр блоков портов (*.env на проект) — источник правды для `ports claim`
+# и для ports-web. Владелец — dev: и CLI, и systemd-таймер работают от его
+# имени (см. ниже про ports_service_user), обоим нужна запись.
+ports_registry_dir: "{{ ports_base_dir }}/ports"
+
+# Состояние дашборда: index.html, который tailscale serve отдаёт статикой
+# на порту ports_dashboard_port.
+ports_state_dir: "{{ ports_base_dir }}/ports-web"
+
+# Конфиг общего прокси: Caddyfile, который bind-mount видит внутри
+# контейнера vps-proxy.
+ports_proxy_dir: "{{ ports_base_dir }}/vps-proxy"
+
+ports_proxy_container: vps-proxy
+# Без состояния — плавающий минор допустим (как в исходном step_proxy).
+ports_proxy_image: "caddy:2-alpine"
+
+# Куда tailscale serve отдаёт index.html со ссылками на все сервисы машины.
+ports_dashboard_port: 8062
+
+# От чьего имени работают CLI и таймер. Тот же пользователь, что заведён
+# ролью base и состоит в группе docker (см. site.yml → geerlingguy.docker →
+# docker_users): команде `ports claim` и таймеру ports-web нужен и docker,
+# и (через sudo) `tailscale serve` — то и другое настроено на него, а не
+# на root.
+ports_service_user: "{{ base_deploy_user }}"

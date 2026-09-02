@@ -1,0 +1,47 @@
+# Управляется Ansible: roles/kandev/templates/config.yaml.j2
+# Правки здесь переживут ровно до следующего прогона.
+#
+# Файлом, а не переменными окружения службы. Причины две:
+#
+#   1. Юнит systemd, который ставит `kandev service install --system`,
+#      несёт «намеренно маленькое фиксированное окружение и не наследует
+#      произвольные exports запускавшей его оболочки» (docs/run-as-a-service).
+#      Значит переменные пришлось бы дописывать дроп-ином поверх юнита —
+#      лишний слой поверх того, что и так читает сам Kandev.
+#   2. Флаг `--port` у `service install` в текущей версии не работает
+#      надёжно: «текущий нативный лаунчер записывает его как
+#      KANDEV_SERVER_PORT, а затем подменяет это значение при старте»
+#      (та же страница, раздел Commands and flags). Настройка через
+#      config.yaml этого не касается.
+#
+# Загрузчик Kandev смотрит config.yaml в рабочем каталоге, затем
+# <KANDEV_HOME_DIR>/config.yaml, затем /etc/kandev/config.yaml — и берёт
+# только первый найденный, файлы не сливаются (docs/configuration). Кладём
+# сюда, в домашний каталог службы: он однозначно найдётся и не потеряется
+# среди других кандидатов.
+
+server:
+  # Только частная сеть машины. Наружу Kandev отдаёт ports-web через общий
+  # прокси — так же, как остальные внутренние службы; сам порт слушать
+  # 0.0.0.0 незачем и небезопасно: по умолчанию у Kandev аутентификация
+  # выключена (docs/run-as-a-service, «Network security»).
+  host: 127.0.0.1
+  port: {{ kandev_port }}
+
+# Массив через переменные окружения зависит от Viper и ведёт себя не всегда
+# предсказуемо — сама документация Kandev рекомендует для него YAML
+# (docs/configuration, repositoryDiscovery.roots). Поэтому roots — здесь,
+# а не KANDEV_REPOSITORYDISCOVERY_ROOTS.
+repositoryDiscovery:
+  roots:
+{% for root in kandev_repository_discovery_roots %}
+    - {{ root }}
+{% endfor %}
+  maxDepth: {{ kandev_repository_discovery_max_depth }}
+
+repoClone:
+  basePath: {{ kandev_repo_clone_base_path }}
+
+# Здесь намеренно нет ничего про доску: ни промптов, ни цепочек шагов,
+# ни провайдера уведомлений. Это наполнение — отдельная задача владельца
+# (roles/seed, roles/workflows в site.yml), а не эта роль.

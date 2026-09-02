@@ -1,0 +1,33 @@
+# Пакеты и таймзона.
+#
+# Node.js сюда намеренно не входит — им занимается другая роль (агенты
+# CLI приносят свою версию сами). Здесь только то, без чего неудобно
+# разбирать любую аварию и без чего не работают более специфичные роли.
+
+- name: Обновить список пакетов
+  # Отдельной задачей и с check_mode: false — иначе в сухом прогоне список
+  # остаётся старым, и следующая задача может упасть на пакете, которого
+  # в устаревшем кэше ещё нет.
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  check_mode: false
+  changed_when: false
+
+- name: Базовые пакеты
+  ansible.builtin.apt:
+    name:
+      - curl             # проверить, отвечает ли служба
+      - git
+      - jq               # разобрать ответ в формате JSON
+      - htop             # что ест процессор
+      - ufw               # брандмауэр самой машины — настраивает роль firewall,
+                          # здесь только пакет
+      - fail2ban          # настраивается ниже, в fail2ban.yml
+      - tmux              # нужен agent-of-empires: сессии агентов живут в tmux
+      - ca-certificates
+    state: present
+
+- name: Часовой пояс
+  community.general.timezone:
+    name: "{{ base_server_timezone }}"

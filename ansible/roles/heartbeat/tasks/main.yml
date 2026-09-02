@@ -1,0 +1,87 @@
+# Присмотр за машиной: раз в {{ heartbeat_interval }} проверяет место на диске
+# и ключевые службы, и при беде шлёт уведомление через ntfy.
+#
+# Это НЕ тот же присмотр, что у листейта (стук на healthchecks.io по
+# расписанию, чтобы внешний сервис заметил, если сервер вообще замолчал).
+# Здесь внешний сервис намеренно не заводим — сервер разработки наружу
+# не смотрит вообще ничем (см. ansible/site.yml), значит и стучаться ему
+# некуда, кроме собственной, тоже локальной, службы уведомлений. Вместо
+# дозвона «я жив» — сообщение ровно тогда, когда есть что сказать; тишина
+# при этом ничего не означает и тревогой не считается.
+
+- name: Проверить, задана ли тема ntfy
+  ansible.builtin.debug:
+    msg:
+      - "ntfy_topic не задан — присмотр heartbeat не настроен."
+      - "Переменную задаёт роль ntfy; без неё уведомлениям некуда идти,"
+      - "и эта роль ничего не делает."
+  when: ntfy_topic | default('', true) | length == 0
+
+- name: Настроить присмотр
+  when: ntfy_topic | default('', true) | length > 0
+  block:
+    - name: Скрипт проверки
+      ansible.builtin.template:
+        src: heartbeat.sh.j2
+        dest: /usr/local/bin/vps-dev-heartbeat
+        mode: '0700'
+        owner: root
+        group: root
+      # Права только для root: в скрипте лежит адрес темы уведомлений.
+      no_log: true
+
+    - name: Служба проверки
+      ansible.builtin.template:
+        src: heartbeat.service.j2
+        dest: /etc/systemd/system/vps-dev-heartbeat.service
+        mode: '0644'
+        owner: root
+        group: root
+      notify: Перечитать описания служб
+
+    - name: Расписание проверки
+      ansible.builtin.template:
+        src: heartbeat.timer.j2
+        dest: /etc/systemd/system/vps-dev-heartbeat.timer
+        mode: '0644'
+        owner: root
+        group: root
+      notify: Перечитать описания служб
+
+    - name: Включить расписание
+      ansible.builtin.systemd_service:
+        name: vps-dev-heartbeat.timer
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    - name: Проверить прямо сейчас
+      # Не дожидаться первого срабатывания таймера: если беда на машине уже
+      # есть (например, место почти кончилось), лучше узнать сразу после
+      # настройки, а не спустя heartbeat_interval.
+      #
+      # Уведомление уйдёт, только если скрипт что-то нашёл (см. его же
+      # комментарий про молчание как норму) — на здоровой машине эта задача
+      # просто ничего никуда не пошлёт.
+      #
+      # Неудача прогон НЕ роняет. Роль идёт РАНЬШЕ ntfy (см. site.yml):
+      # на первом прогоне сервера уведомлений ещё нет, а повод сказать
+      # что-то у скрипта почти наверняка есть — после обновления системы
+      # в pre_tasks лежит /var/run/reboot-required. Скрипт честно вернул бы
+      # ошибку «не доставлено», и вся настройка остановилась бы здесь,
+      # не дойдя ни до доски, ни до самого ntfy. Таймер повторит через
+      # heartbeat_interval, когда сервер уведомлений уже поднят.
+      ansible.builtin.command: /usr/local/bin/vps-dev-heartbeat
+      register: heartbeat_now
+      changed_when: false
+      failed_when: false
+      when: not ansible_check_mode
+
+    - name: Сказать, если проверка сейчас не прошла
+      ansible.builtin.debug:
+        msg:
+          - "Проверка heartbeat вернула ошибку — прогон продолжаю, таймер повторит её через {{ heartbeat_interval }}."
+          - "{{ heartbeat_now.stderr | default('') | trim }}"
+      when:
+        - heartbeat_now is not skipped
+        - heartbeat_now.rc | default(0) != 0

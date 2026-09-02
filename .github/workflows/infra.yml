@@ -1,0 +1,143 @@
+# Выкатка сервера разработки.
+#
+# GitHub здесь — управляющая машина: секреты лежат в хранилище форка,
+# запустить можно из браузера или с телефона, и остаётся журнал, кто и когда
+# что делал. Локальные копии секретов при этом никому не нужны.
+#
+# ВЫКАТКА ТОЛЬКО ПО КНОПКЕ. Автоматически по push не применяется ничего:
+# единственные ворота — то, что кнопку нажимает человек.
+#
+# Секреты берутся прямо из хранилища форка, без SOPS. У боевого сервера
+# зашифрованное состояние общее и лежит в репозитории — там SOPS оправдан.
+# Здесь у каждого своя машина и свои ключи в одном экземпляре: age-ключ,
+# бинарник sops и ручное маскирование в журнале добавили бы только способы
+# ошибиться. Свои секреты GitHub маскирует сам.
+
+name: Сервер разработки
+
+on:
+  # Проверка кода — на каждое изменение. Секреты и доступ к машинам ей
+  # не нужны, поэтому она безопасна и быстра.
+  pull_request:
+    paths: ['ansible/**', 'runner/**', 'scripts/**', 'servers.yml', '.github/workflows/infra.yml']
+  push:
+    branches: [main]
+    paths: ['ansible/**', 'runner/**', 'scripts/**', 'servers.yml', '.github/workflows/infra.yml']
+
+  # Прогон на машине — только вручную.
+  workflow_dispatch:
+    inputs:
+      machine:
+        description: 'Машина: имя или номер по списку в servers.yml (пусто — все)'
+        required: false
+        type: string
+      trust_new_host:
+        description: 'Первое подключение к новой машине (принять её ключ)'
+        required: false
+        default: false
+        type: boolean
+      mode:
+        description: 'Что делать'
+        required: true
+        default: check
+        type: choice
+        options:
+          - check     # показать, что изменится, ничего не трогая
+          - apply     # применить настройку
+          - audit     # проверить снаружи: наружу не отвечает ничего
+          - servers   # показать реестр машин
+          - ping      # быстро проверить, что машина отвечает
+          - watch     # присмотр: место, службы
+          - reboot    # перезагрузить и дождаться возвращения
+
+permissions:
+  contents: read
+
+jobs:
+  # --- Проверка самого кода ---------------------------------------------------
+  lint:
+    name: Проверить код настройки
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Собрать образ с Ansible
+        run: docker build -t vps-dev-ansible ./runner
+
+      - name: ansible-lint и shellcheck
+        run: make lint
+
+  # --- Прогон на машине -------------------------------------------------------
+  run:
+    name: ${{ inputs.mode }} на сервере
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Проверяем до того, как что-то делать: иначе прогон падает в середине,
+      # и сообщение приходит от Ansible, а указывает не туда.
+      - name: Проверить, что секреты на месте
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+          TS_ID: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          TS_SECRET: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          # Без него обвязка останавливается сама (scripts/lib.sh,
+          # ensure_machine_secrets) — но здесь, а не в середине прогона.
+          VPS_DEV_ROOT_PASSWORD: ${{ secrets.VPS_DEV_ROOT_PASSWORD }}
+        run: |
+          missing=0
+          for name in SSH_PRIVATE_KEY TAILSCALE_AUTHKEY TS_ID TS_SECRET VPS_DEV_ROOT_PASSWORD; do
+            [ -n "${!name}" ] || { echo "✖ не задан секрет $name"; missing=1; }
+          done
+          [ "$missing" -eq 0 ] || {
+            echo ""
+            echo "  Какие секреты нужны и откуда их взять — README, «Установка»."
+            exit 1
+          }
+          echo "✔ Секреты на месте"
+
+      - name: Положить ключ SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          umask 077
+          mkdir -p "$RUNNER_TEMP/ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$RUNNER_TEMP/ssh/key"
+          echo "VPS_DEV_SSH_KEY=$RUNNER_TEMP/ssh/key" >> "$GITHUB_ENV"
+
+      # Машина доступна только через частную сеть: публичный порт закрыт
+      # или будет закрыт. Задача входит в сеть на время работы и выходит
+      # после — узел временный, следов не остаётся.
+      #
+      # Закреплено по отпечатку, а не по подвижной метке: к этому шагу
+      # в окружении задачи уже лежит закрытый ключ к машине, и содержимое
+      # действия могло бы смениться под нами без единой правки у нас.
+      - name: Войти в частную сеть Tailscale
+        uses: tailscale/github-action@6cae46e2d796f265265cfcf628b72a32b4d7cade # v3.3.0
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Собрать образ с Ansible
+        run: docker build -t vps-dev-ansible ./runner
+
+      - name: ${{ inputs.mode }}
+        env:
+          # Режим у кнопки называется так же, как цель make: расхождение имён
+          # означало бы, что в одном месте надо помнить перевод в другое.
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+          VPS_DEV_ROOT_PASSWORD: ${{ secrets.VPS_DEV_ROOT_PASSWORD }}
+          VPS_DEV_NTFY_TOPIC: ${{ secrets.VPS_DEV_NTFY_TOPIC }}
+          # Разовое доверие ключу новой машины. По умолчанию выключено:
+          # молча принимать чужой ключ команда не должна.
+          VPS_DEV_TRUST_NEW_HOST: ${{ inputs.trust_new_host && '1' || '' }}
+          # Поля кнопки — через окружение, а не подстановкой в текст команды:
+          # подставленная строка выполнялась бы оболочкой как есть, и
+          # «имя машины» вроде `x; …` стало бы командой.
+          MODE: ${{ inputs.mode }}
+          MACHINE: ${{ inputs.machine }}
+        run: |
+          make "$MODE" ${MACHINE:+h="$MACHINE"}

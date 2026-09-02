@@ -1,0 +1,109 @@
+# Укрепление SSH.
+#
+# Настройки кладём отдельным файлом в sshd_config.d, а не правкой основного
+# конфига: обновление системы перезапишет основной, наш файл переживёт.
+#
+# КРИТИЧНО: перед тем как этот файл вообще может привести к перезапуску
+# sshd (обработчиком, в конце всего прогона — см. handlers/main.yml),
+# должны пройти три проверки. Пропуск любой из них — потеря машины:
+#   а) у root есть непустой authorized_keys;
+#   б) новый пользователь реально входит и его sudo работает
+#      (verify-access.yml — этот шаг уже прошёл раньше в tasks/main.yml,
+#      и если бы он не прошёл, весь прогон остановился бы там же);
+#   в) итоговый sshd_config синтаксически валиден (`sshd -t`).
+# Ниже — задачи (а) и (в); задача (б) стоит в main.yml перед этим файлом.
+
+# ПРОВЕРИТЬ: список требуемых проверок в постановке задачи называет именно
+# authorized_keys РУТА, хотя ключи пользователю {{ base_deploy_user }} этот
+# playbook берёт не копированием из root (как делал старый bash-скрипт),
+# а отдельным списком base_deploy_ssh_keys (см. user.yml) — так что от этой
+# проверки закрытие root-входа напрямую не зависит: реальная гарантия
+# «есть кому войти» лежит в verify-access.yml. Проверку оставляю как
+# написано в задании и как делал старый скрипт — лишняя подстраховка перед
+# необратимым шагом дёшева, даже если её польза здесь не так очевидна,
+# как было в bash-варианте (там она защищала копирование ключа, здесь
+# копирования нет).
+- name: Проверить, что у root есть свой ключ доступа
+  ansible.builtin.stat:
+    path: /root/.ssh/authorized_keys
+  register: base_root_authorized_keys
+
+- name: Остановиться, если у root нет authorized_keys
+  ansible.builtin.assert:
+    that:
+      - base_root_authorized_keys.stat.exists
+      - base_root_authorized_keys.stat.size > 0
+    fail_msg: >-
+      У root нет непустого /root/.ssh/authorized_keys. Настройка остановлена
+      перед укреплением SSH — файл сюда руками не кладём и трогать его
+      не должны, но пустым он быть не должен ни на одном прогоне.
+
+# В Ubuntu 24.04 порт 22 слушает не сама служба, а systemd через ssh.socket.
+# Служба при этом числится выключенной и поднимается по требованию. Нам это
+# не нужно: экономия одного процесса не стоит того, что перезапуск службы
+# (наш обработчик) при таком раскладе ведёт себя неожиданно — активная
+# по требованию служба и обычный restart/reload не всегда одно и то же.
+- name: Отключить запуск sshd по требованию
+  ansible.builtin.systemd_service:
+    name: ssh.socket
+    state: stopped
+    enabled: false
+    masked: true
+  register: base_socket_off
+
+- name: Убрать остатки запуска по требованию
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/ssh.service.d/00-socket.conf
+    - /etc/systemd/system/ssh.service.requires/ssh.socket
+    - /etc/systemd/system/sockets.target.wants/ssh.socket
+  register: base_socket_files
+
+- name: Поднять sshd как обычную службу
+  ansible.builtin.systemd_service:
+    name: ssh
+    state: started
+    enabled: true
+    daemon_reload: "{{ base_socket_off is changed or base_socket_files is changed }}"
+
+- name: Настройки sshd
+  ansible.builtin.template:
+    src: sshd-hardening.conf.j2
+    dest: /etc/ssh/sshd_config.d/99-hardening.conf
+    mode: '0600'
+    owner: root
+    group: root
+    # Проверка (в) ДО применения: `validate` прогоняет sshd -t по временной
+    # копии файла и подкладывает его на место, только если она прошла.
+    # Битый sshd_config означает, что служба не поднимется после
+    # перезапуска — вход в машину пропал бы целиком.
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Перезапустить sshd
+
+- name: Убрать слабые группы Диффи-Хеллмана
+  # В /etc/ssh/moduli лежат параметры для обмена ключами. Короткие
+  # (меньше 3072 бит) считаются слабыми уже много лет и остаются в системе
+  # только ради совместимости со старыми клиентами — у нас таких нет.
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      awk '$5 >= 3071' /etc/ssh/moduli > /etc/ssh/moduli.strong
+      # Проверка «файл непустой» обязательна: выдай awk по любой причине
+      # пустой вывод, без неё мы подменим рабочий файл пустым и сломаем
+      # обмен ключами целиком.
+      if [ ! -s /etc/ssh/moduli.strong ]; then
+        rm -f /etc/ssh/moduli.strong
+        exit 0
+      fi
+      if ! cmp -s /etc/ssh/moduli /etc/ssh/moduli.strong; then
+        mv /etc/ssh/moduli.strong /etc/ssh/moduli
+        echo "изменено"
+      else
+        rm -f /etc/ssh/moduli.strong
+      fi
+    executable: /bin/bash
+  register: base_moduli_result
+  changed_when: "'изменено' in base_moduli_result.stdout"
+  notify: Перезапустить sshd

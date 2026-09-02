@@ -1,0 +1,10 @@
+- name: Перечитать правила журнала
+  # augenrules собирает правила из rules.d в один файл и загружает их.
+  # Перезапуск службы для этого не нужен и не работает: systemd не даёт
+  # перезапускать auditd штатным способом.
+  ansible.builtin.command: augenrules --load
+  changed_when: true
+
+- name: Перезапустить журнал действий
+  ansible.builtin.command: systemctl kill -s SIGHUP auditd
+  changed_when: true

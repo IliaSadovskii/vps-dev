@@ -1,0 +1,23 @@
+# Управляется Ansible: roles/aoe/templates/aoe-web.service.j2
+[Unit]
+Description=Agent of Empires — веб-панель
+After=network-online.target
+
+[Service]
+Type=simple
+# Тот же пользователь, что логинится в CLI агентов (roles/agents) и что
+# запускает Kandev (roles/kandev): aoe открывает их же tmux-сессии,
+# и без общего логина ему было бы нечем говорить с провайдерами.
+User={{ base_deploy_user }}
+# Только частная сеть машины: наружу отдаёт ports-web через общий прокси,
+# как и остальные внутренние службы. Аутентификацию оставляем во
+# встроенном режиме по умолчанию (--auth token, разовая ссылка с токеном
+# в логе при каждом старте) — сам aoe явно предупреждает, что без нужды
+# отключать её не стоит: «Anyone with network access to this port can
+# control your agent sessions».
+ExecStart={{ aoe_install_dir }}/aoe serve --host 127.0.0.1 --port {{ aoe_web_port }}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

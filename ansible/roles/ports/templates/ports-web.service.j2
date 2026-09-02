@@ -1,0 +1,23 @@
+# Управляется Ansible: roles/ports/templates/ports-web.service.j2
+#
+# Раскладку serve в Tailscale и дашборд на {{ ports_dashboard_port }} держит
+# свежими этот сервис, запускаемый по таймеру ports-web.timer — см. его же
+# файл рядом.
+[Unit]
+Description=Опубликовать веб-сервисы проектов в tailnet и обновить дашборд
+# after/wants, а не requires: если docker или tailscaled временно не готовы,
+# сам ports-web это переживает (см. его "tailscale не в сети, выхожу") —
+# падать из-за них незачем, таймер повторит попытку через минуту.
+After=network-online.target docker.service tailscaled.service
+Wants=network-online.target docker.service tailscaled.service
+
+[Service]
+Type=oneshot
+# От имени {{ ports_service_user }}, а не root: команде нужен docker (группа
+# docker) и `sudo -n tailscale serve` (у него уже есть пароль-less sudo —
+# тот же, которым пользуется сам Ansible через become; см. servers.yml).
+# SupplementaryGroups подстраховывает доступ к сокету docker.sock даже если
+# членство в группе ещё не подхватилось в текущей сессии systemd.
+User={{ ports_service_user }}
+SupplementaryGroups=docker
+ExecStart=/usr/local/bin/ports-web

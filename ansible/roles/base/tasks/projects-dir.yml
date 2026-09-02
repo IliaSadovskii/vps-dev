@@ -1,0 +1,26 @@
+# Каталог для репозиториев проектов.
+#
+# 2775: setgid-бит (2) — новые файлы и подкаталоги наследуют группу каталога,
+# а не группу того, кто их создал (root через Ansible, сам {{ base_deploy_user }}
+# из-под sudo, будущие контейнеры — не важно). Без него доступ к чужим
+# файлам внутри /projects расползался бы по владельцам случайным образом.
+
+- name: Каталог {{ base_projects_dir }}
+  ansible.builtin.file:
+    path: "{{ base_projects_dir }}"
+    state: directory
+    owner: "{{ base_deploy_user }}"
+    group: "{{ base_deploy_user }}"
+    mode: '2775'
+
+- name: ACL по умолчанию на новые файлы в {{ base_projects_dir }}
+  # Setgid на каталоге сам по себе покрывает поддиректории, но не файлы,
+  # созданные без принадлежности к группе через POSIX ACL (например, если
+  # процесс явно сбрасывает umask). ACL по умолчанию закрывает и этот случай.
+  ansible.posix.acl:
+    path: "{{ base_projects_dir }}"
+    entity: "{{ base_deploy_user }}"
+    etype: group
+    permissions: rwx
+    default: true
+    state: present

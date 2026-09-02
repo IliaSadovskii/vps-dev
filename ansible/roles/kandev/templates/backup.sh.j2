@@ -1,0 +1,47 @@
+#!/bin/sh
+# Управляется Ansible: roles/kandev/templates/backup.sh.j2
+#
+# Снимок базы Kandev и ключа шифрования.
+#
+# КРИТИЧНО: снимок базы (VACUUM INTO) не включает master.key — тот же файл
+# со списком того, что попадает в снимок, а что нет, прямым текстом говорит:
+# «Database-only snapshots also omit <home>/data/master.key, the AES-256
+# key used to decrypt stored secrets» (kandev.ai/docs/configuration).
+# Без него секреты в восстановленной базе не расшифровать — поэтому копируем
+# оба файла всегда вместе, одной командой, а не полагаемся на то, что кто-то
+# не забудет сделать это отдельно.
+set -eu
+
+home_dir="{{ kandev_home_dir }}"
+db="$home_dir/data/kandev.db"
+key="$home_dir/data/master.key"
+dest="{{ kandev_backup_dir }}"
+keep={{ kandev_backup_keep }}
+
+if [ ! -f "$db" ] || [ ! -f "$key" ]; then
+    # Служба ни разу не стартовала — снимать нечего. Не ошибка сама по себе:
+    # таймер стоит с первого прогона роли, до первого запуска Kandev.
+    echo "Нет базы или ключа в $home_dir/data — Kandev ещё не запускался, снимок пропущен."
+    exit 0
+fi
+
+mkdir -p "$dest"
+stamp=$(date +%Y%m%d-%H%M%S)
+snapshot="$dest/kandev-$stamp.db"
+snapshot_tmp="$snapshot.tmp"
+
+# VACUUM INTO, а не `sqlite3 ... .backup` и не остановка службы: он работает
+# на живой базе в режиме WAL (страница операций Kandev называет его же
+# способом ручного снимка) и не отнимает у Kandev доступность на время
+# снятия копии.
+sqlite3 "$db" "VACUUM INTO '$snapshot_tmp'"
+mv "$snapshot_tmp" "$snapshot"
+cp -p "$key" "$dest/kandev-$stamp.master.key"
+
+# Kandev свои ручные снимки не чистит сам — почистим за него, иначе
+# каталог растёт без предела.
+ls -1t "$dest"/kandev-*.db 2>/dev/null | tail -n +$((keep + 1)) | while read -r old; do
+    rm -f "$old" "${old%.db}.master.key"
+done
+
+echo "Снимок: $snapshot (+ .master.key)"

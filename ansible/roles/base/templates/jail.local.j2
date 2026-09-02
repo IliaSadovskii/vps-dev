@@ -1,0 +1,17 @@
+# Управляется Ansible: roles/base/templates/jail.local.j2
+
+[DEFAULT]
+ignoreip = 127.0.0.1/8 ::1
+
+[sshd]
+enabled = true
+port = ssh
+backend = systemd
+# Пороги мягкие намеренно: вход только по ключу (PasswordAuthentication no),
+# поэтому брутфорс паролем невозможен в принципе — fail2ban лишь чистит
+# мусор в логах. Жёсткие пороги с эскалацией срока раньше приводили
+# к самобану владельца при входе с динамического IP. 10 попыток, 15 минут,
+# без нарастания срока.
+maxretry = {{ base_fail2ban_maxretry }}
+findtime = {{ base_fail2ban_findtime }}
+bantime = {{ base_fail2ban_bantime }}

@@ -1,0 +1,63 @@
+# Журнал действий в системе.
+#
+# Не путать с scripts/audit.sh в корне репозитория — та команда проверяет
+# машину СНАРУЖИ, сканером портов. Эта роль — противоположное: журнал
+# того, что происходит НА самой машине, изнутри.
+#
+# Пишет, кто менял учётные записи, доступы и настройки входа. Нужен не для
+# защиты, а для ответа на вопрос «что именно произошло» — при разборе
+# аварии или подозрительного входа: без записей отвечать нечем.
+#
+# journald пишет про службы, auditd — про действия. Это разные вещи,
+# и одно другое не заменяет.
+#
+# Роль перенесена с боевого сервера почти без изменений: она про машину,
+# а не про сайт, и у дев-сервера машина устроена так же. Единственная
+# правка по существу — добавлено слежение за /etc/ufw/: у боевого сервера
+# правила брандмауэра для контейнеров лежат в отдельной службе
+# (listate-docker-edge), здесь же — прямо в after.rules ufw (см. роль
+# firewall), и правкой этого файла закрывается или открывается доступ
+# к контейнерам из интернета. Никаких путей про сертификаты и домены
+# в исходной роли не было — переносить с дев-сервера нечего.
+
+- name: Пакеты журнала действий
+  ansible.builtin.apt:
+    name:
+      - auditd
+      - audispd-plugins
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Правила журнала
+  ansible.builtin.template:
+    src: rules.j2
+    dest: /etc/audit/rules.d/90-vps-dev.rules
+    mode: '0640'
+    owner: root
+    group: root
+  notify: Перечитать правила журнала
+
+- name: Размер журнала
+  # Без предела журнал растёт, пока не кончится диск, и тогда auditd
+  # по умолчанию останавливает систему. Предел и действие задаём явно.
+  ansible.builtin.lineinfile:
+    path: /etc/audit/auditd.conf
+    regexp: "^{{ item.key }}\\s*="
+    line: "{{ item.key }} = {{ item.value }}"
+    mode: '0640'
+  loop:
+    - { key: max_log_file, value: "50" }        # мегабайт на файл
+    - { key: num_logs, value: "5" }             # всего четверть гигабайта
+    - { key: max_log_file_action, value: ROTATE }
+    - { key: space_left, value: "1000" }        # мегабайт свободного места
+    - { key: space_left_action, value: SYSLOG }
+    - { key: admin_space_left_action, value: SYSLOG }
+    - { key: disk_full_action, value: SYSLOG }
+  notify: Перезапустить журнал действий
+
+- name: Служба журнала работает
+  ansible.builtin.systemd_service:
+    name: auditd
+    state: started
+    enabled: true

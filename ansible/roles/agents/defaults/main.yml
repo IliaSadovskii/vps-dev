@@ -1,0 +1,53 @@
+# CLI агентов на хост.
+#
+# Список провайдеров задаётся не здесь, а в servers.yml: dev_agent_clis.
+# Здесь — только то, что от имени в списке нужно, чтобы его поставить
+# и потом сказать человеку, куда войти.
+
+# Имя в dev_agent_clis -> npm-пакет, который его ставит.
+#
+# Добавить провайдера — дописать строку. Ничего в tasks/ трогать не надо:
+# Kandev говорит со всеми CLI агентов через ACP одинаково, и обвязке
+# не важно, чей это пакет.
+#
+# Имена пакетов подтверждены `npm view <имя> version` 2026-09-02:
+#   claude   -> @anthropic-ai/claude-code  (2.1.258 на день проверки)
+#   codex    -> @openai/codex              (0.152.1)
+#   gemini   -> @google/gemini-cli         (0.58.0)
+#   opencode -> opencode-ai                (1.18.26)
+agents_npm_packages:
+  claude: "@anthropic-ai/claude-code"
+  codex: "@openai/codex"
+  gemini: "@google/gemini-cli"
+  opencode: "opencode-ai"
+
+# Версии пакетов НЕ закрепляем, в отличие от Kandev. У Kandev риск —
+# автомигрирующая база, которую нельзя откатить; у этих CLI локального
+# состояния с миграциями нет, а разработчик, наоборот, хочет свежую
+# версию своего же инструмента. state: latest — повторный прогон
+# обновит их до текущей, не сломав идемпотентность день в день.
+agents_npm_state: latest
+
+# Команда первого входа для каждого провайдера — печатается чеклистом
+# в конце роли. Сама роль войти не может: свой OAuth в чужом коде
+# запрещён условиями всех перечисленных провайдеров, входить должен
+# человек, браузером.
+#
+# Подтверждено документацией/README провайдеров 2026-09-02:
+#   claude   -> `claude auth login`              (docs.claude.com/.../cli-reference)
+#   codex    -> запустить `codex`, выбрать в меню «Sign in with ChatGPT»
+#               (github.com/openai/codex — отдельной подкоманды логина нет)
+#   gemini   -> запустить `gemini`, выбрать в меню «Sign in with Google»
+#               (github.com/google-gemini/gemini-cli)
+#   opencode -> `opencode auth login`             (opencode.ai/docs/cli)
+agents_login_commands:
+  claude: "claude auth login"
+  codex: "codex   # в меню выбрать «Sign in with ChatGPT»"
+  gemini: "gemini   # в меню выбрать «Sign in with Google»"
+  opencode: "opencode auth login"
+
+# NodeSource: версия закреплена по мажорной ветке, а не «текущая LTS» —
+# иначе тот же прогон в разные дни ставил бы разный Node. 22 — минимум,
+# который требует самый требовательный из CLI выше (@anthropic-ai/claude-code,
+# engines.node >=22.0.0 на день проверки).
+agents_node_major: "22"
