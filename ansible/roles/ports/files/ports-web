@@ -305,7 +305,7 @@ while IFS= read -r g; do
     [[ "$group" == "$g" ]] || continue
     ename="$(printf '%s' "$name" | esc)"; edesc="$(printf '%s' "$desc" | esc)"
     if [[ "$web" == 1 ]]; then
-      printf '  <div class="row"><span class="port">%s</span><a href="https://%s:%s%s">%s</a><span class="desc">%s</span></div>\n' \
+      printf '  <div class="row"><span class="port">%s</span><a href="https://%s:%s%s" target="_blank" rel="noopener">%s</a><span class="desc">%s</span></div>\n' \
         "$p" "$dnsname" "$p" "${INFRA_PATH[$p]:-/}" "$ename" "$edesc"
     else
       printf '  <div class="row int"><span class="port">%s</span><span class="name">%s</span><span class="desc">%s</span></div>\n' \

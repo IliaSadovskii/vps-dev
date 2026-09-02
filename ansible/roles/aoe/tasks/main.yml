@@ -102,9 +102,14 @@
     group: "{{ base_deploy_user }}"
     mode: '0755'
 
-# Файлами настроек владеет сам aoe: TUI и веб-панель пишут в них при каждом
-# сохранении и держат все ключи. Поэтому не шаблон целиком, а правка ровно
-# двух строк — остальное остаётся как выставил человек.
+# Файлом настроек владеет сам aoe: TUI и веб-панель пишут в него при каждом
+# сохранении и держат все ключи. Поэтому не шаблон целиком, а правка одной
+# строки — остальное остаётся как выставил человек.
+#
+# Папка проектов для диалога новой сессии здесь не задаётся: веб-панель
+# показывает обзор только внутри домашнего каталога, поэтому настоящий
+# каталог проектов лежит в ~/projects, а /projects — ссылка на него
+# (см. roles/base/tasks/projects-dir.yml). Папка видна первой строкой.
 
 - name: Раздел [session] в config.toml есть
   ansible.builtin.lineinfile:
@@ -122,21 +127,6 @@
     regexp: '^default_tool\s*='
     line: 'default_tool = "{{ dev_agent_clis[0] | default("claude") }}"'
     insertafter: '^\[session\]\s*$'
-    owner: "{{ base_deploy_user }}"
-    group: "{{ base_deploy_user }}"
-    mode: '0644'
-
-- name: Обзор папок в диалоге новой сессии начинается с {{ base_projects_dir }}
-  # last_browse_dir — служебная запись aoe (state.toml), обычно её пишет сам
-  # диалог после первого выбора; на новой машине выбирать ещё нечего, и без
-  # неё обзор начинался бы из домашнего каталога. Ключ верхнего уровня —
-  # кладём в начало файла, до любых [секций].
-  ansible.builtin.lineinfile:
-    path: "/home/{{ base_deploy_user }}/.config/agent-of-empires/state.toml"
-    regexp: '^last_browse_dir\s*='
-    line: 'last_browse_dir = "{{ base_projects_dir }}"'
-    insertbefore: BOF
-    create: true
     owner: "{{ base_deploy_user }}"
     group: "{{ base_deploy_user }}"
     mode: '0644'
