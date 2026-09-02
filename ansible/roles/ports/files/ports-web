@@ -35,9 +35,9 @@ dnsname="$(tailscale status --json 2>/dev/null | grep -m1 '"DNSName"' | cut -d'"
 [[ -n "$dnsname" ]] || { echo "ports-web: tailscale не в сети, выхожу" >&2; exit 0; }
 
 # --- инфра-сервисы (не в реестре проектов) ---
-declare -A INFRA_LABEL=( [8060]="Dozzle" [8061]="DbGate" [$DASH_PORT]="Дашборд" [8063]="ntfy" [8064]="Kandev" [8065]="Agent of Empires" )
+declare -A INFRA_LABEL=( [8060]="Dozzle" [8061]="DbGate" [$DASH_PORT]="Дашборд" [8064]="Kandev" [8065]="Agent of Empires" )
 declare -A INFRA_DESC=( [8060]="логи docker-контейнеров" [8061]="клиент баз данных" [$DASH_PORT]="эта страница"
-                        [8063]="уведомления" [8064]="доска задач для агентов" [8065]="чат с агентом в браузере" )
+                        [8064]="доска задач для агентов" [8065]="чат с агентом в браузере" )
 
 # --- разбор реестра: порт → проект и порт → человекочитаемое имя сервиса ------
 declare -A PORT_PROJECT PORT_LABEL

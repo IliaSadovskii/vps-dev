@@ -12,6 +12,9 @@
     path: /usr/bin/npm
   register: kandev_npm_bin
   check_mode: false
+  # Только в сухом прогоне: на настоящем это лишний круг по SSH,
+  # а условия ниже без сухого прогона и так истинны.
+  when: ansible_check_mode
 
 - name: Пакет kandev — версия точная, без latest
   # Почему точная — см. комментарий у kandev_version в servers.yml:
@@ -23,7 +26,7 @@
     global: true
     state: present
   register: kandev_npm
-  when: not (ansible_check_mode and not kandev_npm_bin.stat.exists)
+  when: not (ansible_check_mode and not (kandev_npm_bin.stat.exists | default(false)))
 
 - name: Утилита sqlite3 — им же снимаем базу
   ansible.builtin.apt:
@@ -139,13 +142,16 @@
     path: /etc/systemd/system/kandev-backup.timer
   register: kandev_backup_timer_exists
   check_mode: false
+  # Только в сухом прогоне: на настоящем это лишний круг по SSH,
+  # а условия ниже без сухого прогона и так истинны.
+  when: ansible_check_mode
 
 - name: Включить и запустить таймер снимка
   ansible.builtin.systemd:
     name: kandev-backup.timer
     enabled: true
     state: started
-  when: not (ansible_check_mode and not kandev_backup_timer_exists.stat.exists)
+  when: not (ansible_check_mode and not (kandev_backup_timer_exists.stat.exists | default(false)))
 
 - name: Куда смотреть
   ansible.builtin.debug:

@@ -13,8 +13,8 @@
   ansible.builtin.debug:
     msg:
       - "ntfy_topic не задан — присмотр heartbeat не настроен."
-      - "Переменную задаёт роль ntfy; без неё уведомлениям некуда идти,"
-      - "и эта роль ничего не делает."
+      - "Без него уведомлениям некуда идти, и эта роль ничего не делает."
+      - "Задай VPS_DEV_NTFY_TOPIC в секретах форка или в .env."
   when: ntfy_topic | default('', true) | length == 0
 
 - name: Настроить присмотр
@@ -55,6 +55,9 @@
         path: /etc/systemd/system/vps-dev-heartbeat.timer
       register: heartbeat_timer_unit
       check_mode: false
+      # Только в сухом прогоне: на настоящем это лишний круг по SSH,
+      # а условия ниже без сухого прогона и так истинны.
+      when: ansible_check_mode
 
     - name: Включить расписание
       ansible.builtin.systemd_service:
@@ -62,7 +65,7 @@
         state: started
         enabled: true
         daemon_reload: true
-      when: not (ansible_check_mode and not heartbeat_timer_unit.stat.exists)
+      when: not (ansible_check_mode and not (heartbeat_timer_unit.stat.exists | default(false)))
 
     - name: Проверить прямо сейчас
       # Не дожидаться первого срабатывания таймера: если беда на машине уже
@@ -73,13 +76,9 @@
       # комментарий про молчание как норму) — на здоровой машине эта задача
       # просто ничего никуда не пошлёт.
       #
-      # Неудача прогон НЕ роняет. Роль идёт РАНЬШЕ ntfy (см. site.yml):
-      # на первом прогоне сервера уведомлений ещё нет, а повод сказать
-      # что-то у скрипта почти наверняка есть — после обновления системы
-      # в pre_tasks лежит /var/run/reboot-required. Скрипт честно вернул бы
-      # ошибку «не доставлено», и вся настройка остановилась бы здесь,
-      # не дойдя ни до доски, ни до самого ntfy. Таймер повторит через
-      # heartbeat_interval, когда сервер уведомлений уже поднят.
+      # Неудача прогон НЕ роняет: ntfy.sh — чужая служба, и её недоступность
+      # не повод оставить машину недонастроенной. Таймер повторит через
+      # heartbeat_interval.
       ansible.builtin.command: /usr/local/bin/vps-dev-heartbeat
       register: heartbeat_now
       changed_when: false

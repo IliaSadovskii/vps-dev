@@ -21,6 +21,9 @@
     path: "{{ base_projects_dir }}"
   register: base_projects_dir_stat
   check_mode: false
+  # Только в сухом прогоне: на настоящем это лишний круг по SSH,
+  # а условия ниже без сухого прогона и так истинны.
+  when: ansible_check_mode
 
 - name: ACL по умолчанию на новые файлы в {{ base_projects_dir }}
   # Setgid на каталоге сам по себе покрывает поддиректории, но не файлы,
@@ -33,4 +36,4 @@
     permissions: rwx
     default: true
     state: present
-  when: not (ansible_check_mode and not base_projects_dir_stat.stat.exists)
+  when: not (ansible_check_mode and not (base_projects_dir_stat.stat.exists | default(false)))

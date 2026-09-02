@@ -61,8 +61,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Образ с Ansible собирается минуту, а меняется редко — кэшируем
+      # по содержимому runner/. Попал в кэш — загрузка за секунды.
+      - name: Кэш образа с Ansible
+        id: runner-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/vps-dev-ansible.tar
+          key: runner-image-${{ hashFiles('runner/**') }}
+
       - name: Собрать образ с Ansible
-        run: docker build -t vps-dev-ansible ./runner
+        run: |
+          if [ -f /tmp/vps-dev-ansible.tar ]; then
+            docker load -i /tmp/vps-dev-ansible.tar
+          else
+            docker build -t vps-dev-ansible ./runner
+            docker save -o /tmp/vps-dev-ansible.tar vps-dev-ansible
+          fi
 
       - name: ansible-lint и shellcheck
         run: make lint
@@ -125,8 +140,23 @@ jobs:
           oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
           tags: tag:ci
 
+      # Образ с Ansible собирается минуту, а меняется редко — кэшируем
+      # по содержимому runner/. Попал в кэш — загрузка за секунды.
+      - name: Кэш образа с Ansible
+        id: runner-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/vps-dev-ansible.tar
+          key: runner-image-${{ hashFiles('runner/**') }}
+
       - name: Собрать образ с Ansible
-        run: docker build -t vps-dev-ansible ./runner
+        run: |
+          if [ -f /tmp/vps-dev-ansible.tar ]; then
+            docker load -i /tmp/vps-dev-ansible.tar
+          else
+            docker build -t vps-dev-ansible ./runner
+            docker save -o /tmp/vps-dev-ansible.tar vps-dev-ansible
+          fi
 
       - name: ${{ inputs.mode }}
         env:

@@ -15,7 +15,7 @@
 kandev_home_dir: /var/lib/kandev
 
 # Порт — из общего для машины реестра инфраструктурных портов (см. README
-# vps-dev): 8060 Dozzle, 8061 DbGate, 8062 дашборд, 8063 ntfy, 8064 — Kandev.
+# vps-dev): 8060 Dozzle, 8061 DbGate, 8062 дашборд, 8064 — Kandev.
 kandev_port: 8064
 
 # Автопоиск репозиториев на машине. По умолчанию у Kandev это пустой

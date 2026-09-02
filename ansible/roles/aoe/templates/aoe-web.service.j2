@@ -9,19 +9,23 @@ Type=simple
 # запускает Kandev (roles/kandev): aoe открывает их же tmux-сессии,
 # и без общего логина ему было бы нечем говорить с провайдерами.
 User={{ base_deploy_user }}
-# Только частная сеть машины: наружу отдаёт ports-web через общий прокси,
-# как и остальные внутренние службы. Аутентификацию оставляем во
-# встроенном режиме по умолчанию (--auth token, разовая ссылка с токеном
-# в логе при каждом старте) — сам aoe явно предупреждает, что без нужды
-# отключать её не стоит: «Anyone with network access to this port can
-# control your agent sessions».
+# Только loopback: в частную сеть отдаёт ports-web через общий прокси,
+# как и остальные службы машины.
+#
+# --auth none: границу держит Tailscale, а не пароль, — ровно так же, как
+# у Kandev, Dozzle и DbGate на этой машине. Встроенный режим по умолчанию
+# (--auth token) печатает разовую ссылку в журнал, и с дашборда панель
+# не открывалась бы без похода в journalctl. Sam aoe предупреждает: «Anyone
+# with network access to this port can control your agent sessions» —
+# на этой машине сетевой доступ к порту есть только у участников частной
+# сети, и у них он и так есть через Kandev.
 #
 # За обратным прокси (tailscale serve → vps-proxy → сюда): TLS терминирует
-# tailscale, поэтому --behind-proxy (cookie с Secure, доверять
-# X-Forwarded-For с loopback), а имя машины и её origin с нестандартным
-# портом надо перечислить явно — иначе aoe отвергает запрос по Host
-# как попытку DNS rebinding.
-ExecStart={{ aoe_install_dir }}/aoe serve --host 127.0.0.1 --port {{ aoe_web_port }}{% if aoe_tailnet_host | default('') | length > 0 %} --behind-proxy --allowed-host {{ aoe_tailnet_host }} --allowed-origin https://{{ aoe_tailnet_host }}:{{ aoe_web_port }}{% endif %}
+# tailscale, поэтому --behind-proxy (доверять X-Forwarded-For с loopback,
+# без него --auth none за не-loopback не разрешён), а имя машины и её
+# origin с нестандартным портом надо перечислить явно — иначе aoe
+# отвергает запрос по Host как попытку DNS rebinding.
+ExecStart={{ aoe_install_dir }}/aoe serve --host 127.0.0.1 --port {{ aoe_web_port }} --auth none --behind-proxy{% if aoe_tailnet_host | default('') | length > 0 %} --allowed-host {{ aoe_tailnet_host }} --allowed-origin https://{{ aoe_tailnet_host }}:{{ aoe_web_port }}{% endif %}
 
 Restart=on-failure
 RestartSec=5

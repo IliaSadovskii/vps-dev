@@ -141,6 +141,9 @@
         path: /etc/systemd/system/aoe-web.service
       register: aoe_web_unit_exists
       check_mode: false
+      # Только в сухом прогоне: на настоящем это лишний круг по SSH,
+      # а условия ниже без сухого прогона и так истинны.
+      when: ansible_check_mode
 
     - name: Веб-панель включена и работает
       # restarted — если сменился бинарник или юнит, иначе просто started:
@@ -149,15 +152,14 @@
         name: aoe-web
         enabled: true
         state: "{{ 'restarted' if (aoe_installed.changed | default(false) or aoe_web_unit.changed) else 'started' }}"
-      when: not (ansible_check_mode and not aoe_web_unit_exists.stat.exists)
+      when: not (ansible_check_mode and not (aoe_web_unit_exists.stat.exists | default(false)))
 
     - name: Куда смотреть
       ansible.builtin.debug:
         msg: >-
           Веб-панель aoe: https://{{ aoe_tailnet_host | default('<машина>.ts.net', true) }}:{{ aoe_web_port }}
-          — только из частной сети, ссылка на дашборде. Вход по токену:
-          `sudo journalctl -u aoe-web | grep token` покажет ссылку, в ней
-          замени 127.0.0.1:{{ aoe_web_port }} на адрес выше.
+          — только из частной сети, ссылка на дашборде. Пароля нет:
+          границу держит Tailscale, как и у Kandev.
 
 - name: Веб-панель выключена
   ansible.builtin.debug:

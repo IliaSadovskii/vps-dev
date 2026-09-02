@@ -63,11 +63,14 @@
         path: /usr/bin/npm
       register: agents_npm_bin
       check_mode: false
+      # Только в сухом прогоне: на настоящем это лишний круг по SSH,
+      # а условия ниже без сухого прогона и так истинны.
+      when: ansible_check_mode
 
     - name: Сказать, почему в сухом прогоне CLI не проверяются
       ansible.builtin.debug:
         msg: "Сухой прогон: npm ещё не установлен, проверку CLI агентов пропускаю."
-      when: ansible_check_mode and not agents_npm_bin.stat.exists
+      when: ansible_check_mode and not (agents_npm_bin.stat.exists | default(false))
 
     - name: "CLI агентов: {{ dev_agent_clis | join(', ') }}"
       community.general.npm:
@@ -75,7 +78,7 @@
         global: true
         state: "{{ agents_npm_state }}"
       loop: "{{ dev_agent_clis }}"
-      when: not (ansible_check_mode and not agents_npm_bin.stat.exists)
+      when: not (ansible_check_mode and not (agents_npm_bin.stat.exists | default(false)))
 
     - name: Чеклист — куда войти человеку
       # Автоматизировать нельзя: свой OAuth в чужом коде запрещён условиями

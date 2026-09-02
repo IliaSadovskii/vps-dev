@@ -17,6 +17,9 @@
 - name: Сервер разработки с агентами
   hosts: dev
   become: true
+  # Только базовые факты: полный сбор (железо, диски, сеть) занимает
+  # секунды на каждом прогоне, а из него здесь ничего не читается.
+  gather_subset: [min]
 
   pre_tasks:
     - name: Проверить, что система та, под которую всё написано
@@ -36,8 +39,7 @@
       ansible.builtin.debug:
         msg: >
           {{ inventory_hostname }} ({{ ansible_host }}),
-          {{ ansible_processor_vcpus }} ядер,
-          {{ (ansible_memtotal_mb / 1024) | round(1) }} ГБ памяти,
+          {{ ansible_distribution }} {{ ansible_distribution_version }},
           пользователь {{ ansible_user }}
       tags: always
 
@@ -59,6 +61,9 @@
         path: /usr/bin/dockerd
       register: dev_dockerd
       check_mode: false
+      # Только в сухом прогоне: на настоящем это лишний круг по SSH,
+      # а условия ниже без сухого прогона и так истинны.
+      when: ansible_check_mode
       tags: always
 
     - name: Сказать, что в сухом прогоне Docker пропускается
@@ -67,7 +72,7 @@
           Сухой прогон: Docker ещё не установлен — роль dockerd пропускаю.
           Настоящий прогон поставит движок и запишет daemon.json
           (см. roles/dockerd/defaults/main.yml).
-      when: ansible_check_mode and not dev_dockerd.stat.exists
+      when: ansible_check_mode and not (dev_dockerd.stat.exists | default(false))
       tags: always
 
   roles:
@@ -123,7 +128,7 @@
     - role: dockerd
       tags: [docker, dockerd]
       # Сухой прогон на машине без Docker — см. pre_tasks «Есть ли уже Docker».
-      when: not (ansible_check_mode and not dev_dockerd.stat.exists)
+      when: not (ansible_check_mode and not (dev_dockerd.stat.exists | default(false)))
       vars:
         docker_install_compose_plugin: true
         docker_install_compose: false
@@ -133,7 +138,7 @@
     # только с работающим запасным путём.
     #
     # И как можно раньше в остальном: всё, что идёт ниже, ходит в чужие
-    # службы и умеет на них упасть — в реестры пакетов, в npm, на ntfy.
+    # службы и умеет на них упасть — в реестры пакетов, в npm, на ntfy.sh.
     # Стой firewall последней, недоступность любой из них оставила бы
     # свежую машину с открытым публичным SSH.
     - role: firewall
@@ -172,11 +177,6 @@
     # ни один порт БД наружу открывать не надо. Аналога у листейта нет.
     - role: dbclient
       tags: [dbclient]
-
-    # Свой сервер уведомлений. До kandev: seed прописывает его адрес
-    # провайдером уведомлений в самой доске.
-    - role: ntfy
-      tags: [ntfy]
 
     # CLI агентов на хост. До kandev и aoe: оба их запускают, и логин
     # у них общий — ровно поэтому и на хост, а не в два контейнера.

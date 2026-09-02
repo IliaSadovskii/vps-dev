@@ -22,10 +22,13 @@
     path: /usr/lib/systemd/system/fail2ban.service
   register: base_fail2ban_unit
   check_mode: false
+  # Только в сухом прогоне: на настоящем это лишний круг по SSH,
+  # а условия ниже без сухого прогона и так истинны.
+  when: ansible_check_mode
 
 - name: Служба fail2ban включена
   ansible.builtin.systemd_service:
     name: fail2ban
     state: started
     enabled: true
-  when: not (ansible_check_mode and not base_fail2ban_unit.stat.exists)
+  when: not (ansible_check_mode and not (base_fail2ban_unit.stat.exists | default(false)))

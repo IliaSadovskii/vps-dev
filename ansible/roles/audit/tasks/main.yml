@@ -46,11 +46,14 @@
     path: /etc/audit/auditd.conf
   register: audit_conf
   check_mode: false
+  # Только в сухом прогоне: на настоящем это лишний круг по SSH,
+  # а условия ниже без сухого прогона и так истинны.
+  when: ansible_check_mode
 
 - name: Сказать, почему в сухом прогоне журнал действий не проверяется
   ansible.builtin.debug:
     msg: "Сухой прогон: auditd ещё не установлен, настройку размера и запуск службы пропускаю."
-  when: ansible_check_mode and not audit_conf.stat.exists
+  when: ansible_check_mode and not (audit_conf.stat.exists | default(false))
 
 - name: Размер журнала
   # Без предела журнал растёт, пока не кончится диск, и тогда auditd
@@ -69,11 +72,11 @@
     - { key: admin_space_left_action, value: SYSLOG }
     - { key: disk_full_action, value: SYSLOG }
   notify: Перезапустить журнал действий
-  when: not (ansible_check_mode and not audit_conf.stat.exists)
+  when: not (ansible_check_mode and not (audit_conf.stat.exists | default(false)))
 
 - name: Служба журнала работает
   ansible.builtin.systemd_service:
     name: auditd
     state: started
     enabled: true
-  when: not (ansible_check_mode and not audit_conf.stat.exists)
+  when: not (ansible_check_mode and not (audit_conf.stat.exists | default(false)))

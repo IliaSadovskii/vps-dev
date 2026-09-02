@@ -31,7 +31,7 @@
    | `TAILSCALE_OAUTH_CLIENT_ID`, `TAILSCALE_OAUTH_SECRET` | клиент OAuth с тегом `tag:ci`: им раннер входит в сеть на время прогона |
    | `TAILSCALE_OAUTH_SERVER_CLIENT_ID`, `TAILSCALE_OAUTH_SERVER_SECRET` | клиент OAuth с тегом `tag:server` и правом `auth_keys` на запись: им машине выпускается ключ на один прогон |
    | `VPS_DEV_ROOT_PASSWORD` | пароль root для веб-консоли провайдера |
-   | `VPS_DEV_NTFY_TOPIC` | имя топика уведомлений, любая строка |
+   | `VPS_DEV_NTFY_TOPIC` | топик на ntfy.sh, куда машина шлёт уведомления. Длинная случайная строка: на публичном сервере имя топика — это пароль |
 
    В ACL Tailscale должны быть объявлены `tag:ci` и `tag:server`, `tag:ci`
    и твои устройства должны иметь доступ к `tag:server`. В Settings → DNS
