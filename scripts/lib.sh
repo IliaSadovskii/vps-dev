@@ -523,7 +523,10 @@ ensure_known_host() {
 # это приводило к попытке зайти под root, вход которому закрыт.
 #
 # Печатает флаг для ansible-playbook: пусто — идём под пользователем из
-# реестра. Именно -e, а не -u: переменная из инвентаря сильнее флага.
+# реестра. Именно -e и именно dev_bootstrap_user, а не ansible_user:
+# переменная из инвентаря сильнее -u, а extra-var ansible_user была бы
+# сильнее set_fact, которым роль base переключается на dev посреди
+# прогона (см. servers.yml, ansible_user).
 connect_flags() {
     local name="$1" addr="$2"
     require_ssh_key
@@ -540,7 +543,7 @@ connect_flags() {
            -o UserKnownHostsFile="$KNOWN_HOSTS" \
            -i "$SSH_KEY" "root@${addr}" true >/dev/null 2>&1; then
         say "${name}: пользователя dev ещё нет, иду под root" >&2
-        printf '%s' "-e ansible_user=root"
+        printf '%s' "-e dev_bootstrap_user=root"
         return 0
     fi
 

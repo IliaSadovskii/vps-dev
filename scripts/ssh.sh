@@ -14,7 +14,10 @@ name="${PICKED[0]}"
 addr="$(server_address "$name")"
 ensure_known_host "$name" "$addr"
 
-ssh_user="$(ansible_run ansible-inventory --host "$name" | jq -r '.ansible_user // empty')"
+# dev_login_user, а не ansible_user: последний в реестре — шаблон
+# (на свежей машине обвязка подставляет туда root), и ansible-inventory
+# отдаёт его нераскрытым.
+ssh_user="$(ansible_run ansible-inventory --host "$name" | jq -r '.dev_login_user // empty')"
 [ -n "$ssh_user" ] || die "В реестре у машины ${name} не указан пользователь"
 
 say "${ssh_user}@${addr}"
