@@ -1,0 +1,78 @@
+# Ansible и наборы модулей на машине. См. defaults/main.yml.
+
+- name: Пакет pipx
+  # Из Ubuntu, а не pip: apt-версия Ansible (2.16) старее образа раннера,
+  # а pipx ставит ровно ту, что закреплена.
+  ansible.builtin.apt:
+    name: pipx
+    state: present
+
+- name: Ansible {{ pull_ansible_version }}
+  ansible.builtin.command:
+    cmd: "pipx install ansible=={{ pull_ansible_version }}"
+    creates: "{{ pull_pipx_home }}/venvs/ansible"
+  environment:
+    PIPX_HOME: "{{ pull_pipx_home }}"
+    PIPX_BIN_DIR: "{{ pull_pipx_bin }}"
+
+- name: Стоит ли passlib в окружении Ansible
+  # Нужен фильтру password_hash (пароль root), см. runner/Dockerfile.
+  ansible.builtin.command:
+    cmd: "pipx runpip ansible show passlib"
+  environment:
+    PIPX_HOME: "{{ pull_pipx_home }}"
+    PIPX_BIN_DIR: "{{ pull_pipx_bin }}"
+  register: pull_passlib
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Библиотека passlib в окружение Ansible
+  ansible.builtin.command:
+    cmd: "pipx inject ansible passlib"
+  environment:
+    PIPX_HOME: "{{ pull_pipx_home }}"
+    PIPX_BIN_DIR: "{{ pull_pipx_bin }}"
+  when: pull_passlib.rc != 0
+  changed_when: true
+
+- name: Список наборов модулей и ролей
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/requirements.yml"
+    dest: "{{ pull_galaxy_dir }}/requirements.yml"
+    owner: root
+    group: root
+    mode: '0644'
+  register: pull_requirements
+
+- name: Наборы модулей
+  # ansible-galaxy сам пропускает то, что уже стоит той же версии.
+  ansible.builtin.command:
+    cmd: >-
+      {{ pull_pipx_bin }}/ansible-galaxy collection install
+      -r {{ pull_galaxy_dir }}/requirements.yml -p {{ pull_galaxy_dir }}/collections
+  register: pull_collections
+  changed_when: "'Nothing to do' not in pull_collections.stdout"
+  when: not ansible_check_mode
+
+- name: Роли
+  ansible.builtin.command:
+    cmd: >-
+      {{ pull_pipx_bin }}/ansible-galaxy role install
+      -r {{ pull_galaxy_dir }}/requirements.yml -p {{ pull_galaxy_dir }}/roles
+  register: pull_roles
+  changed_when: "'already installed' not in pull_roles.stdout"
+  when: not ansible_check_mode
+
+- name: Наборы и роли читаемы всем
+  # Прогон на машине идёт под {{ base_deploy_user }}, ставилось под root.
+  ansible.builtin.file:
+    path: "{{ pull_galaxy_dir }}"
+    state: directory
+    recurse: true
+    mode: "a+rX"
+  when: pull_collections is changed or pull_roles is changed or pull_requirements is changed
+
+- name: Сказать, как пойдёт следующий прогон
+  ansible.builtin.debug:
+    msg: "Ansible на машине. Следующий прогон обвязка выполнит на ней самой — в разы быстрее, журнал тот же."

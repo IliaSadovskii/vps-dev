@@ -1,0 +1,18 @@
+# Ansible на самой машине — ради скорости прогона.
+#
+# Первый прогон идёт с управляющей машины по SSH: на каждую задачу — круг
+# GitHub → Хельсинки через Tailscale, и 170 задач занимают три минуты.
+# Эта роль ставит на машину тот же Ansible, что в образе раннера, и те же
+# наборы модулей (ansible/requirements.yml). Начиная со следующего прогона
+# обвязка (scripts/run-playbook.sh) присылает репозиторий rsync'ом и
+# запускает playbook на месте, а вывод стримит в журнал GitHub Actions —
+# те же строки, те же ошибки, только задачи по 0,1 с вместо 1,5.
+#
+# Версия — та же, что в runner/Dockerfile, иначе два прогона разошлись бы.
+pull_ansible_version: "11.6.0"
+# Системный pipx: бинарники в /usr/local/bin, виртуальные окружения в /opt.
+pull_pipx_home: /opt/pipx
+pull_pipx_bin: /usr/local/bin
+# Куда ставятся наборы модулей и роли — тот же путь, что в образе раннера
+# (ansible.cfg: roles_path = roles:/usr/share/ansible/roles).
+pull_galaxy_dir: /usr/share/ansible

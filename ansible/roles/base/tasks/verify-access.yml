@@ -8,6 +8,13 @@
 #
 # Это то самое правило «сначала проверить доступ, потом закрывать старый».
 
+- name: Сказать, что в pull-режиме вход проверять нечем и незачем
+  # Прогон уже идёт на самой машине под {{ base_deploy_user }} с sudo —
+  # то есть новая дверь не просто открыта, мы в неё уже вошли.
+  ansible.builtin.debug:
+    msg: "Прогон идёт на самой машине под {{ base_deploy_user }} — вход уже подтверждён самим этим прогоном."
+  when: dev_pull_mode | default(false) | bool
+
 - name: Проверить вход под {{ base_deploy_user }}
   # Заходим на сервер его же средствами, как это сделал бы человек.
   # delegate_to: localhost — команда выполняется на управляющей машине
@@ -42,12 +49,15 @@
   changed_when: false
   failed_when: false
   check_mode: false
+  when: not (dev_pull_mode | default(false) | bool)
 
 - name: Остановиться, если вход не работает
   # В сухом прогоне на свежей машине пользователя ещё нет — проверять
   # нечего, и падение здесь остановило бы саму возможность посмотреть,
   # что вообще будет сделано.
-  when: not ansible_check_mode
+  when:
+    - not ansible_check_mode
+    - not (dev_pull_mode | default(false) | bool)
   ansible.builtin.assert:
     that: access_check.rc == 0
     fail_msg: >

@@ -200,6 +200,97 @@ ensure_machine_secrets() {
     export OVERRIDE_VPS_DEV_ROOT_PASSWORD="$rp"
 }
 
+# Значение секрета для текущей машины: подмена OVERRIDE_ИМЯ, иначе
+# машинный ключ, иначе общий. Одно правило на оба способа запуска.
+secret_value() {
+    local v="$1" ovr="OVERRIDE_$1"
+    if [ -n "${!ovr:-}" ]; then
+        printf '%s' "${!ovr}"
+    elif [ -n "${ANSIBLE_TARGET_MACHINE:-}" ]; then
+        env_get_for "$ANSIBLE_TARGET_MACHINE" "$v"
+    else
+        env_get "$v"
+    fi
+}
+
+# Строки «имя=значение» для файла окружения — всех секретов из SECRETS.
+secrets_env_lines() {
+    local v value
+    for v in "${SECRETS[@]}"; do
+        value="$(secret_value "$v")"
+        # Файл окружения — строки «имя=значение», и перенос строки внутри
+        # значения обрезал бы его молча. Сейчас таких секретов нет, но лучше
+        # упасть внятно, чем передать половину ключа.
+        case "$value" in
+            *$'\n'*) die "Значение ${v} содержит перенос строки — так его передать нельзя." ;;
+        esac
+        printf '%s=%s\n' "$v" "$value"
+    done
+}
+
+# --- Прогон на самой машине (pull-режим) --------------------------------------
+#
+# Первый прогон идёт по SSH задача за задачей: на свежей машине иначе никак.
+# Он же ставит на машину Ansible (roles/pull). Дальше обвязка присылает
+# репозиторий rsync'ом и запускает playbook на месте: задачи по 0,1 с
+# вместо 1,5, а вывод идёт в тот же журнал — GitHub остаётся кнопкой
+# и местом, где читают ошибки.
+#
+# Секреты доезжают файлом на tmpfs (/dev/shm) с правами 0600, через stdin
+# SSH, и стираются до запуска playbook: в аргументах команды и в `ps`
+# их нет. Открытая половина ключа обвязки передаётся переменной — она
+# и так публична, а роль base по ней проверяет, что не стирает наш ключ.
+readonly PULL_SRC='~/.vps-dev/src'
+
+ssh_opts() {
+    printf '%s' "-o BatchMode=yes -o ConnectTimeout=10 -o IdentitiesOnly=yes -o UserKnownHostsFile=${KNOWN_HOSTS} -i ${SSH_KEY}"
+}
+
+# Стоит ли на машине Ansible (его ставит roles/pull на первом прогоне).
+remote_has_ansible() {
+    local addr="$1"
+    # shellcheck disable=SC2046  # флаги должны разбиться на слова
+    ssh $(ssh_opts) "dev@${addr}" 'test -x /usr/local/bin/ansible-playbook' >/dev/null 2>&1
+}
+
+# ansible_pull_run ИМЯ АДРЕС [аргументы ansible-playbook…]
+ansible_pull_run() {
+    local name="$1" addr="$2"; shift 2
+    require_ssh_key
+    local opts; opts="$(ssh_opts)"
+
+    say "${name}: Ansible на самой машине — присылаю репозиторий"
+    # shellcheck disable=SC2086  # флаги должны разбиться на слова
+    rsync -az --delete --exclude .facts --exclude known_hosts \
+        -e "ssh ${opts}" \
+        "${ROOT_DIR}/ansible" "${ROOT_DIR}/servers.yml" "dev@${addr}:${PULL_SRC}/" \
+        || die "Не смог прислать репозиторий на ${name}"
+
+    local pubkey; pubkey="$(ssh-keygen -y -f "$SSH_KEY")"
+    local env_remote="/dev/shm/vps-dev-$$.env"
+
+    # Аргументы playbook — в одну строку, каждый экранирован для удалённой
+    # оболочки: имена машин, метки и -e без пробелов, но %q не даст
+    # ошибиться, если что-то появится.
+    local args="" a
+    for a in "$@" "-e" "dev_pull_mode=true" "-e" "dev_control_pubkey=${pubkey}"; do
+        args+=" $(printf '%q' "$a")"
+    done
+
+    # shellcheck disable=SC2086
+    secrets_env_lines | ssh $opts "dev@${addr}" "umask 077; cat > ${env_remote}" \
+        || die "Не смог передать секреты на ${name}"
+
+    # Файл окружения читается и тут же стирается — до запуска playbook.
+    # shellcheck disable=SC2086
+    ssh $opts "dev@${addr}" "set -a; . ${env_remote}; set +a; rm -f ${env_remote};
+        cd ${PULL_SRC}/ansible &&
+        ANSIBLE_CONFIG=ansible.cfg \
+        ANSIBLE_COLLECTIONS_PATH=/usr/share/ansible/collections \
+        ANSIBLE_FORCE_COLOR=1 \
+        /usr/local/bin/ansible-playbook -i ../servers.yml,inventory -c local site.yml${args}"
+}
+
 # --- Запуск Ansible в контейнере ---------------------------------------------
 #
 # Контейнер работает от текущего пользователя, а не от root: иначе файлы,
@@ -225,27 +316,10 @@ ansible_run() {
     # Ctrl-C, ни при падении под set -e.
     ANSIBLE_ENV_FILE="$env_file"
 
-    local v ovr value
-    for v in "${SECRETS[@]}"; do
-        ovr="OVERRIDE_${v}"
-        if [ -n "${!ovr:-}" ]; then
-            value="${!ovr}"
-        elif [ -n "${ANSIBLE_TARGET_MACHINE:-}" ]; then
-            value="$(env_get_for "$ANSIBLE_TARGET_MACHINE" "$v")"
-        else
-            value="$(env_get "$v")"
-        fi
-        # Файл окружения — строки «имя=значение», и перенос строки внутри
-        # значения обрезал бы его молча. Сейчас таких секретов нет, но лучше
-        # упасть внятно, чем передать половину ключа.
-        case "$value" in
-            *$'\n'*) die "Значение ${v} содержит перенос строки — так его передать нельзя." ;;
-        esac
-        # Ansible читает переменные окружения через lookup('env'), поэтому
-        # передаём именно окружением, а не через -e: так значение не станет
-        # ещё и переменной сценария с тем же именем.
-        printf '%s=%s\n' "$v" "$value" >> "$env_file"
-    done
+    # Ansible читает переменные окружения через lookup('env'), поэтому
+    # передаём именно окружением, а не через -e: так значение не станет
+    # ещё и переменной сценария с тем же именем.
+    secrets_env_lines >> "$env_file"
 
     # Ключ монтируем, только если он есть: иначе Docker создал бы на его
     # месте пустой каталог, а команде вроде make lint он и не нужен.

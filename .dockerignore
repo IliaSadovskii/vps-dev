@@ -1,0 +1,5 @@
+# Контекст сборки образа — корень репозитория (ради ansible/requirements.yml),
+# но в образ идёт только runner/ и этот файл.
+*
+!runner/
+!ansible/requirements.yml

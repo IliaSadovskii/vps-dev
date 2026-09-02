@@ -68,14 +68,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/vps-dev-ansible.tar
-          key: runner-image-${{ hashFiles('runner/**') }}
+          key: runner-image-${{ hashFiles('runner/**', 'ansible/requirements.yml') }}
 
       - name: Собрать образ с Ansible
         run: |
           if [ -f /tmp/vps-dev-ansible.tar ]; then
             docker load -i /tmp/vps-dev-ansible.tar
           else
-            docker build -t vps-dev-ansible ./runner
+            docker build -t vps-dev-ansible -f runner/Dockerfile .
             docker save -o /tmp/vps-dev-ansible.tar vps-dev-ansible
           fi
 
@@ -147,14 +147,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/vps-dev-ansible.tar
-          key: runner-image-${{ hashFiles('runner/**') }}
+          key: runner-image-${{ hashFiles('runner/**', 'ansible/requirements.yml') }}
 
       - name: Собрать образ с Ansible
         run: |
           if [ -f /tmp/vps-dev-ansible.tar ]; then
             docker load -i /tmp/vps-dev-ansible.tar
           else
-            docker build -t vps-dev-ansible ./runner
+            docker build -t vps-dev-ansible -f runner/Dockerfile .
             docker save -o /tmp/vps-dev-ansible.tar vps-dev-ansible
           fi
 

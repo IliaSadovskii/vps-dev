@@ -91,14 +91,19 @@
   retries: 6
   delay: 5
   until: firewall_tailnet_login.rc == 0
-  when: firewall_ts_ip.rc == 0 and (firewall_ts_ip.stdout | trim | length > 0)
+  when:
+    - firewall_ts_ip.rc == 0 and (firewall_ts_ip.stdout | trim | length > 0)
+    # В pull-режиме прогон идёт на самой машине, куда обвязка только что
+    # пришла по частной сети, — это и есть проверка входа.
+    - not (dev_pull_mode | default(false) | bool)
 
 - name: Решить, можно ли закрывать публичный SSH
   ansible.builtin.set_fact:
     firewall_tailnet_ok: >-
       {{ firewall_ts_ip.rc == 0
          and (firewall_ts_ip.stdout | trim | length > 0)
-         and (firewall_tailnet_login.rc | default(1)) == 0 }}
+         and ((firewall_tailnet_login.rc | default(1)) == 0
+              or (dev_pull_mode | default(false) | bool)) }}
 
 - name: Узнать, включён ли уже брандмауэр
   # Нужно ниже: на уже настроенной машине публичный SSH закрыт, и если

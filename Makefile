@@ -74,11 +74,11 @@ reboot: image ## Перезагрузить машину и дождаться �
 .PHONY: image
 image: ## Собрать образ с Ansible, если его ещё нет
 	@docker image inspect $(ANSIBLE_IMAGE) >/dev/null 2>&1 \
-		|| docker build -t $(ANSIBLE_IMAGE) ./runner
+		|| docker build -t $(ANSIBLE_IMAGE) -f runner/Dockerfile .
 
 .PHONY: rebuild-image
 rebuild-image: ## Пересобрать образ после правки runner/
-	@docker build --no-cache -t $(ANSIBLE_IMAGE) ./runner
+	@docker build --no-cache -t $(ANSIBLE_IMAGE) -f runner/Dockerfile .
 
 .PHONY: lint
 lint: image ## Проверить код настройки

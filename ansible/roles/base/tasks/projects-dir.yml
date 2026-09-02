@@ -1,43 +1,63 @@
 # Каталог для репозиториев проектов.
 #
-# Настоящий каталог — в доме пользователя ({{ base_projects_real_dir }}),
-# а {{ base_projects_dir }} — символическая ссылка на него. Причина одна:
-# веб-панель Agent of Empires пускает обзор папок только внутрь домашнего
-# каталога и раскрывает ссылки перед проверкой, так что каталог вне дома
-# из неё не выбрать никак. Контракт проекта, Kandev, терминал и VS Code
-# продолжают говорить «/projects» — ссылка ведёт туда же.
+# {{ base_projects_dir }} — настоящий каталог: на него смотрят Kandev,
+# контракт проекта, терминал, VS Code. Веб-панель Agent of Empires при этом
+# пускает обзор папок только внутрь домашнего каталога, и ссылки раскрывает
+# до проверки — поэтому тот же каталог ещё и ПОДМОНТИРОВАН (bind) как
+# ~/projects: это одни и те же файлы, просто второй путь внутри дома.
 #
 # 2775: setgid-бит (2) — новые файлы и подкаталоги наследуют группу каталога,
 # а не группу того, кто их создал (root через Ansible, сам {{ base_deploy_user }}
 # из-под sudo, будущие контейнеры — не важно). Без него доступ к чужим
 # файлам внутри каталога расползался бы по владельцам случайным образом.
 
-- name: Каталог {{ base_projects_real_dir }}
+- name: Что сейчас на месте {{ base_projects_dir }}
+  ansible.builtin.stat:
+    path: "{{ base_projects_dir }}"
+  register: base_projects_stat
+  check_mode: false
+
+- name: Вернуть настоящий каталог на место ссылки
+  # Переходное: одна версия делала {{ base_projects_dir }} ссылкой на
+  # {{ base_projects_home_dir }}. Возвращаем: ссылку снимаем, каталог
+  # переносим на своё место вместе с содержимым.
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      rm {{ base_projects_dir }}
+      if [ -d {{ base_projects_home_dir }} ] && ! mountpoint -q {{ base_projects_home_dir }}; then
+        mv {{ base_projects_home_dir }} {{ base_projects_dir }}
+      fi
+    executable: /bin/bash
+  when: base_projects_stat.stat.exists and base_projects_stat.stat.islnk
+  changed_when: true
+
+- name: Каталог {{ base_projects_dir }}
   ansible.builtin.file:
-    path: "{{ base_projects_real_dir }}"
+    path: "{{ base_projects_dir }}"
     state: directory
     owner: "{{ base_deploy_user }}"
     group: "{{ base_deploy_user }}"
     mode: '2775'
 
-- name: Есть ли уже каталог {{ base_projects_real_dir }}
+- name: Есть ли уже каталог {{ base_projects_dir }}
   # Сухой прогон каталог не создаёт, а ACL на несуществующий путь не
   # ставится даже понарошку — задача ниже упала бы. На настроенной машине
   # каталог на месте.
   ansible.builtin.stat:
-    path: "{{ base_projects_real_dir }}"
+    path: "{{ base_projects_dir }}"
   register: base_projects_dir_stat
   check_mode: false
   # Только в сухом прогоне: на настоящем это лишний круг по SSH,
   # а условия ниже без сухого прогона и так истинны.
   when: ansible_check_mode
 
-- name: ACL по умолчанию на новые файлы в {{ base_projects_real_dir }}
+- name: ACL по умолчанию на новые файлы в {{ base_projects_dir }}
   # Setgid на каталоге сам по себе покрывает поддиректории, но не файлы,
   # созданные без принадлежности к группе через POSIX ACL (например, если
   # процесс явно сбрасывает umask). ACL по умолчанию закрывает и этот случай.
   ansible.posix.acl:
-    path: "{{ base_projects_real_dir }}"
+    path: "{{ base_projects_dir }}"
     entity: "{{ base_deploy_user }}"
     etype: group
     permissions: rwx
@@ -45,49 +65,20 @@
     state: present
   when: not (ansible_check_mode and not (base_projects_dir_stat.stat.exists | default(false)))
 
-- name: Что сейчас на месте {{ base_projects_dir }}
-  ansible.builtin.stat:
-    path: "{{ base_projects_dir }}"
-  register: base_projects_link_stat
-  check_mode: false
-
-- name: Что лежит в старом каталоге {{ base_projects_dir }}
-  # Машины, настроенные до появления ссылки, держат проекты прямо здесь.
-  ansible.builtin.command:
-    cmd: "find {{ base_projects_dir }} -mindepth 1 -maxdepth 1"
-  register: base_projects_old_contents
-  changed_when: false
-  check_mode: false
-  when:
-    - base_projects_link_stat.stat.exists
-    - base_projects_link_stat.stat.isdir
-    - not base_projects_link_stat.stat.islnk
-
-- name: Остановиться, если старый каталог не пуст
-  # Переносить чужие рабочие копии молча нельзя. Пустой каталог уберём
-  # сами, непустой — пусть решает человек.
-  ansible.builtin.assert:
-    that: base_projects_old_contents.stdout | trim | length == 0
-    fail_msg: >-
-      {{ base_projects_dir }} — настоящий каталог с содержимым. Теперь он
-      должен быть ссылкой на {{ base_projects_real_dir }}: перенеси проекты
-      туда (mv {{ base_projects_dir }}/* {{ base_projects_real_dir }}/),
-      удали пустой {{ base_projects_dir }} и прогони настройку заново.
-  when: base_projects_old_contents is not skipped
-
-- name: Убрать пустой старый каталог, чтобы поставить ссылку {{ base_projects_dir }}
-  ansible.builtin.command:
-    cmd: "rmdir {{ base_projects_dir }}"
-  when:
-    - base_projects_link_stat.stat.exists
-    - base_projects_link_stat.stat.isdir
-    - not base_projects_link_stat.stat.islnk
-  changed_when: true
-
-- name: Ссылка на настоящий каталог проектов — {{ base_projects_dir }}
+- name: Точка монтирования в доме пользователя
   ansible.builtin.file:
-    src: "{{ base_projects_real_dir }}"
-    dest: "{{ base_projects_dir }}"
-    state: link
+    path: "{{ base_projects_home_dir }}"
+    state: directory
     owner: "{{ base_deploy_user }}"
     group: "{{ base_deploy_user }}"
+    mode: '0755'
+
+- name: Тот же каталог виден и как {{ base_projects_home_dir }}
+  # bind, а не ссылка: ссылку веб-панель aoe раскрывает и отвергает как
+  # путь вне дома, а смонтированный каталог для неё — обычный каталог дома.
+  ansible.posix.mount:
+    path: "{{ base_projects_home_dir }}"
+    src: "{{ base_projects_dir }}"
+    fstype: none
+    opts: bind
+    state: mounted

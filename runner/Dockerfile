@@ -39,7 +39,9 @@ RUN apk add --no-cache \
 ENV ANSIBLE_COLLECTIONS_PATH=/usr/share/ansible/collections \
     ANSIBLE_COLLECTIONS_SCAN_SYS_PATH=False
 
-COPY requirements.yml /tmp/requirements.yml
+# Один файл на образ и на машину (roles/pull ставит те же наборы на сервер),
+# поэтому лежит в ansible/, а образ собирается из корня репозитория.
+COPY ansible/requirements.yml /tmp/requirements.yml
 RUN ansible-galaxy collection install -r /tmp/requirements.yml \
         -p /usr/share/ansible/collections \
     && ansible-galaxy role install -r /tmp/requirements.yml \

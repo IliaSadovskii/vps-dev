@@ -6,6 +6,11 @@
 #
 # Машины обходятся по очереди, а не все сразу: под каким пользователем
 # заходить, решается для каждой отдельно.
+#
+# Два способа прогона. Свежая машина — по SSH из контейнера с Ansible,
+# задача за задачей. Настроенная машина в частной сети — Ansible запускается
+# на ней самой (lib.sh, ansible_pull_run): репозиторий присылается rsync'ом,
+# вывод идёт сюда же. Разница только в скорости: минуты против секунд.
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -77,6 +82,17 @@ run_one() (
         OVERRIDE_TAILSCALE_AUTHKEY="$("${ROOT_DIR}/scripts/tailscale-key.sh")"
         export OVERRIDE_TAILSCALE_AUTHKEY
     fi
+    # Настроенная машина в частной сети, и Ansible на ней уже стоит —
+    # прогон на месте (см. lib.sh, ansible_pull_run). Иначе — по SSH:
+    # свежая машина, машина вне сети, или Ansible ещё не поставлен.
+    if [ "$state" = "known" ] && [ "$in_tailnet" = "true" ] && remote_has_ansible "$addr"; then
+        # shellcheck disable=SC2086  # флаги должны разбиться на слова
+        ansible_pull_run "$name" "$addr" --limit "$name" \
+            -e ansible_host="$addr" -e dev_in_tailnet="$in_tailnet" \
+            $CHECK ${TAGS:+--tags "$TAGS"}
+        return
+    fi
+
     # Адрес передаём явно: он найден в частной сети по имени машины,
     # а в реестре записан только публичный.
     # shellcheck disable=SC2086  # флаги должны разбиться на слова
