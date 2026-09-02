@@ -240,7 +240,8 @@ secrets_env_lines() {
 # SSH, и стираются до запуска playbook: в аргументах команды и в `ps`
 # их нет. Открытая половина ключа обвязки передаётся переменной — она
 # и так публична, а роль base по ней проверяет, что не стирает наш ключ.
-readonly PULL_SRC='~/.vps-dev/src'
+# Относительно домашнего каталога dev на машине — и для rsync, и для cd.
+readonly PULL_SRC='.vps-dev/src'
 
 ssh_opts() {
     printf '%s' "-o BatchMode=yes -o ConnectTimeout=10 -o IdentitiesOnly=yes -o UserKnownHostsFile=${KNOWN_HOSTS} -i ${SSH_KEY}"
@@ -277,12 +278,12 @@ ansible_pull_run() {
         args+=" $(printf '%q' "$a")"
     done
 
-    # shellcheck disable=SC2086
+    # shellcheck disable=SC2086,SC2029  # флаги должны разбиться на слова; подстановки — намеренно здесь
     secrets_env_lines | ssh $opts "dev@${addr}" "umask 077; cat > ${env_remote}" \
         || die "Не смог передать секреты на ${name}"
 
     # Файл окружения читается и тут же стирается — до запуска playbook.
-    # shellcheck disable=SC2086
+    # shellcheck disable=SC2086,SC2029  # флаги должны разбиться на слова; подстановки — намеренно здесь
     ssh $opts "dev@${addr}" "set -a; . ${env_remote}; set +a; rm -f ${env_remote};
         cd ${PULL_SRC}/ansible &&
         ANSIBLE_CONFIG=ansible.cfg \
