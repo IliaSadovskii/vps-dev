@@ -3,80 +3,52 @@
 # Смотреть, что происходит на машине, не заходя на неё по SSH и не листая
 # `docker logs` руками. Сервис инфраструктуры машины, а не проект — поэтому
 # живёт в roles/, а не в /projects.
+#
+# Контейнер слушает только 127.0.0.1. В частную сеть его отдаёт ports-web
+# (роль ports): тот же tailscale serve с TLS и та же строка на дашборде,
+# что и у любого проекта. Поэтому роли не нужен адрес Tailscale и она
+# не зависит от того, поднята ли сеть в момент прогона.
 
-- name: Узнать адрес машины в частной сети
-  # Слушать контейнер будет только его. Наружу журналы показывать нельзя:
-  # там и текст ошибок, и иногда содержимое запросов.
-  ansible.builtin.command:
-    cmd: tailscale ip -4
-  register: logs_ts_ip
-  changed_when: false
-  failed_when: false
+- name: Каталог с описанием контейнера
+  ansible.builtin.file:
+    path: "{{ logs_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Есть ли уже описание контейнера
+  ansible.builtin.stat:
+    path: "{{ logs_dir }}/compose.yaml"
+  register: logs_compose_exists
   check_mode: false
 
-# Важный урок из образца: раньше эта задача, не получив ответа от
-# `tailscale ip`, молча пропускала весь блок ниже — прогон завершался
-# успешно, а журналы оставались ненастроенными. Заметить это можно было
-# только открыв страницу и увидев, что она не отвечает. Теперь роль
-# говорит об этом сразу и вслух, при любом исходе.
-- name: Предупредить, если частной сети нет
+- name: Описание контейнера
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: "{{ logs_dir }}/compose.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+  register: logs_compose
+
+- name: Сказать, почему в сухом прогоне не поднимаю
   ansible.builtin.debug:
     msg:
-      - "Машина не в частной сети — журналы в браузере не настраиваю."
-      - "Слушать им больше нечего: наружу этот порт открывать нельзя."
-      - "Подними Tailscale и прогони настройку заново."
-  when: logs_ts_ip.rc != 0 or (logs_ts_ip.stdout | trim | length == 0)
-
-- name: Журналы в браузере
+      - "Сухой прогон на ненастроенной машине: подъём пропускаю."
+      - "Описания контейнера ещё нет, а создавать его сухой прогон не должен."
   when:
-    - logs_ts_ip.rc == 0
-    - logs_ts_ip.stdout | trim | length > 0
-  block:
+    - ansible_check_mode
+    - not logs_compose_exists.stat.exists
 
-    - name: Запомнить адрес
-      ansible.builtin.set_fact:
-        logs_tailscale_address: "{{ logs_ts_ip.stdout | trim }}"
+- name: Поднять
+  community.docker.docker_compose_v2:
+    project_src: "{{ logs_dir }}"
+    state: present
+    recreate: "{{ 'always' if logs_compose.changed else 'auto' }}"
+    pull: missing
+  when: not (ansible_check_mode and not logs_compose_exists.stat.exists)
 
-    - name: Каталог с описанием контейнера
-      ansible.builtin.file:
-        path: "{{ logs_dir }}"
-        state: directory
-        owner: root
-        group: root
-        mode: "0755"
-
-    - name: Есть ли уже описание контейнера
-      ansible.builtin.stat:
-        path: "{{ logs_dir }}/compose.yaml"
-      register: logs_compose_exists
-      check_mode: false
-
-    - name: Описание контейнера
-      ansible.builtin.template:
-        src: compose.yaml.j2
-        dest: "{{ logs_dir }}/compose.yaml"
-        owner: root
-        group: root
-        mode: "0644"
-      register: logs_compose
-
-    - name: Сказать, почему в сухом прогоне не поднимаю
-      ansible.builtin.debug:
-        msg:
-          - "Сухой прогон на ненастроенной машине: подъём пропускаю."
-          - "Описания контейнера ещё нет, а создавать его сухой прогон не должен."
-      when:
-        - ansible_check_mode
-        - not logs_compose_exists.stat.exists
-
-    - name: Поднять
-      community.docker.docker_compose_v2:
-        project_src: "{{ logs_dir }}"
-        state: present
-        recreate: "{{ 'always' if logs_compose.changed else 'auto' }}"
-        pull: missing
-      when: not (ansible_check_mode and not logs_compose_exists.stat.exists)
-
-    - name: Сказать, где смотреть
-      ansible.builtin.debug:
-        msg: "Журналы: http://{{ logs_tailscale_address }}:{{ logs_port }} — только из частной сети"
+- name: Сказать, где смотреть
+  ansible.builtin.debug:
+    msg: "Журналы: порт {{ logs_port }} на дашборде https://<машина>.ts.net/ — только из частной сети"

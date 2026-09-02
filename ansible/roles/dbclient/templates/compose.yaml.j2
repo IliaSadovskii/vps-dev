@@ -22,9 +22,9 @@ services:
     container_name: {{ dbclient_container_name }}
     restart: unless-stopped
     ports:
-      # Только адрес частной сети — то же самое решение и та же гонка
-      # с Tailscale при перезагрузке, что и в roles/logs.
-      - "{{ dbclient_tailscale_address }}:{{ dbclient_port }}:3000"
+      # Только loopback: в частную сеть отдаёт ports-web с TLS на том же
+      # номере порта, ссылка — на дашборде (см. roles/logs, тот же принцип).
+      - "127.0.0.1:{{ dbclient_port }}:3000"
     volumes:
       # Сохранённые подключения переживают пересоздание контейнера.
       - {{ dbclient_volume }}:/root/.dbgate

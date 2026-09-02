@@ -96,6 +96,29 @@
   when: aoe_web_enabled
   block:
 
+    - name: Узнать имя машины в частной сети
+      # aoe за обратным прокси принимает запросы только с заголовком Host
+      # из своего списка (защита от DNS rebinding): имя машины в tailnet
+      # надо передать ему явно — см. aoe-web.service.j2.
+      ansible.builtin.shell:
+        cmd: set -o pipefail; tailscale status --json | jq -r '.Self.DNSName // empty' | sed 's/\.$//'
+        executable: /bin/bash
+      register: aoe_dnsname
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Предупредить, если частной сети нет
+      ansible.builtin.debug:
+        msg:
+          - "Машина не в частной сети — веб-панель aoe поднимаю только на 127.0.0.1."
+          - "Подними Tailscale и прогони настройку заново: панель станет доступна из сети."
+      when: aoe_dnsname.rc != 0 or (aoe_dnsname.stdout | trim | length == 0)
+
+    - name: Запомнить имя
+      ansible.builtin.set_fact:
+        aoe_tailnet_host: "{{ aoe_dnsname.stdout | trim if aoe_dnsname.rc == 0 else '' }}"
+
     - name: Служба веб-панели
       ansible.builtin.template:
         src: aoe-web.service.j2
@@ -131,9 +154,10 @@
     - name: Куда смотреть
       ansible.builtin.debug:
         msg: >-
-          Веб-панель aoe: http://127.0.0.1:{{ aoe_web_port }} — только
-          из частной сети, наружу отдаёт ports-web. Ссылка с токеном входа
-          печатается в `journalctl -u aoe-web` при каждом старте службы.
+          Веб-панель aoe: https://{{ aoe_tailnet_host | default('<машина>.ts.net', true) }}:{{ aoe_web_port }}
+          — только из частной сети, ссылка на дашборде. Вход по токену:
+          `sudo journalctl -u aoe-web | grep token` покажет ссылку, в ней
+          замени 127.0.0.1:{{ aoe_web_port }} на адрес выше.
 
 - name: Веб-панель выключена
   ansible.builtin.debug:

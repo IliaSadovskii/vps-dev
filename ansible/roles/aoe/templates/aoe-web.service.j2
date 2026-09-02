@@ -15,7 +15,14 @@ User={{ base_deploy_user }}
 # в логе при каждом старте) — сам aoe явно предупреждает, что без нужды
 # отключать её не стоит: «Anyone with network access to this port can
 # control your agent sessions».
-ExecStart={{ aoe_install_dir }}/aoe serve --host 127.0.0.1 --port {{ aoe_web_port }}
+#
+# За обратным прокси (tailscale serve → vps-proxy → сюда): TLS терминирует
+# tailscale, поэтому --behind-proxy (cookie с Secure, доверять
+# X-Forwarded-For с loopback), а имя машины и её origin с нестандартным
+# портом надо перечислить явно — иначе aoe отвергает запрос по Host
+# как попытку DNS rebinding.
+ExecStart={{ aoe_install_dir }}/aoe serve --host 127.0.0.1 --port {{ aoe_web_port }}{% if aoe_tailnet_host | default('') | length > 0 %} --behind-proxy --allowed-host {{ aoe_tailnet_host }} --allowed-origin https://{{ aoe_tailnet_host }}:{{ aoe_web_port }}{% endif %}
+
 Restart=on-failure
 RestartSec=5
 

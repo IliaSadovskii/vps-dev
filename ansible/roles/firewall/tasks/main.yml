@@ -55,6 +55,62 @@
   # и всегда решали бы, что частной сети нет.
   check_mode: false
 
+- name: Проверить, что по частной сети реально входится
+  # Адрес в частной сети — ещё не дверь. Машина может стоять в сети и быть
+  # недостижимой для нас: правила доступа (ACL) не пускают наши устройства
+  # к tag:server, маршрут ещё не поднялся, ключ не подхватился. Закрыть 22
+  # по одному факту адреса — значит один раз остаться снаружи. Поэтому
+  # то же правило, что и у root-входа в roles/base: сначала открыть новую
+  # дверь и войти в неё, потом заколачивать старую.
+  #
+  # Входим с управляющей машины (контейнер с Ansible: в CI он в сети через
+  # tailscale/github-action, локально — через Tailscale хозяина) под
+  # {{ base_deploy_user }} по адресу частной сети. Несколько попыток:
+  # сразу после входа в сеть маршрут готов не мгновенно.
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -o
+      - BatchMode=yes
+      - -o
+      - ConnectTimeout=10
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -i
+      - "{{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}"
+      - "{{ base_deploy_user }}@{{ firewall_ts_ip.stdout | trim }}"
+      - "true"
+  delegate_to: localhost
+  become: false
+  register: firewall_tailnet_login
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  retries: 6
+  delay: 5
+  until: firewall_tailnet_login.rc == 0
+  when: firewall_ts_ip.rc == 0 and (firewall_ts_ip.stdout | trim | length > 0)
+
+- name: Решить, можно ли закрывать публичный SSH
+  ansible.builtin.set_fact:
+    firewall_tailnet_ok: >-
+      {{ firewall_ts_ip.rc == 0
+         and (firewall_ts_ip.stdout | trim | length > 0)
+         and (firewall_tailnet_login.rc | default(1)) == 0 }}
+
+- name: Узнать, включён ли уже брандмауэр
+  # Нужно ниже: на уже настроенной машине публичный SSH закрыт, и если
+  # сегодня проверка входа по частной сети не прошла (скажем, прогон идёт
+  # с машины вне сети), открывать 22 заново нельзя — это откат защиты.
+  # Открыть его можно только на свежей машине, где брандмауэр ещё не
+  # включался и это единственная дверь.
+  ansible.builtin.command: ufw status
+  register: firewall_ufw_status
+  changed_when: false
+  check_mode: false
+
 - name: Разрешить всё входящее из частной сети
   # Именно по имени устройства, а не по подсети: устройство существует
   # только пока Tailscale работает. Отвалится он — правило перестанет
@@ -75,7 +131,7 @@
     proto: udp
 
 - name: Закрыть публичный SSH
-  when: firewall_ts_ip.rc == 0 and (firewall_ts_ip.stdout | trim | length > 0)
+  when: firewall_tailnet_ok | bool
   block:
     - name: Убрать разрешение публичного SSH
       community.general.ufw:
@@ -87,15 +143,17 @@
     - name: Сказать, что вход теперь только через частную сеть
       ansible.builtin.debug:
         msg:
-          - "Публичный SSH закрыт. Вход: {{ firewall_ts_ip.stdout | trim }}"
+          - "Публичный SSH закрыт. Вход по частной сети проверен: {{ base_deploy_user }}@{{ firewall_ts_ip.stdout | trim }}"
           - "Запасной путь — веб-консоль провайдера, пароль root в менеджере паролей."
 
-- name: Оставить публичный SSH, пока частной сети нет
+- name: Оставить публичный SSH на свежей машине, пока частной сети нет
   # Молча оставить порт открытым нельзя: человек будет думать, что закрыт.
   # Но и закрывать нельзя — это единственная работающая дверь. Разрешение
   # ставим явно (а не полагаемся на то, что оно уже есть) — на свежей
   # машине до этой задачи ufw ещё ни разу не запускался.
-  when: firewall_ts_ip.rc != 0 or (firewall_ts_ip.stdout | trim | length == 0)
+  when:
+    - not (firewall_tailnet_ok | bool)
+    - "'Status: active' not in firewall_ufw_status.stdout"
   block:
     - name: Разрешить публичный SSH
       community.general.ufw:
@@ -103,12 +161,25 @@
         port: "{{ firewall_ssh_port }}"
         proto: tcp
 
-    - name: ВНИМАНИЕ — предупредить, что машина не в частной сети
+    - name: ВНИМАНИЕ — предупредить, что вход по частной сети не работает
       ansible.builtin.debug:
         msg:
-          - "ВНИМАНИЕ: машина не в частной сети, публичный SSH оставлен открытым."
-          - "Закрыть его сейчас значило бы отрезать себя от машины."
-          - "Разберись, почему не поднялся Tailscale, и прогони настройку заново."
+          - "ВНИМАНИЕ: вход на машину по частной сети не подтверждён, публичный SSH оставлен открытым."
+          - "Адрес в частной сети: {{ firewall_ts_ip.stdout | default('нет', true) | trim }}"
+          - "Ответ на попытку входа: {{ firewall_tailnet_login.stderr | default('машина не в сети', true) | trim }}"
+          - "Закрыть 22 сейчас значило бы отрезать себя от машины."
+          - "Проверь, что Tailscale поднялся, а управляющая машина и твои устройства допущены к tag:server, и прогони настройку заново."
+
+- name: ВНИМАНИЕ — на настроенной машине вход по частной сети не подтверждён
+  # Брандмауэр уже включён, 22 уже закрыт — ничего не трогаем, только
+  # говорим. Чаще всего это прогон с машины, которой нет в частной сети.
+  ansible.builtin.debug:
+    msg:
+      - "ВНИМАНИЕ: с этой управляющей машины вход по частной сети не подтверждён."
+      - "Брандмауэр уже настроен, правила не меняю. Если прогон идёт с машины вне сети — это ожидаемо."
+  when:
+    - not (firewall_tailnet_ok | bool)
+    - "'Status: active' in firewall_ufw_status.stdout"
 
 - name: Исходящие разрешены, входящие закрыты
   # Политика по умолчанию — для всего, что не разрешено правилом выше явно.

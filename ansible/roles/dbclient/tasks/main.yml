@@ -6,146 +6,119 @@
 # похода на порт цепляется к docker-СЕТИ, где живёт база, и достаёт до неё
 # по ИМЕНИ КОНТЕЙНЕРА (например metsomeone-db-1). База опознаётся по имени
 # образа — регэксп dbclient_db_image_pattern. Подключение идемпотентно:
-# к сети, в которой клиент уже состоит, повторно не подключаемся — этим
-# занимается сам docker (`network connect` на уже подключённом — не ошибка,
-# но мы всё равно проверяем явно, чтобы задача честно отчитывалась о changed).
+# к сети, в которой клиент уже состоит, повторно не подключаемся.
+#
+# Сам клиент слушает только 127.0.0.1; в частную сеть его отдаёт ports-web
+# с TLS на том же порту и ссылкой на дашборде (см. roles/logs).
 
-- name: Узнать адрес машины в частной сети
-  ansible.builtin.command:
-    cmd: tailscale ip -4
-  register: dbclient_ts_ip
-  changed_when: false
-  failed_when: false
+- name: Каталог с описанием контейнера
+  ansible.builtin.file:
+    path: "{{ dbclient_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Есть ли уже описание контейнера
+  ansible.builtin.stat:
+    path: "{{ dbclient_dir }}/compose.yaml"
+  register: dbclient_compose_exists
   check_mode: false
 
-- name: Предупредить, если частной сети нет
-  # Тот же урок, что и в roles/logs: молчаливый пропуск выглядел бы как
-  # успешная настройка, хотя клиент баз никто не поднял.
+- name: Описание контейнера
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: "{{ dbclient_dir }}/compose.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+  register: dbclient_compose
+
+- name: Сказать, почему в сухом прогоне не поднимаю
   ansible.builtin.debug:
     msg:
-      - "Машина не в частной сети — клиента баз данных не настраиваю."
-      - "Слушать ему больше нечего: наружу этот порт открывать нельзя."
-      - "Подними Tailscale и прогони настройку заново."
-  when: dbclient_ts_ip.rc != 0 or (dbclient_ts_ip.stdout | trim | length == 0)
-
-- name: Клиент баз данных
+      - "Сухой прогон на ненастроенной машине: подъём пропускаю."
+      - "Описания контейнера ещё нет, а создавать его сухой прогон не должен."
   when:
-    - dbclient_ts_ip.rc == 0
-    - dbclient_ts_ip.stdout | trim | length > 0
+    - ansible_check_mode
+    - not dbclient_compose_exists.stat.exists
+
+- name: Поднять
+  community.docker.docker_compose_v2:
+    project_src: "{{ dbclient_dir }}"
+    state: present
+    recreate: "{{ 'always' if dbclient_compose.changed else 'auto' }}"
+    pull: missing
+  when: not (ansible_check_mode and not dbclient_compose_exists.stat.exists)
+
+- name: Сказать, где клиент
+  ansible.builtin.debug:
+    msg: "DbGate: порт {{ dbclient_port }} на дашборде https://<машина>.ts.net/ — только из частной сети"
+
+# --- подключение к сетям баз данных проектов ------------------------
+#
+# Живое действие поверх docker, не описываемое в compose.yaml: сети,
+# к которым нужно цепляться, заранее не известны — они появляются
+# и исчезают вместе с проектами. В сухом прогоне ничего не меняем,
+# только показываем, что нашли.
+
+- name: Найти контейнеры баз данных проектов
+  # {% raw %}{{.ID}} {{.Image}} {{.Names}}{% endraw %} — формат вывода
+  # самого docker (его собственный шаблонизатор), не Ansible/Jinja:
+  # без {% raw %} Ansible попытался бы разобрать фигурные скобки сам
+  # и упал бы на неизвестных переменных.
+  ansible.builtin.shell: |
+    set -euo pipefail
+    docker ps --format '{% raw %}{{.ID}} {{.Image}} {{.Names}}{% endraw %}' \
+      | grep -E " ({{ dbclient_db_image_pattern }})" || true
+  args:
+    executable: /bin/bash
+  register: dbclient_db_containers
+  changed_when: false
+  check_mode: false
+
+- name: Сказать, что баз проектов не нашли
+  ansible.builtin.debug:
+    msg:
+      - "Запущенных баз данных проектов не нашёл (ищу образы: {{ dbclient_db_image_pattern }})."
+      - "Подключения в DbGate добавишь вручную, либо прогони настройку"
+      - "заново после того, как заведёшь проект с базой."
+  when: dbclient_db_containers.stdout | trim | length == 0
+
+- name: Подключить клиента к сетям найденных баз
+  when:
+    - dbclient_db_containers.stdout | trim | length > 0
+    - not ansible_check_mode
   block:
 
-    - name: Запомнить адрес
-      ansible.builtin.set_fact:
-        dbclient_tailscale_address: "{{ dbclient_ts_ip.stdout | trim }}"
-
-    - name: Каталог с описанием контейнера
-      ansible.builtin.file:
-        path: "{{ dbclient_dir }}"
-        state: directory
-        owner: root
-        group: root
-        mode: "0755"
-
-    - name: Есть ли уже описание контейнера
-      ansible.builtin.stat:
-        path: "{{ dbclient_dir }}/compose.yaml"
-      register: dbclient_compose_exists
-      check_mode: false
-
-    - name: Описание контейнера
-      ansible.builtin.template:
-        src: compose.yaml.j2
-        dest: "{{ dbclient_dir }}/compose.yaml"
-        owner: root
-        group: root
-        mode: "0644"
-      register: dbclient_compose
-
-    - name: Сказать, почему в сухом прогоне не поднимаю
-      ansible.builtin.debug:
-        msg:
-          - "Сухой прогон на ненастроенной машине: подъём пропускаю."
-          - "Описания контейнера ещё нет, а создавать его сухой прогон не должен."
-      when:
-        - ansible_check_mode
-        - not dbclient_compose_exists.stat.exists
-
-    - name: Поднять
-      community.docker.docker_compose_v2:
-        project_src: "{{ dbclient_dir }}"
-        state: present
-        recreate: "{{ 'always' if dbclient_compose.changed else 'auto' }}"
-        pull: missing
-      when: not (ansible_check_mode and not dbclient_compose_exists.stat.exists)
-
-    - name: Сказать, где клиент
-      ansible.builtin.debug:
-        msg: "DbGate: http://{{ dbclient_tailscale_address }}:{{ dbclient_port }} — только из частной сети"
-
-    # --- подключение к сетям баз данных проектов ------------------------
-    #
-    # Живое действие поверх docker, не описываемое в compose.yaml: сети,
-    # к которым нужно цепляться, заранее не известны — они появляются
-    # и исчезают вместе с проектами. В сухом прогоне ничего не меняем,
-    # только показываем, что нашли.
-
-    - name: Найти контейнеры баз данных проектов
-      # {% raw %}{{.ID}} {{.Image}} {{.Names}}{% endraw %} — формат вывода
-      # самого docker (его собственный шаблонизатор), не Ansible/Jinja:
-      # без {% raw %} Ansible попытался бы разобрать фигурные скобки сам
-      # и упал бы на неизвестных переменных.
+    - name: Подключить (идемпотентно — к своей сети повторно не цепляемся)
       ansible.builtin.shell: |
         set -euo pipefail
-        docker ps --format '{% raw %}{{.ID}} {{.Image}} {{.Names}}{% endraw %}' \
-          | grep -E " ({{ dbclient_db_image_pattern }})" || true
+        connected=0
+        while read -r cid img cname; do
+          [ -n "$cid" ] || continue
+          nets="$(docker inspect -f '{% raw %}{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}{% endraw %}' "$cid")"
+          while read -r net; do
+            [ -n "$net" ] || continue
+            if docker network inspect "$net" -f '{% raw %}{{range .Containers}}{{.Name}} {{end}}{% endraw %}' 2>/dev/null \
+                | grep -qw "{{ dbclient_container_name }}"; then
+              continue
+            fi
+            docker network connect "$net" "{{ dbclient_container_name }}" 2>/dev/null \
+              && connected=$((connected+1)) || true
+          done <<< "$nets"
+        done <<< "{{ dbclient_db_containers.stdout }}"
+        echo "connected=$connected"
       args:
         executable: /bin/bash
-      register: dbclient_db_containers
-      changed_when: false
-      check_mode: false
+      register: dbclient_connect
+      changed_when: "'connected=0' not in dbclient_connect.stdout"
 
-    - name: Сказать, что баз проектов не нашли
+    - name: Показать, какие базы стали доступны клиенту
       ansible.builtin.debug:
         msg:
-          - "Запущенных баз данных проектов не нашёл (ищу образы: {{ dbclient_db_image_pattern }})."
-          - "Подключения в DbGate добавишь вручную, либо прогони настройку"
-          - "заново после того, как заведёшь проект с базой."
-      when: dbclient_db_containers.stdout | trim | length == 0
-
-    - name: Подключить клиента к сетям найденных баз
-      when:
-        - dbclient_db_containers.stdout | trim | length > 0
-        - not ansible_check_mode
-      block:
-
-        - name: Подключить (идемпотентно — к своей сети повторно не цепляемся)
-          ansible.builtin.shell: |
-            set -euo pipefail
-            connected=0
-            while read -r cid img cname; do
-              [ -n "$cid" ] || continue
-              nets="$(docker inspect -f '{% raw %}{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}{% endraw %}' "$cid")"
-              while read -r net; do
-                [ -n "$net" ] || continue
-                if docker network inspect "$net" -f '{% raw %}{{range .Containers}}{{.Name}} {{end}}{% endraw %}' 2>/dev/null \
-                    | grep -qw "{{ dbclient_container_name }}"; then
-                  continue
-                fi
-                docker network connect "$net" "{{ dbclient_container_name }}" 2>/dev/null \
-                  && connected=$((connected+1)) || true
-              done <<< "$nets"
-            done <<< "{{ dbclient_db_containers.stdout }}"
-            echo "connected=$connected"
-          args:
-            executable: /bin/bash
-          register: dbclient_connect
-          changed_when: "'connected=0' not in dbclient_connect.stdout"
-
-        - name: Показать, какие базы стали доступны клиенту
-          ansible.builtin.debug:
-            msg:
-              - >-
-                DbGate дотягивается до: {{ dbclient_db_containers.stdout_lines
-                | map('regex_replace', '^\S+\s+\S+\s+(\S+)$', '\1') | join(', ') }}
-                (адрес в DbGate — имя контейнера, порт — стандартный для движка).
-              - "{{ dbclient_connect.stdout | trim }}"
+          - >-
+            DbGate дотягивается до: {{ dbclient_db_containers.stdout_lines
+            | map('regex_replace', '^\S+\s+\S+\s+(\S+)$', '\1') | join(', ') }}
+            (адрес в DbGate — имя контейнера, порт — стандартный для движка).
+          - "{{ dbclient_connect.stdout | trim }}"

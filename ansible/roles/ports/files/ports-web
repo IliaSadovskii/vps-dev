@@ -35,8 +35,9 @@ dnsname="$(tailscale status --json 2>/dev/null | grep -m1 '"DNSName"' | cut -d'"
 [[ -n "$dnsname" ]] || { echo "ports-web: tailscale не в сети, выхожу" >&2; exit 0; }
 
 # --- инфра-сервисы (не в реестре проектов) ---
-declare -A INFRA_LABEL=( [8060]="Dozzle" [8061]="DbGate" [$DASH_PORT]="Дашборд" )
-declare -A INFRA_DESC=( [8060]="логи docker-контейнеров" [8061]="клиент баз данных" [$DASH_PORT]="эта страница" )
+declare -A INFRA_LABEL=( [8060]="Dozzle" [8061]="DbGate" [$DASH_PORT]="Дашборд" [8063]="ntfy" [8064]="Kandev" [8065]="Agent of Empires" )
+declare -A INFRA_DESC=( [8060]="логи docker-контейнеров" [8061]="клиент баз данных" [$DASH_PORT]="эта страница"
+                        [8063]="уведомления" [8064]="доска задач для агентов" [8065]="чат с агентом в браузере" )
 
 # --- разбор реестра: порт → проект и порт → человекочитаемое имя сервиса ------
 declare -A PORT_PROJECT PORT_LABEL
@@ -72,6 +73,12 @@ while IFS=$'\t' read -r image ports; do
   while read -r hp; do [[ -n "$hp" ]] && PORT_IMAGE[$hp]="$image"; done \
     < <(grep -oE '127\.0\.0\.1:8[0-9][0-9][0-9]' <<<"$ports" | grep -oE '8[0-9][0-9][0-9]')
 done < <(docker ps --format '{{.Image}}\t{{.Ports}}' 2>/dev/null)
+# Службы самого хоста (Kandev, aoe — systemd, не docker): всё, что слушает
+# 127.0.0.1:8xxx и не нашлось среди docker-портов. Образа у них нет, значит
+# по DB_RE они не отсеются и попадут в веб — именно это и нужно.
+while read -r hp; do
+  [[ -n "$hp" && -z "${PORT_IMAGE[$hp]:-}" ]] && PORT_IMAGE[$hp]="host"
+done < <(ss -ltnH 2>/dev/null | grep -oE '127\.0\.0\.1:8[0-9][0-9][0-9]\b' | grep -oE '8[0-9][0-9][0-9]$' | sort -u)
 
 DB_RE='postgres|mysql|mariadb|mongo|redis|valkey'
 # <title> страницы — только как описание, на классификацию не влияет.

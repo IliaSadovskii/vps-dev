@@ -1,23 +1,27 @@
 # Свой сервер уведомлений.
+#
+# Контейнер слушает только 127.0.0.1; в частную сеть его отдаёт ports-web
+# с TLS на том же порту (см. roles/logs). Адрес для телефона —
+# https://<машина>.ts.net:{{ ntfy_port }}, он же нужен самому ntfy как
+# NTFY_BASE_URL. Имя машины в сети спрашиваем у Tailscale; нет сети —
+# сервер всё равно поднимается (heartbeat ходит по loopback), а базовый
+# адрес временно loopback-овый и обновится следующим прогоном.
 
-- name: Узнать адрес машины в частной сети
-  ansible.builtin.command:
-    cmd: tailscale ip -4
-  register: ntfy_ts_ip
+- name: Узнать имя машины в частной сети
+  ansible.builtin.shell:
+    cmd: set -o pipefail; tailscale status --json | jq -r '.Self.DNSName // empty' | sed 's/\.$//'
+    executable: /bin/bash
+  register: ntfy_dnsname
   changed_when: false
   failed_when: false
   check_mode: false
 
 - name: Предупредить, если частной сети нет
-  # Тот же урок, что и в roles/logs и roles/dbclient: молчаливый пропуск
-  # выглядел бы как успешная настройка, хотя уведомлениям слать некуда.
   ansible.builtin.debug:
     msg:
-      - "Машина не в частной сети — сервер уведомлений не настраиваю."
-      - "Слушать ему больше нечего: наружу этот порт открывать нельзя,"
-      - "а с телефона он и так доступен только через Tailscale."
-      - "Подними Tailscale и прогони настройку заново."
-  when: ntfy_ts_ip.rc != 0 or (ntfy_ts_ip.stdout | trim | length == 0)
+      - "Машина не в частной сети — базовый адрес ntfy пока http://127.0.0.1:{{ ntfy_port }}."
+      - "Подними Tailscale и прогони настройку заново: адрес обновится сам."
+  when: ntfy_dnsname.rc != 0 or (ntfy_dnsname.stdout | trim | length == 0)
 
 - name: Предупредить, если топик не задан
   # Сервер поднимется и без этого — топики в ntfy не объявляются заранее,
@@ -32,58 +36,55 @@
       - "некуда публиковать — факт ntfy_topic пуст."
   when: ntfy_topic | trim | length == 0
 
-- name: Сервер уведомлений
+- name: Запомнить базовый адрес
+  ansible.builtin.set_fact:
+    ntfy_base_url: >-
+      {{ 'https://' ~ (ntfy_dnsname.stdout | trim) ~ ':' ~ ntfy_port
+         if (ntfy_dnsname.rc == 0 and ntfy_dnsname.stdout | trim | length > 0)
+         else 'http://127.0.0.1:' ~ ntfy_port }}
+
+- name: Каталог с описанием контейнера
+  ansible.builtin.file:
+    path: "{{ ntfy_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Есть ли уже описание контейнера
+  ansible.builtin.stat:
+    path: "{{ ntfy_dir }}/compose.yaml"
+  register: ntfy_compose_exists
+  check_mode: false
+
+- name: Описание контейнера
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: "{{ ntfy_dir }}/compose.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+  register: ntfy_compose
+
+- name: Сказать, почему в сухом прогоне не поднимаю
+  ansible.builtin.debug:
+    msg:
+      - "Сухой прогон на ненастроенной машине: подъём пропускаю."
+      - "Описания контейнера ещё нет, а создавать его сухой прогон не должен."
   when:
-    - ntfy_ts_ip.rc == 0
-    - ntfy_ts_ip.stdout | trim | length > 0
-  block:
+    - ansible_check_mode
+    - not ntfy_compose_exists.stat.exists
 
-    - name: Запомнить адрес
-      ansible.builtin.set_fact:
-        ntfy_tailscale_address: "{{ ntfy_ts_ip.stdout | trim }}"
+- name: Поднять
+  community.docker.docker_compose_v2:
+    project_src: "{{ ntfy_dir }}"
+    state: present
+    recreate: "{{ 'always' if ntfy_compose.changed else 'auto' }}"
+    pull: missing
+  when: not (ansible_check_mode and not ntfy_compose_exists.stat.exists)
 
-    - name: Каталог с описанием контейнера
-      ansible.builtin.file:
-        path: "{{ ntfy_dir }}"
-        state: directory
-        owner: root
-        group: root
-        mode: "0755"
-
-    - name: Есть ли уже описание контейнера
-      ansible.builtin.stat:
-        path: "{{ ntfy_dir }}/compose.yaml"
-      register: ntfy_compose_exists
-      check_mode: false
-
-    - name: Описание контейнера
-      ansible.builtin.template:
-        src: compose.yaml.j2
-        dest: "{{ ntfy_dir }}/compose.yaml"
-        owner: root
-        group: root
-        mode: "0644"
-      register: ntfy_compose
-
-    - name: Сказать, почему в сухом прогоне не поднимаю
-      ansible.builtin.debug:
-        msg:
-          - "Сухой прогон на ненастроенной машине: подъём пропускаю."
-          - "Описания контейнера ещё нет, а создавать его сухой прогон не должен."
-      when:
-        - ansible_check_mode
-        - not ntfy_compose_exists.stat.exists
-
-    - name: Поднять
-      community.docker.docker_compose_v2:
-        project_src: "{{ ntfy_dir }}"
-        state: present
-        recreate: "{{ 'always' if ntfy_compose.changed else 'auto' }}"
-        pull: missing
-      when: not (ansible_check_mode and not ntfy_compose_exists.stat.exists)
-
-    - name: Сказать, где сервер
-      ansible.builtin.debug:
-        msg:
-          - "Уведомления: http://{{ ntfy_tailscale_address }}:{{ ntfy_port }} — только из частной сети"
-          - "Проверить публикацию: curl -d 'привет' http://{{ ntfy_tailscale_address }}:{{ ntfy_port }}/{{ ntfy_topic | default('ТОПИК', true) }}"
+- name: Сказать, где сервер
+  ansible.builtin.debug:
+    msg:
+      - "Уведомления: {{ ntfy_base_url }} — только из частной сети; этот адрес вписывается в приложение ntfy."
+      - "Проверить публикацию с машины: curl -d 'привет' http://127.0.0.1:{{ ntfy_port }}/{{ ntfy_topic | default('ТОПИК', true) }}"
