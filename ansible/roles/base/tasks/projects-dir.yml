@@ -13,6 +13,15 @@
     group: "{{ base_deploy_user }}"
     mode: '2775'
 
+- name: Есть ли уже каталог {{ base_projects_dir }}
+  # Сухой прогон каталог не создаёт, а ACL на несуществующий путь не
+  # ставится даже понарошку — задача ниже упала бы. На настроенной машине
+  # каталог на месте.
+  ansible.builtin.stat:
+    path: "{{ base_projects_dir }}"
+  register: base_projects_dir_stat
+  check_mode: false
+
 - name: ACL по умолчанию на новые файлы в {{ base_projects_dir }}
   # Setgid на каталоге сам по себе покрывает поддиректории, но не файлы,
   # созданные без принадлежности к группе через POSIX ACL (например, если
@@ -24,3 +33,4 @@
     permissions: rwx
     default: true
     state: present
+  when: not (ansible_check_mode and not base_projects_dir_stat.stat.exists)
