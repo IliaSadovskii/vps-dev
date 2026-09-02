@@ -42,6 +42,10 @@ declare -A INFRA_DESC=( [8060]="логи docker-контейнеров" [8061]="
                         [8064]="доска задач для агентов" [8065]="чат с агентом в браузере"
                         [8066]="консоль в /projects: клонировать, войти в CLI агента" [8067]="файлы всей машины, открывается в /projects"
                         [8068]="процессор, память, диск по машине и контейнерам" [8069]="ловушка писем проектов" )
+# Значок службы на дашборде. Юникод, а не файлы значков: страница остаётся
+# одним самодостаточным файлом без внешних запросов.
+declare -A INFRA_ICON=( [8060]="📜" [8061]="🗃️" [$DASH_PORT]="🧭" [8063]="💻" [8064]="📋" [8065]="💬"
+                        [8066]="⌨️" [8067]="📁" [8068]="📊" [8069]="✉️" )
 # Куда ведёт ссылка, если не в корень службы.
 declare -A INFRA_PATH=( [8067]="/files/projects" )
 
@@ -254,6 +258,25 @@ done < <(serve_map)
 
 # --- 3) дашборд index.html --------------------------------------------------
 esc(){ sed -e 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g'; }
+
+# Значок карточки: у инфраструктуры — свой (INFRA_ICON), у сервисов проектов —
+# по образу контейнера.
+icon_for(){
+  local p="$1" web="$2" group="$3"
+  local img="${PORT_IMAGE[$p]:-}"
+  if [[ -n "${INFRA_ICON[$p]:-}" ]]; then printf '%s' "${INFRA_ICON[$p]}"; return; fi
+  case "${img,,}" in
+    *postgres*)        printf '🐘'; return ;;
+    *mysql*|*mariadb*) printf '🐬'; return ;;
+    *mongo*)           printf '🍃'; return ;;
+    *redis*|*valkey*)  printf '⚡'; return ;;
+  esac
+  if   [[ "$group" == "без реестра" ]]; then printf '❔'
+  elif [[ "$web" == 1 ]];               then printf '🌐'
+  else                                       printf '🗄'
+  fi
+}
+
 html="$STATE_DIR/index.html.tmp"
 {
 cat <<HEAD
@@ -262,24 +285,43 @@ cat <<HEAD
 <meta http-equiv="refresh" content="30">
 <title>Сервисы VPS</title>
 <style>
- :root{color-scheme:light dark}
- body{font:15px/1.5 system-ui,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem}
- h1{font-size:1.3rem;margin:0 0 .2rem}
- .sub{opacity:.6;font-size:.85rem;margin-bottom:1.5rem}
- section{margin:1.4rem 0}
- h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;opacity:.55;
-    border-bottom:1px solid color-mix(in srgb,currentColor 15%,transparent);padding-bottom:.3rem}
- .row{display:flex;align-items:baseline;gap:.6rem;padding:.4rem 0}
- .port{font-variant-numeric:tabular-nums;opacity:.5;font-size:.85rem;min-width:3.2em}
- a{font-weight:600;text-decoration:none;color:#2563eb}
- a:hover{text-decoration:underline}
- @media(prefers-color-scheme:dark){a{color:#7aa7ff}}
- .name{font-weight:600}
- .desc{opacity:.6;font-size:.88rem}
- .int{opacity:.45}
- .int .name{font-weight:500}
+ /* Карточки, а не строки: попасть пальцем в ячейку 3×N на телефоне легче,
+    чем в строку списка. Ширина сетки — три колонки, на узком экране две,
+    на телефоне одна; ломается по ширине окна, а не по устройству. */
+ :root{color-scheme:light dark;--line:color-mix(in srgb,currentColor 14%,transparent)}
+ *{box-sizing:border-box}
+ body{font:15px/1.5 system-ui,-apple-system,sans-serif;max-width:940px;margin:0 auto;padding:1.75rem 1rem 3rem}
+ h1{font-size:1.3rem;margin:0 0 .25rem}
+ .sub{opacity:.55;font-size:.85rem;margin:0 0 1.75rem}
+ section{margin:0 0 1.75rem}
+ h2{display:flex;align-items:center;gap:.5rem;font-size:.78rem;font-weight:600;margin:0 0 .75rem;
+    text-transform:uppercase;letter-spacing:.06em;opacity:.6}
+ h2::before{content:"";width:.5rem;height:.5rem;border-radius:50%;background:var(--accent);opacity:.8;flex:none}
+ .grid{display:grid;gap:.75rem;grid-template-columns:repeat(3,1fr)}
+ @media(max-width:720px){.grid{grid-template-columns:repeat(2,1fr)}}
+ @media(max-width:430px){.grid{grid-template-columns:1fr}}
+ /* Группу видно по цвету карточек: инфраструктура машины — одним, сервисы
+    проектов — другим, незастолблённые порты — предупреждающим. */
+ .card{display:flex;flex-direction:column;gap:.15rem;min-height:7rem;padding:.85rem .95rem;
+       border:1px solid color-mix(in srgb,var(--accent) 22%,var(--line));border-radius:14px;
+       background:color-mix(in srgb,var(--accent) 5%,transparent);
+       color:inherit;text-decoration:none}
+ a.card{transition:border-color .12s,background .12s}
+ a.card:hover{border-color:color-mix(in srgb,var(--accent) 60%,transparent);
+              background:color-mix(in srgb,var(--accent) 11%,transparent)}
+ .icon{font-size:1.4rem;line-height:1.4}
+ .name{font-weight:600;overflow-wrap:anywhere}
+ a.card .name{color:var(--accent)}
+ .desc{opacity:.6;font-size:.82rem;overflow-wrap:anywhere}
+ .port{margin-top:auto;padding-top:.5rem;font-variant-numeric:tabular-nums;opacity:.45;font-size:.75rem}
+ /* Внутренний сервис (база, кэш) наружу не отдан — карточка неактивна. */
+ .card.int{opacity:.6;border-style:dashed;background:none}
+ .infra{--accent:#2563eb}
+ .proj{--accent:#0d9488}
+ .nores{--accent:#f59e0b}
+ @media(prefers-color-scheme:dark){.infra{--accent:#7aa7ff}.proj{--accent:#4ecdc4}.nores{--accent:#fbbf24}}
  .warn{background:color-mix(in srgb,#f59e0b 18%,transparent);border:1px solid color-mix(in srgb,#f59e0b 50%,transparent);
-       border-radius:8px;padding:.6rem .9rem;margin:0 0 1.2rem;font-size:.9rem}
+       border-radius:12px;padding:.7rem .95rem;margin:0 0 1.5rem;font-size:.9rem}
  code{font-size:.9em}
 </style></head><body>
 <h1>Сервисы VPS</h1>
@@ -299,20 +341,26 @@ ordered="$( { grep -x 'инфраструктура' <<<"$groups"; grep -vx 'и�
 
 while IFS= read -r g; do
   [[ -n "$g" ]] || continue
-  printf '<section><h2>%s</h2>\n' "$(esc <<<"$g")"
+  case "$g" in
+    "инфраструктура") gclass=infra ;;
+    "без реестра")    gclass=nores ;;
+    *)                gclass=proj ;;
+  esac
+  printf '<section class="%s"><h2>%s</h2><div class="grid">\n' "$gclass" "$(esc <<<"$g")"
   # внутри группы: сначала веб, по возрастанию порта
   while IFS=$'\x1f' read -r p group name desc web; do
     [[ "$group" == "$g" ]] || continue
     ename="$(printf '%s' "$name" | esc)"; edesc="$(printf '%s' "$desc" | esc)"
+    eicon="$(icon_for "$p" "$web" "$group" | esc)"
     if [[ "$web" == 1 ]]; then
-      printf '  <div class="row"><span class="port">%s</span><a href="https://%s:%s%s" target="_blank" rel="noopener">%s</a><span class="desc">%s</span></div>\n' \
-        "$p" "$dnsname" "$p" "${INFRA_PATH[$p]:-/}" "$ename" "$edesc"
+      printf '  <a class="card" href="https://%s:%s%s" target="_blank" rel="noopener"><span class="icon">%s</span><span class="name">%s</span><span class="desc">%s</span><span class="port">%s</span></a>\n' \
+        "$dnsname" "$p" "${INFRA_PATH[$p]:-/}" "$eicon" "$ename" "$edesc" "$p"
     else
-      printf '  <div class="row int"><span class="port">%s</span><span class="name">%s</span><span class="desc">%s</span></div>\n' \
-        "$p" "$ename" "$edesc"
+      printf '  <div class="card int"><span class="icon">%s</span><span class="name">%s</span><span class="desc">%s</span><span class="port">%s</span></div>\n' \
+        "$eicon" "$ename" "$edesc" "$p"
     fi
   done < <(sort -t$'\x1f' -k5,5r -k1,1n <<<"$rows")
-  printf '</section>\n'
+  printf '</div></section>\n'
 done <<<"$ordered"
 
 echo '</body></html>'
