@@ -213,6 +213,7 @@ for p in "${web_ports[@]}"; do
 done
 want[$DASH_PORT]="static"            # дашборд отдаёт сам tailscaled из папки
 want[443]="static"                   # и на главной https://<host>/ — без порта, одной закладкой
+want[80]="static"                    # и по голому http://<host>/: браузер, которому набрали имя без схемы, идёт сюда
 
 # ports-web — единственный хозяин tailnet-serve: состав всегда приводится к
 # желаемому (веб-сервисы + дашборд), любое лишнее снимается. Само-исцеляется и
@@ -225,6 +226,8 @@ serve_map(){ # "порт<TAB>цель", где цель — url прокси и�
     | "\($p)\t\($h.Proxy // "static")"' 2>/dev/null
 }
 serve_tgt(){ serve_map | awk -F'\t' -v p="$1" '$1==p{print $2; exit}'; }
+# 80 — единственный порт без TLS: tailscale serve различает --http и --https.
+serve_flag(){ if [[ "$1" == 80 ]]; then echo "--http=80"; else echo "--https=$1"; fi; }
 
 # привести к желаемому. tailscale правит один конфиг, и пачка команд подряд
 # ловит гонку (часть молча не применяется) — поэтому проверяем и ретраим.
@@ -233,14 +236,14 @@ for p in "${!want[@]}"; do
   [[ "$(serve_tgt "$p")" == "$tgt" ]] && continue
   arg="$tgt"; [[ "$tgt" == "static" ]] && arg="$STATE_DIR/"
   for _try in 1 2 3 4 5; do
-    sudo -n tailscale serve --bg --https="$p" "$arg" >/dev/null 2>&1
+    sudo -n tailscale serve --bg "$(serve_flag "$p")" "$arg" >/dev/null 2>&1
     sleep 0.4
     [[ "$(serve_tgt "$p")" == "$tgt" ]] && break
   done
 done
 # снять всё, чего в желаемом нет (ушедшие проекты, старые схемы)
 while IFS=$'\t' read -r p _; do
-  [[ -n "$p" && -z "${want[$p]:-}" ]] && sudo -n tailscale serve --https="$p" off >/dev/null 2>&1
+  [[ -n "$p" && -z "${want[$p]:-}" ]] && sudo -n tailscale serve "$(serve_flag "$p")" off >/dev/null 2>&1
 done < <(serve_map)
 
 # --- 3) дашборд index.html --------------------------------------------------
