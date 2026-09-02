@@ -262,7 +262,7 @@ ansible_pull_run() {
 
     say "${name}: Ansible на самой машине — присылаю репозиторий"
     # shellcheck disable=SC2086  # флаги должны разбиться на слова
-    rsync -az --delete --exclude .facts --exclude known_hosts \
+    rsync -az --mkpath --delete --exclude .facts --exclude known_hosts \
         -e "ssh ${opts}" \
         "${ROOT_DIR}/ansible" "${ROOT_DIR}/servers.yml" "dev@${addr}:${PULL_SRC}/" \
         || die "Не смог прислать репозиторий на ${name}"
