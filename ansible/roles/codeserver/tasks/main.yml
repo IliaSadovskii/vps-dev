@@ -29,7 +29,9 @@
   block:
     - name: Скачать архив релиза
       ansible.builtin.get_url:
-        url: "https://github.com/coder/code-server/releases/download/v{{ codeserver_version }}/code-server-{{ codeserver_version }}-linux-{{ codeserver_arch }}.tar.gz"
+        url: >-
+          https://github.com/coder/code-server/releases/download/v{{ codeserver_version
+          }}/code-server-{{ codeserver_version }}-linux-{{ codeserver_arch }}.tar.gz
         dest: "/tmp/code-server-{{ codeserver_version }}.tar.gz"
         mode: '0644'
       register: codeserver_download

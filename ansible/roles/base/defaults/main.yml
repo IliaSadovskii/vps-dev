@@ -40,5 +40,7 @@ base_fail2ban_maxretry: 10
 base_fail2ban_findtime: 10m
 base_fail2ban_bantime: 15m
 
-# Каталог, где будут жить репозитории проектов.
+# Каталог, где будут жить репозитории проектов: короткий путь — ссылка,
+# настоящий каталог — в доме пользователя (почему — tasks/projects-dir.yml).
 base_projects_dir: /projects
+base_projects_real_dir: "/home/{{ base_deploy_user }}/projects"

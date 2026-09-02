@@ -88,7 +88,7 @@
     cmd: |
       set -euo pipefail
       umask 077
-      pw="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)"
+      pw="$(openssl rand -hex 16)"
       cat > {{ monitor_state_dir }}/hub.env <<ENV
       USER_EMAIL={{ base_deploy_user }}@{{ inventory_hostname }}.local
       USER_PASSWORD=${pw}
