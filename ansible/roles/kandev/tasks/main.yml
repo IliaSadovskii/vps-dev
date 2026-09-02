@@ -43,8 +43,17 @@
     mode: '0755'
   loop:
     - "{{ kandev_home_dir }}"
-    - "{{ kandev_home_dir }}/logs"
     - "{{ kandev_backup_dir }}"
+
+- name: Каталог журналов службы
+  # Без mode: права на logs/ Kandev выставляет сам при старте, и повторный
+  # прогон с фиксированным mode каждый раз возвращал бы их обратно —
+  # changed на пустом месте. Нам важно только, что каталог есть и чей он.
+  ansible.builtin.file:
+    path: "{{ kandev_home_dir }}/logs"
+    state: directory
+    owner: "{{ base_deploy_user }}"
+    group: "{{ base_deploy_user }}"
 
 - name: Настройка Kandev
   ansible.builtin.template:

@@ -205,6 +205,7 @@ for p in "${web_ports[@]}"; do
   if proxy_ok "$sp"; then want[$p]="http://127.0.0.1:$sp"; else want[$p]="http://127.0.0.1:$p"; fi
 done
 want[$DASH_PORT]="static"            # дашборд отдаёт сам tailscaled из папки
+want[443]="static"                   # и на главной https://<host>/ — без порта, одной закладкой
 
 # ports-web — единственный хозяин tailnet-serve: состав всегда приводится к
 # желаемому (веб-сервисы + дашборд), любое лишнее снимается. Само-исцеляется и

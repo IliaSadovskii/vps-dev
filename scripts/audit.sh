@@ -86,11 +86,24 @@ audit_one() {
     # Сканируем ПУБЛИЧНЫЙ адрес, а не тот, по которому подключаемся: после
     # входа машины в частную сеть подключение идёт через неё, а проверять
     # надо то, что видно из интернета.
-    scan="$(docker run --rm --network host "$NMAP_IMAGE" -Pn -T4 \
-        "$SCAN_PORTS" "$addr" 2>/dev/null \
-        | grep -E "^[0-9]+/" || true)"
-    [ -n "$scan" ] || { echo "  ✖ сканирование не дало результата"; PROBLEMS+=("${name}: не удалось просканировать порты"); return 1; }
-    printf '%s\n' "$scan" | sed 's/^/  /'
+    # Полный вывод, а не только строки по портам: у машины, которая всё
+    # отбрасывает, таких строк нет вовсе — nmap пишет «All N scanned ports
+    # ... are in ignored states». Раньше это читалось как «сканирование
+    # не дало результата», то есть правильный исход считался ошибкой.
+    local raw
+    raw="$(docker run --rm --network host "$NMAP_IMAGE" -Pn -T4 \
+        "$SCAN_PORTS" "$addr" 2>/dev/null || true)"
+    if ! printf '%s\n' "$raw" | grep -q "^Nmap done: .*1 host up"; then
+        echo "  ✖ сканирование не дало результата"
+        printf '%s\n' "$raw" | tail -3 | sed 's/^/    /'
+        PROBLEMS+=("${name}: не удалось просканировать порты"); return 1
+    fi
+    scan="$(printf '%s\n' "$raw" | grep -E "^[0-9]+/" || true)"
+    if [ -n "$scan" ]; then
+        printf '%s\n' "$scan" | sed 's/^/  /'
+    else
+        printf '%s\n' "$raw" | grep -E "^(All|Not shown)" | sed 's/^/  /'
+    fi
     open_ports="$(printf '%s\n' "$scan" | awk '$2 == "open" {sub("/tcp","",$1); print $1}')"
 
     echo ""
