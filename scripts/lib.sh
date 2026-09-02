@@ -262,7 +262,7 @@ ansible_pull_run() {
 
     say "${name}: Ansible на самой машине — присылаю репозиторий"
     # shellcheck disable=SC2086  # флаги должны разбиться на слова
-    rsync -az --mkpath --delete --exclude .facts --exclude known_hosts \
+    rsync -az --mkpath --delete --exclude .facts --exclude .ansible --exclude known_hosts \
         -e "ssh ${opts}" \
         "${ROOT_DIR}/ansible" "${ROOT_DIR}/servers.yml" "dev@${addr}:${PULL_SRC}/" \
         || die "Не смог прислать репозиторий на ${name}"
@@ -289,7 +289,7 @@ ansible_pull_run() {
         ANSIBLE_CONFIG=ansible.cfg \
         ANSIBLE_COLLECTIONS_PATH=/usr/share/ansible/collections \
         ANSIBLE_FORCE_COLOR=1 \
-        /usr/local/bin/ansible-playbook -i ../servers.yml,inventory -c local site.yml${args}"
+        /usr/local/bin/ansible-playbook -i ../servers.yml -i inventory -c local site.yml${args}"
 }
 
 # --- Запуск Ansible в контейнере ---------------------------------------------
