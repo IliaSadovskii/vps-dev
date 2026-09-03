@@ -114,6 +114,38 @@
       loop: "{{ dev_agent_clis | select('in', agents_acp_adapters) | list }}"
       when: not (ansible_check_mode and not (agents_npm_bin.stat.exists | default(false)))
 
+    - name: Каталог настроек Codex
+      ansible.builtin.file:
+        path: "/home/{{ base_deploy_user }}/.codex"
+        state: directory
+        owner: "{{ base_deploy_user }}"
+        group: "{{ base_deploy_user }}"
+        mode: '0700'
+      when: "'codex' in dev_agent_clis"
+
+    # Файлом владеет сам Codex: он хранит здесь вход, MCP и личные
+    # настройки. Поэтому не шаблонизируем его целиком, а управляем только
+    # двумя ключами long-context на верхнем уровне TOML.
+    - name: Codex запрашивает максимальное окно контекста
+      ansible.builtin.lineinfile:
+        path: "/home/{{ base_deploy_user }}/.codex/config.toml"
+        regexp: '^{{ item.key }}\s*='
+        line: '{{ item.key }} = {{ item.value }}'
+        # BOF, а не «перед первой таблицей»: lineinfile вставляет перед
+        # ПОСЛЕДНИМ совпадением, поэтому при нескольких секциях ключ уехал бы
+        # внутрь чужой таблицы и в TOML перестал быть верхнеуровневым.
+        insertbefore: BOF
+        create: true
+        owner: "{{ base_deploy_user }}"
+        group: "{{ base_deploy_user }}"
+        mode: '0600'
+      loop:
+        - key: model_context_window
+          value: "{{ agents_codex_context_window }}"
+        - key: model_auto_compact_token_limit
+          value: "{{ agents_codex_auto_compact_token_limit }}"
+      when: "'codex' in dev_agent_clis"
+
     - name: Чеклист — куда войти человеку
       # Автоматизировать нельзя: свой OAuth в чужом коде запрещён условиями
       # всех провайдеров. Вход — браузером, руками, один раз на машину.

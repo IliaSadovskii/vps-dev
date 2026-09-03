@@ -37,6 +37,15 @@ agents_acp_adapters:
 # обновит их до текущей, не сломав идемпотентность день в день.
 agents_npm_state: latest
 
+# Codex coding clients deliberately start GPT-5.x at 272k even when the
+# server-side model catalogue allows a larger window. Opt into the documented
+# long-context mode globally. Codex clamps these values to each model's
+# max_context_window, so today GPT-5.6 Sol/Terra/Luna use 872k while GPT-5.4
+# can use the full 1M; if the backend later raises the GPT-5.6 ceiling, the
+# requested 1M/900k values take effect without another infrastructure change.
+agents_codex_context_window: 1000000
+agents_codex_auto_compact_token_limit: 900000
+
 # Команда первого входа для каждого провайдера — печатается чеклистом
 # в конце роли. Сама роль войти не может: свой OAuth в чужом коде
 # запрещён условиями всех перечисленных провайдеров, входить должен
