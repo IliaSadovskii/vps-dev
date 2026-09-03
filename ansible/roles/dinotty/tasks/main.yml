@@ -1,0 +1,198 @@
+# dinotty — .deb с GitHub Releases, версия закреплена.
+#
+# Настройки кладутся ДО установки пакета: его postinst сразу включает и
+# запускает службу, и без них первый запуск ушёл бы на пакетный порт 8999
+# под системным пользователем — то есть на 0.0.0.0 и мимо всего, что здесь
+# настроено. С готовыми файлами он поднимается сразу как надо.
+
+- name: Имя архитектуры в имени файла релиза
+  ansible.builtin.set_fact:
+    dinotty_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
+
+# --- ttyd, на чьё место пришёл этот терминал --------------------------------
+# Роль terminal из репозитория удалена, но с уже настроенной машины службу
+# должен убрать кто-то: удалённая роль не выполняется и ничего не сносит.
+# Убираем здесь — и до того, как сокет ниже попробует занять 8066, который
+# ttyd пока держит. На машине, где ttyd не было, задачи ничего не делают.
+#
+# Сессия tmux «console» переживает удаление: её держит не ttyd, а сам tmux.
+# Достать её можно из нового терминала — `tmux attach -t console`.
+
+- name: Есть ли ещё служба ttyd
+  ansible.builtin.stat:
+    path: /etc/systemd/system/vps-dev-terminal.service
+  register: dinotty_ttyd
+  check_mode: false
+
+- name: Убрать ttyd, которого заменил этот терминал
+  when: dinotty_ttyd.stat.exists
+  block:
+    - name: Остановить и выключить службу ttyd
+      ansible.builtin.systemd:
+        name: vps-dev-terminal
+        state: stopped
+        enabled: false
+
+    - name: Убрать юнит и бинарник ttyd
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/vps-dev-terminal.service
+        - /usr/local/bin/ttyd
+
+    - name: Перечитать systemd после удаления ttyd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+# --- сам терминал -----------------------------------------------------------
+
+- name: Есть ли каталог настроек
+  # Каталог заводит и пакет (root:dinotty). Свои права ставим, только пока
+  # его нет: иначе каждый прогон отбирал бы группу обратно у пакета.
+  ansible.builtin.stat:
+    path: "{{ dinotty_config_dir }}"
+  register: dinotty_conf_dir
+  check_mode: false
+
+- name: Завести каталог настроек
+  ansible.builtin.file:
+    path: "{{ dinotty_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0750'
+  when: not dinotty_conf_dir.stat.exists
+
+- name: Сказать, что в сухом прогоне настройки не пишутся
+  ansible.builtin.debug:
+    msg: >-
+      Сухой прогон на машине без dinotty: каталога {{ dinotty_config_dir }} ещё нет,
+      настройки пропускаю — записать их некуда.
+  when: ansible_check_mode and not dinotty_conf_dir.stat.exists
+
+- name: Настройки службы
+  # В сухом прогоне на свежей машине каталога ещё нет, и template остановился
+  # бы на отсутствующем родителе — отсюда условие.
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ dinotty_config_dir }}/env"
+    # Владелец намеренно не задан: пакет при обновлении делает файл
+    # root:dinotty, и enforce приводил бы к changed на ровном месте.
+    # Читает его systemd от root, до смены пользователя, — прав хватает.
+    mode: '0640'
+  register: dinotty_env
+  when: not (ansible_check_mode and not dinotty_conf_dir.stat.exists)
+
+- name: Каталог поправок к пакетному юниту
+  ansible.builtin.file:
+    path: /etc/systemd/system/dinotty.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Поправки к пакетному юниту
+  ansible.builtin.template:
+    src: override.conf.j2
+    dest: /etc/systemd/system/dinotty.service.d/vps-dev.conf
+    owner: root
+    group: root
+    mode: '0644'
+  register: dinotty_override
+
+- name: Текущая установленная версия
+  ansible.builtin.command:
+    cmd: dpkg-query --showformat=${Version} --show dinotty-server
+  register: dinotty_current
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Нужна установка или обновление
+  # dpkg-query печатает версию пакета — «0.24.3-1».
+  ansible.builtin.set_fact:
+    dinotty_needs_install: "{{ dinotty_current.rc != 0 or not dinotty_current.stdout.startswith(dinotty_version ~ '-') }}"
+
+- name: Сказать, что в сухом прогоне dinotty не скачивается
+  ansible.builtin.debug:
+    msg: "Сухой прогон: dinotty {{ dinotty_version }} будет скачан и установлен пакетом."
+  when: dinotty_needs_install and ansible_check_mode
+
+- name: Поставить dinotty {{ dinotty_version }}
+  when: dinotty_needs_install and not ansible_check_mode
+  block:
+    - name: Скачать пакет с проверкой контрольной суммы
+      ansible.builtin.get_url:
+        url: "https://github.com/xichan96/dinotty/releases/download/v{{ dinotty_version }}/dinotty-server_{{ dinotty_version }}-1_{{ dinotty_arch }}.deb"
+        dest: "/tmp/dinotty-server-{{ dinotty_version }}-{{ dinotty_arch }}.deb"
+        checksum: "sha256:{{ dinotty_deb_sha256[dinotty_arch] }}"
+        mode: '0644'
+      register: dinotty_download
+
+    - name: Поставить пакет
+      ansible.builtin.apt:
+        deb: "{{ dinotty_download.dest }}"
+      register: dinotty_installed
+
+    - name: Убрать временный файл
+      ansible.builtin.file:
+        path: "{{ dinotty_download.dest }}"
+        state: absent
+
+- name: Вход на службу со стороны частной сети
+  # Сокет и проброс: сама служба на loopback садиться не умеет,
+  # почему так — roles/dinotty/defaults.
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/etc/systemd/system/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - { src: web.socket.j2, dest: vps-dev-dinotty-web.socket }
+    - { src: web.service.j2, dest: vps-dev-dinotty-web.service }
+  register: dinotty_web_units
+
+# Намеренно не обработчик: службы поднимают задачи ниже, обработчик опоздал бы.
+- name: Перечитать systemd, если юниты изменились  # noqa: no-handler
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: dinotty_override.changed or dinotty_web_units.changed
+
+- name: Есть ли уже пакетный юнит
+  ansible.builtin.stat:
+    path: /usr/lib/systemd/system/dinotty.service
+  register: dinotty_unit_exists
+  check_mode: false
+  # Только в сухом прогоне: на настоящем это лишний круг по SSH,
+  # а условия ниже без сухого прогона и так истинны.
+  when: ansible_check_mode
+
+- name: Служба включена и работает
+  ansible.builtin.systemd:
+    name: dinotty
+    enabled: true
+    state: >-
+      {{ 'restarted'
+         if (dinotty_installed.changed | default(false)
+             or dinotty_override.changed
+             or dinotty_env.changed | default(false))
+         else 'started' }}
+  when: not (ansible_check_mode and not (dinotty_unit_exists.stat.exists | default(false)))
+
+- name: Вход включён и слушает
+  # Включаем сокет, а не службу проброса: она поднимается сама
+  # на первом соединении.
+  ansible.builtin.systemd:
+    name: vps-dev-dinotty-web.socket
+    enabled: true
+    state: "{{ 'restarted' if dinotty_web_units.changed else 'started' }}"
+  when: not (ansible_check_mode and not (dinotty_unit_exists.stat.exists | default(false)))
+
+- name: Куда смотреть
+  ansible.builtin.debug:
+    msg: >-
+      Терминал: порт {{ dinotty_port }} на дашборде https://<машина>.ts.net/ —
+      открывается в {{ dinotty_cwd }}, без пароля. С телефона стоит добавить
+      страницу на домашний экран: дальше ведёт себя как приложение.

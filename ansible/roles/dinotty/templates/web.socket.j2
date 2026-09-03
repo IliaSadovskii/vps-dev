@@ -1,0 +1,13 @@
+# Управляется Ansible: roles/dinotty/templates/web.socket.j2
+[Unit]
+Description=Вход в терминал для телефона (127.0.0.1:{{ dinotty_port }})
+
+[Socket]
+# Тот самый адрес на loopback, которого сама служба не умеет: она садится
+# только на 0.0.0.0 (см. roles/dinotty/defaults). Сокет поднимается вместе
+# с машиной, ещё до первого соединения, — поэтому ports-web видит порт
+# в `ss -ltn` сразу и публикует сервис в частной сети по TLS.
+ListenStream=127.0.0.1:{{ dinotty_port }}
+
+[Install]
+WantedBy=sockets.target

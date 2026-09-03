@@ -1,0 +1,20 @@
+# Управляется Ansible: roles/dinotty/templates/web.service.j2
+[Unit]
+Description=Терминал для телефона: проброс 127.0.0.1:{{ dinotty_port }} → {{ dinotty_internal_port }}
+Requires=vps-dev-dinotty-web.socket
+After=vps-dev-dinotty-web.socket dinotty.service
+
+[Service]
+# systemd-socket-proxyd приходит вместе с systemd, ставить нечего. Проброс
+# байт в байт, без разбора HTTP, — веб-сокеты терминала проходят как есть.
+Type=notify
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd --connections-max=512 127.0.0.1:{{ dinotty_internal_port }}
+Restart=on-failure
+RestartSec=5
+
+# Здесь песочница уместна, в отличие от самой службы: это перекладывание
+# байт из сокета в сокет, файлы ему не нужны вовсе.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
