@@ -1,0 +1,77 @@
+# Triage — общий вход для любой задачи. Одинаков для всех: разведка,
+# определение границ и остановка перед выбором маршрута.
+#
+# Дальше карточка не едет сама. Из последней колонки её перетаскивают в
+# дорожку Quick, Standard или Deep — решение принимает человек, но уже
+# после разведки и с рекомендацией агента на руках.
+#
+# Каждый автоматический шаг требует явного `step_complete_kandev`.
+version: 1
+type: kandev_workflow
+workflows:
+  - name: Triage
+    description: "Общий вход: разведка, границы задачи и выбор маршрута человеком."
+    prompt: |
+      @custom-artifact-protocol
+    steps:
+      # Ручная очередь на вход: у шага нет событий, поэтому новая задача
+      # ждёт здесь, пока её не двинут на Discovery.
+      - name: Backlog
+        position: 0
+        color: bg-neutral-400
+        events: {}
+        is_start_step: true
+        show_in_command_panel: false
+        allow_manual_move: true
+        auto_advance_requires_signal: false
+        cancel_triggers_turn_complete: false
+
+      - name: Discovery
+        position: 1
+        color: bg-purple-500
+        prompt: |
+          @custom-discovery
+
+          {{task_prompt}}
+        events:
+          on_enter:
+            - type: auto_start_agent
+          on_turn_complete:
+            - type: move_to_next
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        auto_advance_requires_signal: true
+        cancel_triggers_turn_complete: false
+
+      # Определяет границы задачи и заканчивает рекомендацией маршрута:
+      # Quick, Standard или Deep, с обоснованием, почему не короче.
+      - name: Scoping
+        position: 2
+        color: bg-purple-500
+        prompt: |
+          @custom-scoping
+
+          {{task_prompt}}
+        events:
+          on_enter:
+            - type: auto_start_agent
+          on_turn_complete:
+            - type: move_to_next
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        auto_advance_requires_signal: true
+        cancel_triggers_turn_complete: false
+
+      # Ворота человека. Карточка ждёт здесь с рекомендацией на руках;
+      # вы перетаскиваете её в дорожку Quick, Standard или Deep.
+      - name: Route Choice
+        position: 3
+        color: bg-orange-500
+        events: {}
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        auto_advance_requires_signal: false
+        cancel_triggers_turn_complete: false

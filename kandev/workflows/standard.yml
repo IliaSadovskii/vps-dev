@@ -1,0 +1,261 @@
+# Standard — понятно, что делать, но работу надо разложить на шаги и
+# показать план независимому проверяющему.
+#
+# Это Quick плюс блок планирования: Planning, Plan Review, Plan Approval.
+# Блока исследования вариантов здесь нет — решение уже известно.
+#
+# Test Authoring сбрасывает контекст: к этому моменту в нём лежат Planning
+# и Plan Review, и тащить их в реализацию дороже, чем перечитать план.
+#
+# Общий хвост Quick, Standard и Deep описан одинаково во всех трёх файлах.
+# Дублируется только скелет: имя, цвет, события. Смысл роли лежит в одном
+# файле ../prompts/<роль>.md, на который ссылаются все дорожки, поэтому
+# правка формулировки делается в одном месте.
+#
+# Каждый автоматический шаг требует явного `step_complete_kandev`. Обычное
+# завершение ответа, вопрос человеку, ошибка или пустая заглушка промпта
+# задачу не продвигают.
+#
+# Условий по содержанию в переносимом YAML нет: все переходы безусловны.
+# Маршрут выбирает человек в Triage, а не агент по дороге.
+version: 1
+type: kandev_workflow
+workflows:
+  - name: Standard Development
+    description: "План с независимым ревью, затем тесты, реализация, проверка, ревью, PR."
+    prompt: |
+      @custom-artifact-protocol
+    steps:
+      - name: Planning
+        position: 0
+        color: bg-purple-500
+        prompt: |
+          @custom-planning
+
+          {{task_prompt}}
+        events:
+          on_enter:
+            - type: enable_plan_mode
+            - type: auto_start_agent
+          on_turn_complete:
+            - type: move_to_next
+          on_exit:
+            - type: disable_plan_mode
+        is_start_step: true
+        show_in_command_panel: true
+        allow_manual_move: true
+        auto_advance_requires_signal: true
+        cancel_triggers_turn_complete: false
+
+      # Свежий контекст: автор плана не должен быть его единственным критиком.
+      - name: Plan Review
+        position: 1
+        color: bg-yellow-500
+        prompt: |
+          @custom-plan-review
+
+          {{task_prompt}}
+        events:
+          on_enter:
+            - type: reset_agent_context
+            - type: auto_start_agent
+          on_turn_complete:
+            - type: move_to_next
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        auto_advance_requires_signal: true
+        cancel_triggers_turn_complete: false
+
+      # Ворота человека: утвердить план до первой правки рабочего кода.
+      - name: Plan Approval
+        position: 2
+        color: bg-orange-500
+        events: {}
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        auto_advance_requires_signal: false
+        cancel_triggers_turn_complete: false
+
+      # Начало контекста реализации. Шаг обязан оставить реально падающие
+      # тесты: документ с их описанием ничем не обеспечивает test-first.
+      - name: Test Authoring
+        position: 3
+        color: bg-blue-500
+        prompt: |
+          @custom-test-authoring
+
+          {{task_prompt}}
+        events:
+          on_enter:
+            - type: auto_start_agent
+          on_turn_complete:
+            - type: move_to_next
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        auto_advance_requires_signal: true
+        cancel_triggers_turn_complete: false
+
+      - name: Implementation
+        position: 4
+        color: bg-blue-500
+        prompt: |
+          @custom-implementation
+
+          {{task_prompt}}
+        events:
+          on_enter:
+            - type: auto_start_agent
+          on_turn_complete:
+            - type: move_to_next
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        auto_advance_requires_signal: true
+        cancel_triggers_turn_complete: false
+
+      # Замыкает red-green цикл в том же контексте, что Test Authoring
+      # и Implementation.
+      - name: Verification
+        position: 5
+        color: bg-blue-500
+        prompt: |
+          @custom-verification
+
+          {{task_prompt}}
+        events:
+          on_enter:
+            - type: auto_start_agent
+          on_turn_complete:
+            - type: move_to_next
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        auto_advance_requires_signal: true
+        cancel_triggers_turn_complete: false
+
+      - name: Code Review
+        position: 6
+        color: bg-yellow-500
+        prompt: |
+          @custom-review-code
+
+          {{task_prompt}}
+        events:
+          on_enter:
+            - type: reset_agent_context
+            - type: auto_start_agent
+          on_turn_complete:
+            - type: move_to_next
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        auto_advance_requires_signal: true
+        cancel_triggers_turn_complete: false
+
+      # Стоит во всех трёх маршрутах: «трогает ли безопасность» не связано
+      # с размером задачи. Роль сначала делает дешёвую проверку
+      # применимости и обычно сразу отвечает, что поверхность не затронута.
+      - name: Security Review
+        position: 7
+        color: bg-amber-500
+        prompt: |
+          @custom-security-review
+
+          {{task_prompt}}
+        events:
+          on_enter:
+            - type: reset_agent_context
+            - type: auto_start_agent
+          on_turn_complete:
+            - type: move_to_next
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        auto_advance_requires_signal: true
+        cancel_triggers_turn_complete: false
+
+      # Выполняется один раз и может быть пустым, если замечаний нет.
+      # Дополнительный круг делается ручным возвратом на нужную колонку.
+      - name: Review Fixes
+        position: 8
+        color: bg-blue-500
+        prompt: |
+          @custom-review-fixes
+
+          {{task_prompt}}
+        events:
+          on_enter:
+            - type: reset_agent_context
+            - type: auto_start_agent
+          on_turn_complete:
+            - type: move_to_next
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        auto_advance_requires_signal: true
+        cancel_triggers_turn_complete: false
+
+      # Работает в контексте Review Fixes, а не реализации, и гоняет полный
+      # прогон после правок — поэтому у неё свой промпт.
+      - name: Final Verification
+        position: 9
+        color: bg-blue-500
+        prompt: |
+          @custom-final-verification
+
+          {{task_prompt}}
+        events:
+          on_enter:
+            - type: auto_start_agent
+          on_turn_complete:
+            - type: move_to_next
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        auto_advance_requires_signal: true
+        cancel_triggers_turn_complete: false
+
+      # Нативный CI auto-fix — переключатель на самой задаче, а не шаг
+      # цепочки. Если он нужен, @custom-pull-request включает его через
+      # `update_task_pr_automation_kandev` после связывания PR.
+      - name: Draft PR
+        position: 10
+        color: bg-indigo-500
+        prompt: |
+          @custom-pull-request
+
+          {{task_prompt}}
+        events:
+          on_enter:
+            - type: auto_start_agent
+          on_turn_complete:
+            - type: move_to_next
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        auto_advance_requires_signal: true
+        cancel_triggers_turn_complete: false
+
+      # Последние ворота человека. Назад — за правками, вперёд — в Done.
+      - name: Human Review
+        position: 11
+        color: bg-yellow-500
+        events: {}
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        auto_advance_requires_signal: false
+        cancel_triggers_turn_complete: false
+
+      - name: Done
+        position: 12
+        color: bg-green-500
+        events: {}
+        is_start_step: false
+        show_in_command_panel: false
+        allow_manual_move: true
+        auto_advance_requires_signal: false
+        cancel_triggers_turn_complete: false
