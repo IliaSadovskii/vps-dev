@@ -1,0 +1,39 @@
+# Управляется Ansible: roles/limits/templates/vps-dev-limits.service.j2
+[Unit]
+Description=Лимиты подписок агентов (страница на :{{ limits_port }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Под {{ limits_user }} — тем же, под кем работают агенты: файлы с токенами
+# (~/.claude/.credentials.json, ~/.codex/auth.json) лежат с правами 0600
+# на него, и от другого пользователя их не прочесть.
+User={{ limits_user }}
+WorkingDirectory={{ limits_state_dir }}
+Environment=LIMITS_PORT={{ limits_port }}
+Environment=LIMITS_STATE_DIR={{ limits_state_dir }}
+Environment=LIMITS_POLL_SECONDS={{ limits_poll_seconds }}
+Environment=LIMITS_SECRETS_FILE={{ limits_secrets_file }}
+# HOME systemd выставляет и сам, но служба ищет по нему чужие файлы —
+# пусть это будет видно в юните, а не подразумевается.
+Environment=LIMITS_HOME=/home/{{ limits_user }}
+ExecStart={{ limits_install_dir }}/vps-dev-limits
+Restart=on-failure
+RestartSec=5
+
+# Служба только читает чужие файлы и ходит в три чужих API. Разрешаем ровно
+# это: домашний каталог — на чтение (там токены), запись — только в свой
+# каталог состояния. Так ошибка в разборе чужого формата не сможет ничего
+# испортить за пределами кэша.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths={{ limits_state_dir }}
+
+[Install]
+WantedBy=multi-user.target

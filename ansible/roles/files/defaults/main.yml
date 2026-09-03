@@ -10,7 +10,7 @@
 # Пароля нет: границу держит Tailscale, как у остальных служб машины.
 files_version: "2.63.23"
 files_install_dir: /usr/local/bin
-# Порт из инфра-заповедника 8060-8069 (см. roles/ports/files/ports).
+# Порт из инфра-заповедника 8060-8079 (см. roles/ports/files/ports).
 files_port: 8067
 files_root: /
 # Куда ведёт ссылка с дашборда: путь File Browser к каталогу проектов.

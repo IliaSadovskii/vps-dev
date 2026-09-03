@@ -8,6 +8,6 @@
 # с GitHub с закреплённой версией, это единственная гарантия.
 codeserver_version: "4.135.0"
 codeserver_install_dir: /opt/code-server
-# Порт из инфра-заповедника 8060-8069 (см. roles/ports/files/ports).
+# Порт из инфра-заповедника 8060-8079 (см. roles/ports/files/ports).
 codeserver_port: 8063
 codeserver_workspace: "{{ base_projects_dir }}"

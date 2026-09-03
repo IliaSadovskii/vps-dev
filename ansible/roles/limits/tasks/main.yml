@@ -1,0 +1,85 @@
+# Скачивать нечего: служба — один скрипт на стандартной библиотеке Python,
+# который уже лежит в files/. Поэтому роль вдвое короче соседних (monitor,
+# files), где половину занимает установка релиза с проверкой сумм.
+
+- name: Каталог состояния
+  # Владелец — тот же пользователь, под которым работает служба: она пишет
+  # сюда кэш последних цифр и сырые ответы незнакомых форматов.
+  ansible.builtin.file:
+    path: "{{ limits_state_dir }}"
+    state: directory
+    owner: "{{ limits_user }}"
+    group: "{{ limits_user }}"
+    mode: '0750'
+
+- name: Скрипт службы
+  ansible.builtin.copy:
+    src: vps-dev-limits
+    dest: "{{ limits_install_dir }}/vps-dev-limits"
+    owner: root
+    group: root
+    mode: '0755'
+  register: limits_script
+
+- name: Файл с ключами планов — один раз
+  # force: false — роль создаёт заготовку и больше файл не трогает. Ключи
+  # вписывает человек, и перезапись стирала бы их на каждом прогоне.
+  # Права 0600: это секрет, хоть и не наш.
+  ansible.builtin.copy:
+    dest: "{{ limits_secrets_file }}"
+    owner: "{{ limits_user }}"
+    group: "{{ limits_user }}"
+    mode: '0600'
+    force: false
+    content: |
+      # Ключи планов, у которых на машине нет своего файла входа.
+      # Служба перечитывает этот файл на каждом круге опроса: вписал ключ —
+      # через минуту увидел цифры, перезапускать ничего не нужно.
+      #
+      # Если план подключён в OpenCode (opencode auth login), вписывать ключ
+      # сюда НЕ НАДО: служба возьмёт его из auth.json OpenCode. Здесь — только
+      # то, чего в OpenCode нет, или когда ключ нужен другой.
+      #
+      # z.ai (планы GLM): ключ из личного кабинета, https://z.ai/manage-apikey/apikey-list
+      # ZAI_API_KEY=
+      # Китайская площадка вместо глобальной:
+      # ZAI_API_BASE=https://open.bigmodel.cn
+  register: limits_secrets
+
+- name: Служба
+  ansible.builtin.template:
+    src: vps-dev-limits.service.j2
+    dest: /etc/systemd/system/vps-dev-limits.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: limits_unit
+
+# Намеренно не обработчик: службу поднимает следующая задача, обработчик опоздал бы.
+- name: Перечитать systemd, если юнит изменился  # noqa: no-handler
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: limits_unit.changed
+
+- name: Есть ли уже юнит
+  ansible.builtin.stat:
+    path: /etc/systemd/system/vps-dev-limits.service
+  register: limits_unit_exists
+  check_mode: false
+  # Только в сухом прогоне: на настоящем это лишний круг по SSH,
+  # а условие ниже без сухого прогона и так истинно.
+  when: ansible_check_mode
+
+- name: Служба включена и работает
+  ansible.builtin.systemd:
+    name: vps-dev-limits
+    enabled: true
+    state: "{{ 'restarted' if (limits_script.changed or limits_unit.changed) else 'started' }}"
+  when: not (ansible_check_mode and not (limits_unit_exists.stat.exists | default(false)))
+
+- name: Куда смотреть
+  ansible.builtin.debug:
+    msg: >-
+      Лимиты подписок: порт {{ limits_port }} на дашборде https://<машина>.ts.net/.
+      Ключ z.ai — в {{ limits_secrets_file }}; Claude и Codex берутся из их
+      собственных файлов входа, настраивать нечего.

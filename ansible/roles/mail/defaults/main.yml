@@ -5,7 +5,7 @@ mail_dir: /srv/vps-dev/mail
 # Версия закреплена — тот же смысл, что у logs_image и dbclient_image.
 mail_image: axllent/mailpit:v1.31.0
 mail_container_name: vps-dev-mail
-# Веб-интерфейс: порт из инфра-заповедника 8060-8069.
+# Веб-интерфейс: порт из инфра-заповедника 8060-8079.
 mail_port: 8069
 # SMTP для проектов. Слушает loopback (для процессов на хосте) и адрес
 # docker0 — через него до хоста достают контейнеры любого compose-проекта:

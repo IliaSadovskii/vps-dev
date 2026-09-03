@@ -61,6 +61,34 @@ echo "→ Проверяю сценарии Ansible"
 # это не роль в общем прогоне, а самостоятельный сценарий для машины.
 ansible_run ansible-lint site.yml board.yml
 
+# Роли кладут на машину не только bash-скрипты: служба лимитов — это скрипт
+# на Python. Опечатку в нём иначе поймал бы только systemd на машине, уже
+# после выкатки. Разбираем деревом, а не py_compile: тот кладёт рядом
+# скомпилированный файл, и в репозитории появлялся бы мусор.
+echo ""
+echo "→ Проверяю python-скрипты ролей"
+py_files=()
+while IFS= read -r f; do
+    head -n1 "$f" | grep -qE '^#!.*python' && py_files+=( "/work/${f#"${ROOT_DIR}/ansible/"}" )
+done < <(find "${ROOT_DIR}/ansible" -type f ! -name '*.j2' | sort)
+
+if [ ${#py_files[@]} -eq 0 ]; then
+    echo "  скриптов на Python в ролях нет"
+else
+    ansible_run python3 -c "
+import ast, sys
+bad = 0
+for path in sys.argv[1:]:
+    try:
+        ast.parse(open(path, encoding='utf-8').read(), filename=path)
+    except SyntaxError as e:
+        print(f'  \u2716 {path}:{e.lineno}: {e.msg}'); bad = 1
+if not bad:
+    print(f'  \u2714 разбираются, файлов: {len(sys.argv) - 1}')
+sys.exit(bad)
+" "${py_files[@]}"
+fi
+
 # Сам shellcheck ставить на хост нельзя, поэтому запускаем его в контейнере.
 #
 # Образ не достался — расходимся по-разному, и это важно. На своей машине
