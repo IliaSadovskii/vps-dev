@@ -1,0 +1,157 @@
+---
+# Роли и цепочки шагов — в работающий Kandev, через его же HTTP API.
+#
+# Почему API, а не файлы на диск: у Kandev содержимое доски живёт в SQLite,
+# и у него нет каталога, который читался бы при старте (docs/configuration —
+# config.yaml описывает только запуск службы). Единственный поддерживаемый
+# вход — API, тот же, которым пользуется интерфейс.
+#
+# Порядок обязателен: сначала промпты, потом цепочки. Шаг ссылается на роль
+# через `@имя`, и цепочка, приехавшая раньше своих ролей, разворачивала бы
+# ссылки в пустоту.
+#
+# Ничего не удаляем. Ни встроенных промптов Kandev, ни цепочки «Development»,
+# ни того, что человек завёл руками: роль только добавляет и обновляет своё.
+
+- name: Сказать, почему в сухом прогоне доска не наполняется
+  # uri ходит по сети и в --check, а на свежей машине службы ещё нет:
+  # роль kandev поднимает её этим же прогоном, которого в сухом не было.
+  ansible.builtin.debug:
+    msg: >-
+      Сухой прогон: наполнение доски пропускаю.
+      Настоящий прогон положит роли из {{ seed_content_dir }}/prompts
+      и цепочки из {{ seed_content_dir }}/workflows.
+  when: ansible_check_mode
+
+- name: Наполнение доски
+  when: not ansible_check_mode
+  block:
+
+    - name: Дождаться, пока Kandev начнёт отвечать
+      # Не wait_for по порту: порт открывается раньше, чем служба готова
+      # отвечать по API, и первый же запрос ниже упал бы на пустом ответе.
+      ansible.builtin.uri:
+        url: "{{ seed_api }}/workspaces"
+        method: GET
+      register: seed_workspaces
+      until: seed_workspaces.status == 200
+      retries: "{{ (seed_wait_seconds | int / 2) | int }}"
+      delay: 2
+      changed_when: false
+
+    - name: Рабочее пространство, в которое кладём
+      ansible.builtin.set_fact:
+        seed_workspace_id: >-
+          {{ (seed_workspaces.json.workspaces
+              | selectattr('name', 'equalto', seed_workspace_name) | first).id
+             if seed_workspace_name
+             else seed_workspaces.json.workspaces[0].id }}
+
+    # ═══ Роли ════════════════════════════════════════════════════════════
+
+    - name: Файлы ролей
+      ansible.builtin.set_fact:
+        seed_prompt_files: "{{ q('fileglob', seed_content_dir ~ '/prompts/*.md') | sort }}"
+
+    - name: Роли, которые в Kandev уже есть
+      # Именем, а не идентификатором: имя — это то, чем на роль ссылается
+      # шаг (`@implement`), и то, чем её называет файл. Идентификатор
+      # Kandev выдаёт сам, и в репозитории его знать неоткуда.
+      ansible.builtin.uri:
+        url: "{{ seed_api }}/prompts"
+        method: GET
+      register: seed_prompts_now
+      changed_when: false
+
+    - name: Указатель «имя роли -> запись»
+      ansible.builtin.set_fact:
+        seed_known: >-
+          {{ dict(seed_prompts_now.json.prompts | map(attribute='name')
+                  | zip(seed_prompts_now.json.prompts)) }}
+
+    - name: Новые роли
+      ansible.builtin.uri:
+        url: "{{ seed_api }}/prompts"
+        method: POST
+        body_format: json
+        body:
+          name: "{{ seed_name }}"
+          content: "{{ lookup('file', item) }}"
+        status_code: [200, 201]
+      loop: "{{ seed_prompt_files }}"
+      loop_control:
+        label: "{{ seed_name }}"
+      vars:
+        seed_name: "{{ item | basename | splitext | first }}"
+      when: seed_name not in seed_known
+      # uri сам о себе changed не сообщает никогда — ни на POST, ни на
+      # PATCH: изменением он считает только запись файла на диск. Без
+      # этой строки прогон, заводящий роли с нуля, отчитывался бы
+      # `changed=0`, и правда о том, что машина изменилась, терялась.
+      changed_when: true
+
+    - name: Изменившиеся роли
+      # Обновляем только своё. Встроенные промпты Kandev (`code-review`,
+      # `open-pr` и прочие) редактируемы, но правит их владелец доски, а не
+      # выкатка: совпадение имени с файлом здесь — повод отойти, а не писать.
+      ansible.builtin.uri:
+        url: "{{ seed_api }}/prompts/{{ seed_known[seed_name].id }}"
+        method: PATCH
+        body_format: json
+        body:
+          content: "{{ lookup('file', item) }}"
+        status_code: [200]
+      loop: "{{ seed_prompt_files }}"
+      loop_control:
+        label: "{{ seed_name }}"
+      vars:
+        seed_name: "{{ item | basename | splitext | first }}"
+      when:
+        - seed_name in seed_known
+        - not seed_known[seed_name].builtin
+        - seed_known[seed_name].content != lookup('file', item)
+      changed_when: true
+
+    - name: Роли, чьё имя занято встроенным промптом Kandev
+      ansible.builtin.debug:
+        msg: >-
+          Роль «{{ item | basename | splitext | first }}» не положена:
+          так называется встроенный промпт Kandev. Переименуйте файл,
+          иначе шаги с `@{{ item | basename | splitext | first }}`
+          развернутся во встроенный текст, а не в ваш.
+      loop: "{{ seed_prompt_files }}"
+      loop_control:
+        label: "{{ item | basename }}"
+      when: seed_known[item | basename | splitext | first].builtin | default(false)
+
+    # ═══ Цепочки ═════════════════════════════════════════════════════════
+
+    - name: Цепочки шагов
+      # Тот же переносимый формат и тот же вход, что у кнопки Import
+      # в интерфейсе. Импорт аддитивен по имени: новое создаёт, занятое
+      # возвращает в `skipped` и не трогает. Поэтому исправленную цепочку
+      # надо сначала удалить в интерфейсе — см. kandev/README.md.
+      ansible.builtin.uri:
+        url: "{{ seed_api }}/workspaces/{{ seed_workspace_id }}/workflows/import"
+        method: POST
+        headers:
+          Content-Type: application/x-yaml
+        body: "{{ lookup('file', item) }}"
+        status_code: [200, 201]
+      register: seed_import
+      loop: "{{ q('fileglob', seed_content_dir ~ '/workflows/*.yml') | sort }}"
+      loop_control:
+        label: "{{ item | basename }}"
+      # `default([], true)`, а не `default([])`: при пустом результате Kandev
+      # присылает `"created": null`, а не отсутствующий ключ, — и обычный
+      # default такое значение не подменяет, оставляя длину от None.
+      changed_when: seed_import.json.created | default([], true) | length > 0
+
+    - name: Что получилось
+      ansible.builtin.debug:
+        msg: >-
+          Доска наполнена: ролей в каталоге {{ seed_prompt_files | length }},
+          цепочек создано
+          {{ seed_import.results | map(attribute='json.created') | select | flatten | join(', ') | default('—', true) }},
+          уже было
+          {{ seed_import.results | map(attribute='json.skipped') | select | flatten | join(', ') | default('—', true) }}.
