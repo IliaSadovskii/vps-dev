@@ -15,6 +15,11 @@ User={{ base_deploy_user }}
 Group={{ base_deploy_user }}
 WorkingDirectory={{ dinotty_cwd }}
 
+# Токен службы. Пакетный EnvironmentFile=-/etc/dinotty/env читается раньше
+# и токена не задаёт — а пустой означал бы «первичная настройка», то есть
+# обязательный экран «заведите токен» вместо терминала.
+EnvironmentFile={{ dinotty_token_file }}
+
 # Снятие песочницы пакета. Пустое значение — сброс списка целиком, а не
 # добавление к нему.
 ProtectSystem=no

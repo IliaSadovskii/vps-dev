@@ -84,6 +84,68 @@
   register: dinotty_env
   when: not (ansible_check_mode and not dinotty_conf_dir.stat.exists)
 
+- name: Есть ли уже токен службы
+  ansible.builtin.stat:
+    path: "{{ dinotty_token_file }}"
+  register: dinotty_token
+  check_mode: false
+
+- name: Завести токен службы
+  # Один раз за всю жизнь машины: перевыпуск на каждом прогоне рвал бы уже
+  # открытые сессии. Вводить его при входе через опубликованный порт
+  # не придётся — за это отвечает белый список ниже.
+  ansible.builtin.copy:
+    content: "DINOTTY_TOKEN={{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['ascii_letters', 'digits']) }}\n"
+    dest: "{{ dinotty_token_file }}"
+    owner: root
+    group: root
+    mode: '0600'
+  register: dinotty_token_created
+  when:
+    - not dinotty_token.stat.exists
+    - not (ansible_check_mode and not dinotty_conf_dir.stat.exists)
+
+- name: Каталог настроек приложения
+  ansible.builtin.file:
+    path: "{{ dinotty_settings_file | dirname }}"
+    state: directory
+    owner: "{{ base_deploy_user }}"
+    group: "{{ base_deploy_user }}"
+    mode: '0755'
+
+- name: Есть ли файл настроек приложения
+  ansible.builtin.stat:
+    path: "{{ dinotty_settings_file }}"
+  register: dinotty_settings_stat
+  check_mode: false
+
+- name: Прочитать настройки приложения
+  ansible.builtin.slurp:
+    src: "{{ dinotty_settings_file }}"
+  register: dinotty_settings_raw
+  when: dinotty_settings_stat.stat.exists
+  check_mode: false
+
+- name: Что в настройках сейчас
+  # Файла может не быть вовсе: сам dinotty заводит его не при старте, а при
+  # первом сохранении из интерфейса. Тогда пишем свой — недостающее он
+  # допишет значениями по умолчанию при первом же запуске.
+  ansible.builtin.set_fact:
+    dinotty_settings: "{{ (dinotty_settings_raw.content | b64decode | from_json) if dinotty_settings_stat.stat.exists else {} }}"
+
+- name: Вход через опубликованный порт — без токена
+  # Пишем, только когда список отличается. Иначе файл переписывался бы каждый
+  # прогон: dinotty хранит его в своём форматировании, а не в нашем, и copy
+  # видел бы отличие всегда.
+  ansible.builtin.copy:
+    content: "{{ dinotty_settings | combine({'ip_whitelist': dinotty_ip_whitelist}) | to_nice_json }}\n"
+    dest: "{{ dinotty_settings_file }}"
+    owner: "{{ base_deploy_user }}"
+    group: "{{ base_deploy_user }}"
+    mode: '0644'
+  register: dinotty_settings_written
+  when: (dinotty_settings.ip_whitelist | default([])) != dinotty_ip_whitelist
+
 - name: Каталог поправок к пакетному юниту
   ansible.builtin.file:
     path: /etc/systemd/system/dinotty.service.d
@@ -177,7 +239,9 @@
       {{ 'restarted'
          if (dinotty_installed.changed | default(false)
              or dinotty_override.changed
-             or dinotty_env.changed | default(false))
+             or dinotty_env.changed | default(false)
+             or dinotty_token_created.changed | default(false)
+             or dinotty_settings_written.changed | default(false))
          else 'started' }}
   when: not (ansible_check_mode and not (dinotty_unit_exists.stat.exists | default(false)))
 
@@ -194,5 +258,6 @@
   ansible.builtin.debug:
     msg: >-
       Терминал: порт {{ dinotty_port }} на дашборде https://<машина>.ts.net/ —
-      открывается в {{ dinotty_cwd }}, без пароля. С телефона стоит добавить
-      страницу на домашний экран: дальше ведёт себя как приложение.
+      открывается в {{ dinotty_cwd }}, вход без пароля. С телефона стоит
+      добавить страницу на домашний экран: дальше ведёт себя как приложение.
+      Токен службы (нужен только при заходе мимо 8066): sudo cat {{ dinotty_token_file }}.
