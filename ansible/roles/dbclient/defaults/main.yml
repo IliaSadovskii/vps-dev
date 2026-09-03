@@ -10,7 +10,7 @@ dbclient_image: dbgate/dbgate:7.2.6
 
 dbclient_container_name: vps-dev-dbclient
 
-# Порт на адресе частной сети. Второй в инфра-диапазоне 8060-8069
+# Порт на адресе частной сети. Второй в инфра-диапазоне 8060-8079
 # (см. bin/ports в /home/dev/vps): 8060 занят Dozzle.
 dbclient_port: 8061
 

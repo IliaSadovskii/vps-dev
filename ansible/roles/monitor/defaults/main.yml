@@ -8,7 +8,7 @@
 # не нужен — он только чтобы API хаба пустил роль зарегистрировать агента.
 monitor_version: "0.18.8"
 monitor_install_dir: /usr/local/bin
-# Порт из инфра-заповедника 8060-8069 (см. roles/ports/files/ports).
+# Порт из инфра-заповедника 8060-8079 (см. roles/ports/files/ports).
 monitor_port: 8068
 monitor_agent_port: 45876
 monitor_state_dir: /var/lib/vps-dev/beszel

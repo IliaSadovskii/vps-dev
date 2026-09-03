@@ -1,0 +1,795 @@
+#!/usr/bin/env python3
+# vps-dev-limits — сколько осталось от лимитов подписок агентов, одной страницей.
+#
+# Ставит роль limits, запускает systemd (vps-dev-limits.service). Руками звать
+# не нужно; чтобы посмотреть, что отдаёт, — curl 127.0.0.1:8070/api/limits.
+#
+# ЧТО ДЕЛАЕТ. Раз в минуту опрашивает поставщиков (см. PROVIDERS ниже), держит
+# последний удачный ответ каждого и рисует страницу с полосками «израсходовано
+# за пятичасовое окно / за неделю» и временем сброса. Отдаёт три адреса:
+# «/» — страница, «/api/limits» — то же в JSON, «/healthz» — жив ли.
+#
+# ПОЧЕМУ НИЧЕГО НЕ ЗАПУСКАЕТ. Данные берутся из файлов, которые агентские CLI
+# уже написали, и из HTTP-запросов к API поставщика — сами `claude` и `codex`
+# служба не вызывает никогда. Это не мелочь: агентский CLI, запущенный из-под
+# службы в чужом каталоге, спросил бы про доверие к папке и молча завис бы
+# в ожидании ответа, которого некому дать. Читателю файлов спрашивать не о чем.
+#
+# ЧЕРЕЗ ЧТО ХОДИТ АГЕНТ — НЕВАЖНО. Claude Code, Codex, OpenCode — это только
+# транспорт; остаток подписки живёт у поставщика, и знает его лишь он сам.
+# Своего «сколько осталось» OpenCode не отдаёт (его `stats` — это токены и
+# стоимость собственных сессий), поэтому у каждого поставщика тут свой адаптер.
+# Зато ключ спрашивать лишний раз не надо: план, подключённый в OpenCode,
+# оставляет ключ в его auth.json — оттуда и берём.
+#
+# ГЛАВНОЕ ПРАВИЛО: НЕ ПАДАТЬ. Поставщиков много, и каждый ломается по-своему —
+# нет входа, протух токен, нет ключа, поменялся формат ответа, лежит сеть.
+# Любая такая беда касается ОДНОЙ карточки: страница рисуется всегда, у сломанной
+# карточки написано, что именно случилось, и — если цифры были — что показано
+# прошлое значение и когда оно снято. Поэтому здесь на каждый шаг свой try.
+#
+# Зависимостей нет намеренно: только стандартная библиотека Python 3.12,
+# которая на Ubuntu 24.04 стоит из коробки. Ставить ради одной страницы
+# виртуальное окружение с веб-фреймворком не за что.
+
+import html
+import json
+import os
+import re
+import socket
+import threading
+import time
+import traceback
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+# ------------------------------------------------------------------ настройки --
+
+PORT = int(os.environ.get("LIMITS_PORT", "8070"))
+STATE_DIR = os.environ.get("LIMITS_STATE_DIR", "/var/lib/vps-dev/limits")
+POLL_SECONDS = max(15, int(os.environ.get("LIMITS_POLL_SECONDS", "60")))
+SECRETS_FILE = os.environ.get("LIMITS_SECRETS_FILE", os.path.join(STATE_DIR, "providers.env"))
+HOME = os.environ.get("LIMITS_HOME") or os.path.expanduser("~")
+HTTP_TIMEOUT = 12
+
+CACHE_FILE = os.path.join(STATE_DIR, "cache.json")
+
+# Статусы карточки. От них зависит только оформление и текст — логика опроса
+# одинакова для всех.
+OK = "ok"              # цифры свежие
+STALE = "stale"        # цифры прошлые: свежие взять не вышло или их неоткуда взять
+OFF = "off"            # поставщик не настроен (нет входа, нет ключа) — это не поломка
+ERROR = "error"        # настроен, но ответить не смог
+
+
+def log(msg):
+    # В journal: служба под systemd, свой файл журнала заводить незачем.
+    print(f"vps-dev-limits: {msg}", flush=True)
+
+
+# ------------------------------------------------------------------- утилиты --
+
+def read_secrets():
+    """Ключи из providers.env. Читаем на каждом круге, а не при старте:
+    вписал ключ — увидел цифры, перезапускать службу не нужно."""
+    out = {}
+    try:
+        with open(SECRETS_FILE, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                out[key.strip()] = value.strip().strip("'\"")
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        log(f"providers.env не прочитан: {e}")
+    return out
+
+
+def opencode_keys():
+    """Ключи планов, уже подключённых в OpenCode (`opencode auth login`), —
+    чтобы один и тот же ключ не пришлось вписывать второй раз руками. Имена
+    поставщиков там меняются от версии к версии (zhipuai, zai-coding-plan,
+    glm-…), поэтому ищем по куску имени, а не по точному совпадению."""
+    path = os.path.join(HOME, ".local", "share", "opencode", "auth.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError) as e:
+        log(f"auth.json OpenCode не прочитан: {e}")
+        return {}
+
+    out = {}
+    for name, entry in (data.items() if isinstance(data, dict) else []):
+        if isinstance(entry, dict):
+            key = entry.get("key") or entry.get("apiKey") or entry.get("api_key")
+            if key:
+                out[str(name).lower()] = key
+    return out
+
+
+def key_for(secrets, own_name, opencode_hints, env_names=()):
+    """Ключ поставщика: сначала свой файл (там правят руками, и это главнее),
+    потом OpenCode, потом окружение службы."""
+    if secrets.get(own_name):
+        return secrets[own_name]
+    for name, key in opencode_keys().items():
+        if any(hint in name for hint in opencode_hints):
+            return key
+    for env_name in env_names:
+        if os.environ.get(env_name):
+            return os.environ[env_name]
+    return None
+
+
+def http_json(url, headers, timeout=HTTP_TIMEOUT):
+    """GET с разбором JSON. Ошибку возвращаем текстом, понятным на карточке,
+    а не трассировкой: её читает человек, а не разработчик."""
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode("utf-8", "replace")[:200]
+        except Exception:
+            pass
+        raise ProviderError(f"ответ {e.code} от {urlhost(url)}", http_status=e.code, detail=detail)
+    except urllib.error.URLError as e:
+        raise ProviderError(f"нет связи с {urlhost(url)}: {e.reason}")
+    except socket.timeout:
+        raise ProviderError(f"{urlhost(url)} не ответил за {timeout} с")
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        raise ProviderError(f"{urlhost(url)} ответил не JSON")
+
+
+def urlhost(url):
+    m = re.match(r"https?://([^/]+)", url)
+    return m.group(1) if m else url
+
+
+class ProviderError(Exception):
+    """Понятная человеку причина, почему карточка без свежих цифр."""
+
+    def __init__(self, message, http_status=None, detail="", status=ERROR):
+        super().__init__(message)
+        self.message = message
+        self.http_status = http_status
+        self.detail = detail
+        self.status = status
+
+
+def window(label, percent, resets_at=None, note=""):
+    """Одна полоска. percent — сколько израсходовано, 0..100."""
+    try:
+        percent = float(percent)
+    except (TypeError, ValueError):
+        percent = 0.0
+    return {
+        "label": label,
+        "percent": max(0.0, min(100.0, percent)),
+        "resets_at": resets_at,
+        "note": note,
+    }
+
+
+def iso_to_epoch(value):
+    """ISO-время из ответа → epoch. Ни один поставщик не обязан присылать
+    именно ISO, поэтому неразобранное — это None, а не исключение."""
+    if not value:
+        return None
+    if isinstance(value, (int, float)):
+        return epoch_guess(value)
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def epoch_guess(value):
+    """Секунды или миллисекунды — поставщики шлют и то, и другое
+    (у z.ai время сброса приходит в миллисекундах, у Codex — в секундах)."""
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    return value / 1000.0 if value > 1e11 else value
+
+
+# ---------------------------------------------------------------- поставщики --
+
+def probe_claude(secrets):
+    """Claude Code. Токен берём из файла, который пишет сам CLI, и только читаем:
+    обновлять его нельзя — обновляет Claude Code, а два писателя одного файла
+    однажды затрут друг другу свежую сессию."""
+    path = os.path.join(HOME, ".claude", ".credentials.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            creds = json.load(f)
+    except FileNotFoundError:
+        raise ProviderError("нет входа: выполни claude /login в терминале", status=OFF)
+    except (OSError, json.JSONDecodeError) as e:
+        raise ProviderError(f"файл входа не прочитан: {e}")
+
+    oauth = creds.get("claudeAiOauth") or {}
+    token = oauth.get("accessToken")
+    if not token:
+        raise ProviderError("в файле входа нет токена: выполни claude /login", status=OFF)
+
+    try:
+        data = http_json(
+            "https://api.anthropic.com/api/oauth/usage",
+            {
+                "Authorization": f"Bearer {token}",
+                "anthropic-beta": "oauth-2025-04-20",
+                "Content-Type": "application/json",
+                "User-Agent": "vps-dev-limits",
+            },
+        )
+    except ProviderError as e:
+        if e.http_status in (401, 403):
+            # Токен живёт часами и обновляется при работе агента. Если он протух,
+            # чинится это запуском claude, а не нашими руками.
+            raise ProviderError("сессия истекла: запусти claude, он обновит вход", status=OFF)
+        raise
+
+    windows = []
+    # limits[] — уже готовый список окон, включая недельные по моделям.
+    # Формат старше и стабильнее, чем именованные ключи, поэтому он первый.
+    for item in data.get("limits") or []:
+        kind = item.get("kind") or ""
+        scope = (item.get("scope") or {}).get("model") or {}
+        model = scope.get("display_name")
+        if kind == "session":
+            label = "5 ч."
+        elif kind == "weekly_all":
+            label = "Неделя"
+        elif kind == "weekly_scoped":
+            label = f"Неделя · {model}" if model else "Неделя · часть моделей"
+        else:
+            label = kind or "лимит"
+        windows.append(window(label, item.get("percent"), iso_to_epoch(item.get("resets_at"))))
+
+    if not windows:
+        for key, label in (("five_hour", "5 ч."), ("seven_day", "Неделя")):
+            block = data.get(key) or {}
+            if block.get("utilization") is not None:
+                windows.append(window(label, block["utilization"], iso_to_epoch(block.get("resets_at"))))
+
+    if not windows:
+        raise ProviderError("ответ без лимитов — похоже, формат изменился")
+
+    extra = data.get("extra_usage") or {}
+    if extra.get("is_enabled") and extra.get("utilization") is not None:
+        windows.append(window("Докупленные", extra["utilization"], None, "extra usage"))
+
+    plan = oauth.get("subscriptionType") or ""
+    return {"windows": windows, "plan": plan.replace("_", " "), "as_of": time.time()}
+
+
+def probe_codex(secrets):
+    """Codex CLI. Отдельной точки «сколько осталось» у OpenAI нет: остаток
+    приезжает в ответе на каждый запрос, и CLI кладёт его в журнал сессии.
+    Поэтому цифра ровно такой свежести, когда Codex последний раз работал —
+    время снятия показываем на карточке, чтобы это не выглядело обманом."""
+    if not os.path.exists(os.path.join(HOME, ".codex", "auth.json")):
+        raise ProviderError("нет входа: выполни codex login в терминале", status=OFF)
+
+    sessions = os.path.join(HOME, ".codex", "sessions")
+    files = []
+    try:
+        for root, _dirs, names in os.walk(sessions):
+            for name in names:
+                if name.endswith(".jsonl"):
+                    path = os.path.join(root, name)
+                    try:
+                        files.append((os.path.getmtime(path), path))
+                    except OSError:
+                        continue
+    except OSError as e:
+        raise ProviderError(f"журналы сессий не прочитаны: {e}")
+
+    if not files:
+        raise ProviderError("Codex ещё не работал на этой машине", status=OFF)
+
+    # Свежие файлы первыми; заглядываем в несколько, потому что последняя
+    # сессия могла оборваться до первого ответа модели и остаться без лимитов.
+    files.sort(reverse=True)
+    found = None
+    for _mtime, path in files[:8]:
+        found = last_rate_limits(path)
+        if found:
+            break
+    if not found:
+        raise ProviderError("в журналах сессий ещё нет цифр лимита", status=OFF)
+
+    limits, as_of = found
+    windows = []
+    for key, fallback in (("primary", "5 ч."), ("secondary", "Неделя")):
+        block = limits.get(key)
+        if not isinstance(block, dict) or block.get("used_percent") is None:
+            continue
+        windows.append(window(
+            window_label(block.get("window_minutes"), fallback),
+            block.get("used_percent"),
+            epoch_guess(block.get("resets_at")),
+        ))
+    if not windows:
+        raise ProviderError("в журналах сессий ещё нет цифр лимита", status=OFF)
+
+    credits = limits.get("credits") or {}
+    if credits.get("unlimited"):
+        windows.append(window("Кредиты", 0, None, "без ограничения"))
+    elif credits.get("has_credits"):
+        windows.append(window("Кредиты", 0, None, f"остаток {credits.get('balance')}"))
+
+    return {"windows": windows, "plan": limits.get("plan_type") or "", "as_of": as_of}
+
+
+def last_rate_limits(path, tail_bytes=512 * 1024):
+    """Последняя запись rate_limits в журнале сессии. Файл читаем с хвоста:
+    журнал долгой сессии — это мегабайты, а нужна одна последняя строка."""
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            if size > tail_bytes:
+                f.seek(size - tail_bytes)
+                f.readline()  # обрезанную по середине строку выбрасываем
+            lines = f.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return None
+
+    for line in reversed(lines):
+        if '"rate_limits"' not in line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        limits = find_key(record, "rate_limits")
+        # Записи бывают и пустые (limit_id «premium» приходит с primary: null) —
+        # такая нам не годится, ищем дальше вглубь журнала.
+        if isinstance(limits, dict) and (limits.get("primary") or limits.get("secondary")):
+            return limits, iso_to_epoch(record.get("timestamp")) or os.path.getmtime(path)
+    return None
+
+
+def find_key(obj, key, depth=0):
+    """Значение ключа где-то внутри вложенного ответа. Пути в чужих форматах
+    меняются от версии к версии, имя ключа — гораздо реже."""
+    if depth > 6:
+        return None
+    if isinstance(obj, dict):
+        if key in obj:
+            return obj[key]
+        for value in obj.values():
+            found = find_key(value, key, depth + 1)
+            if found is not None:
+                return found
+    elif isinstance(obj, list):
+        for value in obj:
+            found = find_key(value, key, depth + 1)
+            if found is not None:
+                return found
+    return None
+
+
+def probe_zai(secrets):
+    """z.ai (планы GLM). Своего файла входа на машине нет: ключ берётся из
+    OpenCode, если план подключён там, или из providers.env.
+    Точка недокументированная, поэтому разбираем её мягко: не нашли знакомых
+    полей — не выдумываем цифры, а говорим об этом и кладём сырой ответ
+    в zai-last.json, чтобы разбор можно было дописать по факту."""
+    key = key_for(secrets, "ZAI_API_KEY", ("zai", "z-ai", "zhipu", "glm", "bigmodel"),
+                  ("ZAI_API_KEY", "ZHIPUAI_API_KEY"))
+    if not key:
+        raise ProviderError("нет ключа: подключи план в OpenCode (opencode auth login) "
+                            f"или впиши ZAI_API_KEY в {SECRETS_FILE}", status=OFF)
+
+    # Площадок у z.ai две — глобальная и китайская (open.bigmodel.cn),
+    # ручка на обеих одна и та же, отличается только хост.
+    base = (secrets.get("ZAI_API_BASE") or "https://api.z.ai").rstrip("/")
+    data = http_json(
+        base + "/api/monitor/usage/quota/limit",
+        {"Authorization": f"Bearer {key}", "Accept": "application/json", "User-Agent": "vps-dev-limits"},
+    )
+    save_raw("zai-last.json", data)
+
+    if isinstance(data, dict) and data.get("code") not in (0, None, 200):
+        raise ProviderError(f"z.ai отказал: {data.get('msg') or data.get('code')}")
+
+    payload = data.get("data") if isinstance(data, dict) else data
+    windows = zai_windows(payload)
+    if not windows:
+        raise ProviderError("ответ получен, но полей лимита в нём не нашлось "
+                            "(сырой ответ — в zai-last.json)")
+    return {"windows": windows, "plan": str(find_key(payload, "planName") or find_key(payload, "plan") or ""),
+            "as_of": time.time()}
+
+
+# Имена полей в недокументированной точке z.ai разнятся по версиям, поэтому
+# на каждое значение — список кандидатов, а не одно имя.
+ZAI_PERCENT_KEYS = ("usedPercent", "usagePercent", "percent", "usedRate", "rate", "used_percent")
+ZAI_RESET_KEYS = ("resetTime", "resetAt", "nextResetTime", "refreshTime", "reset_time")
+ZAI_WINDOW_KEYS = ("windowMinutes", "duration", "period", "interval", "window", "limitType", "type")
+
+
+def zai_windows(payload):
+    entries = []
+    if isinstance(payload, dict):
+        for value in payload.values():
+            if isinstance(value, list) and all(isinstance(v, dict) for v in value):
+                entries.extend(value)
+        if not entries:
+            entries = [payload]
+    elif isinstance(payload, list):
+        entries = [v for v in payload if isinstance(v, dict)]
+
+    windows = []
+    for entry in entries:
+        percent = first_key(entry, ZAI_PERCENT_KEYS)
+        if percent is None:
+            used, total = first_key(entry, ("used", "usedTokens", "consumed")), first_key(entry, ("total", "limit", "quota"))
+            if used is None or not total:
+                continue
+            try:
+                percent = float(used) / float(total) * 100.0
+            except (TypeError, ValueError, ZeroDivisionError):
+                continue
+        # Доля приходит и процентами, и долей единицы — отличаем по величине.
+        try:
+            percent = float(percent)
+        except (TypeError, ValueError):
+            continue
+        if 0 < percent <= 1:
+            percent *= 100.0
+        windows.append(window(
+            zai_label(entry),
+            percent,
+            epoch_guess(first_key(entry, ZAI_RESET_KEYS)),
+        ))
+    return windows
+
+
+def zai_label(entry):
+    raw = first_key(entry, ZAI_WINDOW_KEYS)
+    minutes = None
+    try:
+        minutes = int(raw)
+    except (TypeError, ValueError):
+        pass
+    if minutes:
+        return window_label(minutes, str(raw))
+    text = str(raw or "лимит")
+    return {"TOKENS_LIMIT": "Токены", "CREDIT_LIMIT": "Токены", "TIME_LIMIT": "Поиск в вебе"}.get(text, text)
+
+
+def first_key(entry, keys):
+    for key in keys:
+        if isinstance(entry, dict) and entry.get(key) is not None:
+            return entry[key]
+    return None
+
+
+def window_label(minutes, fallback):
+    """Название полоски по длине окна: у всех поставщиков окна свои
+    (300 минут, 10080, 30 дней), а человеку нужно «5 часов» и «Неделя»."""
+    try:
+        minutes = int(minutes)
+    except (TypeError, ValueError):
+        return fallback
+    if minutes <= 0:
+        return fallback
+    if minutes % (60 * 24) == 0:
+        days = minutes // (60 * 24)
+        if days == 7:
+            return "Неделя"
+        if days == 30:
+            return "Месяц"
+        return f"{days} дн."
+    if minutes % 60 == 0:
+        return f"{minutes // 60} ч."
+    return f"{minutes} мин."
+
+
+# Порядок карточек на странице — порядок этого списка.
+PROVIDERS = [
+    {"id": "claude", "name": "Claude", "icon": "🟠", "probe": probe_claude,
+     "source": "api.anthropic.com/api/oauth/usage"},
+    {"id": "codex", "name": "Codex", "icon": "⚫", "probe": probe_codex,
+     "source": "журналы сессий ~/.codex"},
+    {"id": "zai", "name": "z.ai (GLM)", "icon": "🔵", "probe": probe_zai,
+     "source": "api.z.ai/api/monitor/usage/quota/limit"},
+]
+
+
+# --------------------------------------------------------------- опрос и кэш --
+
+class Snapshot:
+    """Последнее известное состояние. Держим отдельно «свежий ответ» и
+    «последние цифры»: поставщик может замолчать, а показать всё равно есть что."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.cards = {}
+        self.generated_at = 0.0
+        self.load()
+
+    def load(self):
+        try:
+            with open(CACHE_FILE, encoding="utf-8") as f:
+                saved = json.load(f)
+            self.cards = {c["id"]: c for c in saved.get("providers", []) if isinstance(c, dict) and c.get("id")}
+            self.generated_at = saved.get("generated_at", 0.0)
+            # После перезапуска службы цифры на экране не должны выглядеть
+            # свежее, чем они есть: до первого удачного опроса они прошлые.
+            for card in self.cards.values():
+                if card.get("status") == OK:
+                    card["status"] = STALE
+        except FileNotFoundError:
+            pass
+        except (OSError, json.JSONDecodeError, TypeError) as e:
+            log(f"кэш не прочитан ({e}) — начинаю с пустого")
+
+    def save(self):
+        # Атомарно: страницу отдаёт этот же процесс, но файл переживает
+        # перезапуск, и оборванная запись стоила бы всей истории.
+        tmp = CACHE_FILE + ".tmp"
+        try:
+            os.makedirs(STATE_DIR, exist_ok=True)
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self.payload(), f, ensure_ascii=False)
+            os.replace(tmp, CACHE_FILE)
+        except OSError as e:
+            log(f"кэш не сохранён: {e}")
+
+    def update(self, provider, result=None, error=None):
+        with self.lock:
+            card = self.cards.get(provider["id"], {})
+            card.update({
+                "id": provider["id"],
+                "name": provider["name"],
+                "icon": provider["icon"],
+                "source": provider["source"],
+                "checked_at": time.time(),
+            })
+            if result is not None:
+                card.update({
+                    "status": OK,
+                    "message": "",
+                    "windows": result["windows"],
+                    "plan": result.get("plan", ""),
+                    "as_of": result.get("as_of", time.time()),
+                })
+            else:
+                card["message"] = error.message
+                # Прошлые цифры оставляем на месте: «неделя 17 %, снято час
+                # назад» полезнее пустой карточки. Но статус честный.
+                if error.status == OFF:
+                    card["status"] = OFF
+                    card["windows"] = card.get("windows") or []
+                elif card.get("windows"):
+                    card["status"] = STALE
+                else:
+                    card["status"] = ERROR
+                    card["windows"] = []
+            self.cards[provider["id"]] = card
+            self.generated_at = time.time()
+
+    def payload(self):
+        order = {p["id"]: i for i, p in enumerate(PROVIDERS)}
+        cards = sorted(self.cards.values(), key=lambda c: order.get(c.get("id"), 99))
+        return {"generated_at": self.generated_at, "providers": cards}
+
+
+def save_raw(name, data):
+    """Сырой ответ поставщика — для разбора руками, когда формат не узнан."""
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        with open(os.path.join(STATE_DIR, name), "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=1)
+    except (OSError, TypeError):
+        pass
+
+
+def poll_once(snapshot):
+    secrets = read_secrets()
+    for provider in PROVIDERS:
+        try:
+            snapshot.update(provider, result=provider["probe"](secrets))
+        except ProviderError as e:
+            snapshot.update(provider, error=e)
+        except Exception as e:  # noqa: BLE001 — падать целиком из-за одного поставщика нельзя
+            log(f"{provider['id']}: непредвиденная ошибка\n{traceback.format_exc()}")
+            snapshot.update(provider, error=ProviderError(f"непредвиденная ошибка: {e}"))
+    snapshot.save()
+
+
+def poll_loop(snapshot):
+    while True:
+        try:
+            poll_once(snapshot)
+        except Exception:  # noqa: BLE001 — поток опроса не должен умирать никогда
+            log(f"круг опроса сорвался\n{traceback.format_exc()}")
+        time.sleep(POLL_SECONDS)
+
+
+# ------------------------------------------------------------------ страница --
+
+def human_left(epoch):
+    if not epoch:
+        return ""
+    left = epoch - time.time()
+    if left <= 0:
+        return "вот-вот"
+    hours, minutes = int(left // 3600), int(left % 3600 // 60)
+    if hours >= 24:
+        return f"через {hours // 24} дн. {hours % 24} ч."
+    if hours:
+        return f"через {hours} ч. {minutes} мин."
+    return f"через {minutes} мин."
+
+
+def human_when(epoch):
+    if not epoch:
+        return ""
+    return datetime.fromtimestamp(epoch).strftime("%H:%M")
+
+
+def human_ago(epoch):
+    if not epoch:
+        return "никогда"
+    ago = time.time() - epoch
+    if ago < 90:
+        return "только что"
+    if ago < 3600:
+        return f"{int(ago // 60)} мин. назад"
+    if ago < 86400:
+        return f"{int(ago // 3600)} ч. назад"
+    return datetime.fromtimestamp(epoch).strftime("%d.%m %H:%M")
+
+
+def heat(percent):
+    # Пороги словами: зелёный до двух третей, жёлтый до 85 %, дальше красный.
+    return "hot" if percent >= 85 else "warm" if percent >= 60 else "cool"
+
+
+def esc(text):
+    return html.escape(str(text or ""), quote=True)
+
+
+def render(payload):
+    cards = payload["providers"]
+    parts = [f"""<!doctype html><html lang="ru"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="{POLL_SECONDS}">
+<title>Лимиты подписок</title>
+<style>
+ /* Тот же язык, что у дашборда служб (:8062): карточки в сетке, цвет темы
+    берётся из системной, страница самодостаточна — без внешних запросов. */
+ :root{{color-scheme:light dark;--line:color-mix(in srgb,currentColor 14%,transparent);--accent:#2563eb}}
+ *{{box-sizing:border-box}}
+ body{{font:15px/1.5 system-ui,-apple-system,sans-serif;max-width:940px;margin:0 auto;padding:1.75rem 1rem 3rem}}
+ h1{{font-size:1.3rem;margin:0 0 .25rem}}
+ .sub{{opacity:.55;font-size:.85rem;margin:0 0 1.75rem}}
+ .grid{{display:grid;gap:.75rem;grid-template-columns:repeat(2,1fr)}}
+ @media(max-width:720px){{.grid{{grid-template-columns:1fr}}}}
+ .card{{display:flex;flex-direction:column;gap:.55rem;padding:.95rem 1.05rem;
+       border:1px solid color-mix(in srgb,var(--accent) 22%,var(--line));border-radius:14px;
+       background:color-mix(in srgb,var(--accent) 5%,transparent)}}
+ .card.off{{opacity:.62;border-style:dashed;background:none}}
+ .head{{display:flex;align-items:baseline;gap:.5rem}}
+ .icon{{font-size:1.1rem}}
+ .name{{font-weight:600;color:var(--accent)}}
+ .plan{{opacity:.5;font-size:.78rem;margin-left:auto;font-variant-numeric:tabular-nums}}
+ .bar{{display:flex;flex-direction:column;gap:.2rem}}
+ .bar .row{{display:flex;gap:.5rem;font-size:.82rem}}
+ .bar .row .left{{margin-left:auto;opacity:.55;white-space:nowrap}}
+ .track{{height:.5rem;border-radius:.25rem;background:color-mix(in srgb,currentColor 12%,transparent);overflow:hidden}}
+ .fill{{height:100%;border-radius:.25rem}}
+ .cool .fill{{background:#16a34a}} .warm .fill{{background:#f59e0b}} .hot .fill{{background:#dc2626}}
+ .pct{{font-variant-numeric:tabular-nums;opacity:.75}}
+ .msg{{font-size:.82rem;opacity:.7;overflow-wrap:anywhere}}
+ .msg.bad{{color:#dc2626;opacity:.85}}
+ .foot{{margin-top:.2rem;padding-top:.5rem;border-top:1px solid var(--line);font-size:.72rem;opacity:.45;overflow-wrap:anywhere}}
+ @media(prefers-color-scheme:dark){{:root{{--accent:#7aa7ff}} .msg.bad{{color:#f87171}}}}
+</style></head><body>
+<h1>Лимиты подписок</h1>
+<div class="sub">обновляется раз в {POLL_SECONDS} с · страница сама перечитывается · {esc(human_ago(payload['generated_at']))} последний круг</div>
+<div class="grid">"""]
+
+    for card in cards:
+        klass = "card off" if card.get("status") == OFF else "card"
+        parts.append(f'<div class="{klass}">')
+        plan = f'<span class="plan">{esc(card.get("plan"))}</span>' if card.get("plan") else ""
+        parts.append(f'<div class="head"><span class="icon">{esc(card.get("icon"))}</span>'
+                     f'<span class="name">{esc(card.get("name"))}</span>{plan}</div>')
+
+        for w in card.get("windows") or []:
+            left = human_left(w.get("resets_at"))
+            when = human_when(w.get("resets_at"))
+            tail = f"сброс {left} ({when})" if left and when else (w.get("note") or "")
+            parts.append(
+                f'<div class="bar {heat(w["percent"])}">'
+                f'<div class="row"><span>{esc(w["label"])}</span>'
+                f'<span class="pct">{w["percent"]:.0f}%</span>'
+                f'<span class="left">{esc(tail)}</span></div>'
+                f'<div class="track"><div class="fill" style="width:{w["percent"]:.1f}%"></div></div>'
+                f'</div>')
+
+        status = card.get("status")
+        if card.get("message"):
+            bad = " bad" if status == ERROR else ""
+            parts.append(f'<div class="msg{bad}">{esc(card["message"])}</div>')
+        if status == STALE and card.get("as_of"):
+            parts.append(f'<div class="msg">показаны прошлые цифры, сняты {esc(human_ago(card["as_of"]))}</div>')
+        elif status == OK and card.get("id") == "codex" and card.get("as_of"):
+            # У Codex «свежесть» — это когда он в последний раз работал.
+            parts.append(f'<div class="msg">цифры на момент последнего запроса, {esc(human_ago(card["as_of"]))}</div>')
+
+        parts.append(f'<div class="foot">{esc(card.get("source"))}</div></div>')
+
+    if not cards:
+        parts.append('<div class="card"><div class="msg">первый круг опроса ещё идёт</div></div>')
+
+    parts.append("</div></body></html>")
+    return "".join(parts)
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "vps-dev-limits"
+    snapshot = None
+
+    def do_GET(self):  # noqa: N802 — имя задано BaseHTTPRequestHandler
+        path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        if path == "/":
+            payload = self.snapshot.payload()
+            self.reply(200, "text/html; charset=utf-8", render(payload).encode("utf-8"))
+        elif path == "/api/limits":
+            body = json.dumps(self.snapshot.payload(), ensure_ascii=False, indent=1).encode("utf-8")
+            self.reply(200, "application/json; charset=utf-8", body)
+        elif path == "/healthz":
+            self.reply(200, "text/plain; charset=utf-8", b"ok\n")
+        else:
+            self.reply(404, "text/plain; charset=utf-8", "нет такой страницы\n".encode("utf-8"))
+
+    def reply(self, code, ctype, body):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        # Страница живёт минуту — ровно до следующего круга опроса.
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except BrokenPipeError:
+            pass  # закрыли вкладку посреди ответа — не повод для записи в журнал
+
+    def log_message(self, fmt, *args):
+        pass  # каждый запрос в журнал не пишем: страница сама перечитывается раз в минуту
+
+
+def main():
+    os.makedirs(STATE_DIR, exist_ok=True)
+    snapshot = Snapshot()
+    Handler.snapshot = snapshot
+    threading.Thread(target=poll_loop, args=(snapshot,), daemon=True).start()
+    # Только loopback: в частную сеть отдаёт ports-web с TLS на том же порту.
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    log(f"слушаю 127.0.0.1:{PORT}, опрос раз в {POLL_SECONDS} с")
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()
