@@ -23,6 +23,38 @@ for name, h in hosts.items():
     if not h.get('dev_host_fingerprint'):
         print(f'  ⚠ у машины {name} нет отпечатка ключа — впишется после первой выкатки')
 "
+# Наполнение доски — по тому же доводу, что и реестр выше: роль seed
+# отдаёт эти файлы Kandev как есть, и опечатка в YAML всплывает не здесь,
+# а посреди выкатки, сообщением от чужого API. Заодно ловим шаг, который
+# ссылается на роль, которой нет в prompts/: такая ссылка развернётся
+# в пустоту молча, и агент получит промпт без половины смысла.
+echo ""
+echo "→ Проверяю наполнение доски Kandev"
+ansible_run python3 -c "
+import glob, os, re, sys, yaml
+
+roles = {os.path.splitext(os.path.basename(f))[0] for f in glob.glob('/kandev/prompts/*.md')}
+files = sorted(glob.glob('/kandev/workflows/*.yml'))
+if not roles or not files:
+    print('  \u2716 в /kandev пусто: нет ролей или нет цепочек'); sys.exit(1)
+
+bad = 0
+for f in files:
+    try:
+        d = yaml.safe_load(open(f))
+    except Exception as e:
+        print(f'  \u2716 {os.path.basename(f)} не разбирается:'); print('   ', e); bad = 1; continue
+    if (d or {}).get('type') != 'kandev_workflow' or (d or {}).get('version') != 1:
+        print(f'  \u2716 {os.path.basename(f)}: не переносимый формат Kandev (version: 1, type: kandev_workflow)'); bad = 1; continue
+    for w in d.get('workflows') or []:
+        for step in w.get('steps') or []:
+            for ref in re.findall(r'(?:^|\s)@([a-zA-Z0-9_-]+)', step.get('prompt') or ''):
+                if ref not in roles:
+                    print(f'  \u2716 {os.path.basename(f)}, шаг «{step.get(\"name\")}»: ссылка @{ref}, а роли с таким именем в prompts/ нет'); bad = 1
+sys.exit(bad)
+"
+echo "  ✔ ролей: $(find kandev/prompts -name '*.md' | wc -l), цепочек: $(find kandev/workflows -name '*.yml' | wc -l), ссылки @имя разрешаются"
+
 echo ""
 echo "→ Проверяю сценарии Ansible"
 ansible_run ansible-lint site.yml

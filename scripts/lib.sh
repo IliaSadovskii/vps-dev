@@ -264,7 +264,7 @@ ansible_pull_run() {
     # shellcheck disable=SC2086  # флаги должны разбиться на слова
     rsync -az --mkpath --delete --exclude .facts --exclude .ansible --exclude known_hosts \
         -e "ssh ${opts}" \
-        "${ROOT_DIR}/ansible" "${ROOT_DIR}/servers.yml" "dev@${addr}:${PULL_SRC}/" \
+        "${ROOT_DIR}/ansible" "${ROOT_DIR}/kandev" "${ROOT_DIR}/servers.yml" "dev@${addr}:${PULL_SRC}/" \
         || die "Не смог прислать репозиторий на ${name}"
 
     local pubkey; pubkey="$(ssh-keygen -y -f "$SSH_KEY")"
@@ -334,6 +334,7 @@ ansible_run() {
         --env-file "$env_file" \
         --user "$(id -u):$(id -g)" \
         -v "${ROOT_DIR}/ansible:/work" \
+        -v "${ROOT_DIR}/kandev:/kandev:ro" \
         -v "${ROOT_DIR}/servers.yml:/servers.yml:ro" \
         "${key_mount[@]}" \
         -v /etc/passwd:/etc/passwd:ro \

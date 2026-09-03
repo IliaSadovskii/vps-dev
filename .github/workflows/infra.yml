@@ -19,10 +19,10 @@ on:
   # Проверка кода — на каждое изменение. Секреты и доступ к машинам ей
   # не нужны, поэтому она безопасна и быстра.
   pull_request:
-    paths: ['ansible/**', 'runner/**', 'scripts/**', 'servers.yml', '.github/workflows/infra.yml']
+    paths: ['ansible/**', 'kandev/**', 'runner/**', 'scripts/**', 'servers.yml', '.github/workflows/infra.yml']
   push:
     branches: [main]
-    paths: ['ansible/**', 'runner/**', 'scripts/**', 'servers.yml', '.github/workflows/infra.yml']
+    paths: ['ansible/**', 'kandev/**', 'runner/**', 'scripts/**', 'servers.yml', '.github/workflows/infra.yml']
 
   # Прогон на машине — только вручную.
   workflow_dispatch:
