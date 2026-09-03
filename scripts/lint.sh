@@ -57,7 +57,9 @@ echo "  ✔ ролей: $(find kandev/prompts -name '*.md' | wc -l), цепоч�
 
 echo ""
 echo "→ Проверяю сценарии Ansible"
-ansible_run ansible-lint site.yml
+# board.yml проверяем отдельным именем: из site.yml он недостижим —
+# это не роль в общем прогоне, а самостоятельный сценарий для машины.
+ansible_run ansible-lint site.yml board.yml
 
 # Сам shellcheck ставить на хост нельзя, поэтому запускаем его в контейнере.
 #
