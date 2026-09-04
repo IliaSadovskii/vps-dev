@@ -10,7 +10,10 @@ Goal: Produce an implementation plan concrete enough that `Plan Review` and
 Reads: Your context is cleared on entry: everything below is a file or a
     tool call, not a memory. The native Kandev Plan, before writing
     anything to it; `scoping.md`;
-    `solution-synthesis.md` and `research.md` when the route produced them;
+    `solution-synthesis.md` and `research.md` when the route produced them
+    (`research.md` with an empty «Развилки» and no `solution-synthesis.md`
+    means Research found nothing to choose and sent the card straight here:
+    plan the one evident approach and say so in the Plan);
     `discovery.md` for the project's own rules; `plan-review.md` when it
     exists — it is why the card came back the last time it did.
 Writes: The native Kandev Plan, through `create_task_plan_kandev` (first

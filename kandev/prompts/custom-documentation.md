@@ -11,8 +11,8 @@ Goal: Leave the repository's documentation true about the code as it now
 Reads: `review-fixes.md` for what the fixes changed (absent when both
     reviews were clean and no fixes were made — say so, do not treat it as
     a gap) and `final-verification.md` for what the suite said afterwards —
-    both as files: you run in `Final Verification`'s context, which began empty,
-    and no earlier step's memory is yours. Your own previous
+    both as files: you run in `Final Verification`'s context, which began
+    empty, and no earlier step's memory is yours. Your own previous
     `documentation.md`, when the card has been through here before.
     `discovery.md`, section «Уверенность и пробелы», for the lines that
     begin with `Расхождение с AGENTS.md:` — Discovery found the conventions

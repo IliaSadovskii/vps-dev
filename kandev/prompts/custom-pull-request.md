@@ -12,7 +12,9 @@ Reads: `scoping.md` for what this task covers and what was deliberately left
     last ran), `test-authoring.md` and `verification.md` for the assumptions
     and plan deviations no human has seen and for what needs a person's
     hands, `review-fixes.md` for what changed as a result of review and
-    what was left unfixed, the native Plan's «Проверки» through
+    what was left unfixed (`review-fixes.md` and `fix-review.md` are absent
+    when both reviews were clean and `Security Review` skipped the fix
+    steps; then say so in the validation notes), the native Plan's «Проверки» through
     `get_task_plan_kandev` when the route ran `Planning`, for the kinds of
     check the owner declined or deferred, `documentation.md` for what the
     change left unexplained anywhere in the repository, and your own
