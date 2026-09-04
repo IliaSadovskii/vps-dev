@@ -7,7 +7,9 @@ Goal: Produce an implementation plan concrete enough that `Plan Review` and
     what `Scoping` scoped, and the option `Solution Synthesis` recommended
     when the route ran it, into steps, risks, checks and sources tied to
     this project's actual code.
-Reads: The native Kandev Plan, before writing anything to it; `scoping.md`;
+Reads: Your context is cleared on entry: everything below is a file or a
+    tool call, not a memory. The native Kandev Plan, before writing
+    anything to it; `scoping.md`;
     `solution-synthesis.md` and `research.md` when the route produced them;
     `discovery.md` for the project's own rules; `plan-review.md` when it
     exists — it is why the card came back the last time it did.
@@ -36,10 +38,10 @@ The card returns here from two places, and they arrive differently.
 
 From `Plan Approval`, a human who disagrees writes one or more notes at
 the gate — each answered there with a bare acknowledgement — and drags the
-card back here when they are done. Your context is warm, so those notes
-are in this conversation: read every human message since the Plan was last
-saved and treat them together as one change request — find what in the
-saved Plan they argue with, change that, and leave the rest. If the human
+card back here when they are done. Your context is cleared on entry, so
+call `get_task_conversation_kandev` and read every human message since the
+Plan was last saved; treat them together as one change request — find
+what in the saved Plan they argue with, change that, and leave the rest. If the human
 edited the Plan in the UI as well, `get_task_plan_kandev` shows their
 edit; keep it.
 

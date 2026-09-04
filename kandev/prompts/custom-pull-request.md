@@ -12,8 +12,8 @@ Reads: `scoping.md` for what this task covers and what was deliberately left
     last ran), `review-fixes.md` for what changed as a result of review,
     `documentation.md` for what the change left unexplained anywhere in the
     repository, and your own previous `pull-request.md` when the card has
-    been through here before. You run in `Fix Review`'s context; all of
-    these are files to open, not memories.
+    been through here before. You run in `Final Verification`'s context,
+    which began empty; all of these are files to open, not memories.
 Writes: `pull-request.md`.
 Done when: the PR exists on the host and `pull-request.md` records its URL,
     or — if creation failed — records that outcome and why, and

@@ -8,7 +8,9 @@ Goal: Hand `Solution Synthesis` and the human at `Solution Approval` a short
     nothing was found — so the decision that comes next is made from what is
     known rather than from a guess about what a search would probably have
     shown.
-Reads: `scoping.md`, `discovery.md`; on a return — your own previous
+Reads: Your context is cleared on entry — Discovery's reading of the
+    repository reaches you only through its file. `scoping.md`,
+    `discovery.md`; on a return — your own previous
     `research.md` exists — also that file and the task conversation
     through `get_task_conversation_kandev`, for the notes the human left
     before dragging the card back: they name what the last round missed,

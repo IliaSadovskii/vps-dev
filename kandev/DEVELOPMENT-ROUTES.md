@@ -97,10 +97,14 @@ Human Review одинаков во всех трёх маршрутах.
 
 ## Границы контекста
 
-Контекст сбрасывается перед `Plan Review`, `Code Review`, `Security Review`,
-`Review Fixes`, `Fix Review`, а также перед `Test Authoring` в Standard и
-Deep. Хвост от `Final Verification` до `Draft PR` работает в контексте
-`Fix Review` и читает `review-fixes.md` файлом.
+Контекст сбрасывается перед `Research`, `Planning`, `Plan Review`,
+`Test Authoring`, `Code Review`, `Security Review`, `Review Fixes`,
+`Fix Review` и `Final Verification`. Общая память остаётся там, где она
+нужна по делу: `Discovery` с `Scoping` (свежее чтение репозитория),
+`Research` с `Solution Synthesis`, тройка `Test Authoring`,
+`Implementation`, `Verification` (один цикл «красный тест — код —
+зелёный») и хвост `Final Verification`, `Documentation`, `Draft PR`.
+Самый длинный отрезок — три шага (решение 43).
 
 В Quick перед `Test Authoring` сброса нет намеренно: в контексте лежат только
 `Discovery` и `Scoping`, и перечитать репозиторий заново дороже, чем донести

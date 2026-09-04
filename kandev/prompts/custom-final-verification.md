@@ -13,8 +13,8 @@ Reads: `review-fixes.md` for what changed, why, and who called it,
     artifact `README.md` for the starting commit, `discovery.md` for the
     project's test-file patterns, and your own previous
     `final-verification.md`, if the card has already been through this step,
-    for the lap it left off on. You run in `Fix Review`'s context, so
-    everything before it is a file to open, not a memory.
+    for the lap it left off on. Your context is cleared on entry, so
+    everything before you is a file to open, not a memory.
 Writes: `final-verification.md`.
 Done when: `final-verification.md` holds a verbatim run, the ownership
     script's verdict, a verdict, a comparison against `verification.md`, and

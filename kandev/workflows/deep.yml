@@ -88,7 +88,9 @@ workflows:
 
       # Отсев мнимых развилок и поиск по оставшимся — один ход: обе
       # половины и так шли в одном контексте, а порядок «сначала отбери,
-      # потом ищи» держится внутри промпта.
+      # потом ищи» держится внутри промпта. Память сброшена: чтение
+      # репозитория Discovery доезжает файлом, а страницы из интернета не
+      # должны лечь в память Planning (решение 43).
       - name: Research
         position: 3
         color: bg-purple-500
@@ -98,6 +100,7 @@ workflows:
           {{task_prompt}}
         events:
           on_enter:
+            - type: reset_agent_context
             - type: auto_start_agent
           on_turn_complete:
             - type: move_to_next
@@ -142,6 +145,8 @@ workflows:
         auto_advance_requires_signal: false
         cancel_triggers_turn_complete: false
 
+      # Память сброшена: все входы Planning — файлы и нативный План, а
+      # первый отрезок цепочки иначе тянулся бы на пять шагов.
       - name: Planning
         position: 6
         color: bg-purple-500
@@ -151,6 +156,7 @@ workflows:
           {{task_prompt}}
         events:
           on_enter:
+            - type: reset_agent_context
             - type: enable_plan_mode
             - type: auto_start_agent
           on_turn_complete:
@@ -345,11 +351,11 @@ workflows:
         auto_advance_requires_signal: true
         cancel_triggers_turn_complete: false
 
-      # Работает в контексте Fix Review (он сброшен перед ним), а не
-      # реализации, и гоняет полный прогон после правок — поэтому у неё
-      # свой промпт. Возврат на Review Fixes — только если в этом заходе
-      # автовозврата ещё не было; предел один на заход для Fix Review и
-      # Final Verification вместе.
+      # Память сброшена: ревью правок ей не нужно, все входы — файлы.
+      # Гоняет полный прогон после правок — поэтому у неё свой промпт.
+      # Возврат на Review Fixes — только если в этом заходе автовозврата
+      # ещё не было; предел один на заход для Fix Review и Final
+      # Verification вместе. Documentation и Draft PR продолжают её память.
       - name: Final Verification
         position: 16
         color: bg-blue-500
@@ -359,6 +365,7 @@ workflows:
           {{task_prompt}}
         events:
           on_enter:
+            - type: reset_agent_context
             - type: auto_start_agent
           on_turn_complete:
             - type: move_to_next
@@ -369,8 +376,8 @@ workflows:
         cancel_triggers_turn_complete: false
 
       # Документация проекта после того, как правки по ревью улеглись.
-      # Работает в контексте Fix Review, читает review-fixes.md файлом,
-      # чинит разошедшееся с кодом и не трогает сам код.
+      # Работает в контексте Final Verification, читает review-fixes.md
+      # файлом, чинит разошедшееся с кодом и не трогает сам код.
       - name: Documentation
         position: 17
         color: bg-teal-500
