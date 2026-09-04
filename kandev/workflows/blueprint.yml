@@ -1,0 +1,110 @@
+# Blueprint — описание продукта в репозитории проекта (docs/knowledge/):
+# продукт, акторы, сущности, действия, экраны, интеграции, сценарии, стек.
+#
+# Служебная цепочка на два хода, как Conventions: владелец надиктовывает
+# в текст карточки, что хочет сказать о продукте (идею, одну часть
+# целиком, весь продукт заново, список того, что не совпало после
+# использования), роль показывает, что рассказ меняет в записанном,
+# спрашивает одним пакетом только о противоречиях и концовках сценариев,
+# раскладывает остальное по файлам, а пробелы записывает допущениями.
+# Человек читает разложенное и принимает.
+#
+# Описание необязательно: проект без docs/knowledge/ дорожка Deep
+# обслуживает как прежде. Когда папка есть, роли Deep читают её первой
+# после каждого сброса памяти, наравне с AGENTS.md, и в неё не пишут.
+#
+# Возврат — заметками на Review и перетаскиванием на Blueprint, когда
+# мысль закончена; память не сбрасывается, агент видит все заметки.
+version: 1
+type: kandev_workflow
+workflows:
+  - name: Blueprint
+    description: "docs/knowledge/: разложить рассказ владельца о продукте по описанию, показать, что меняется, спросить только о противоречиях и концовках, отдать на приёмку."
+    prompt: |
+      @custom-git-safety
+    steps:
+      - name: Backlog
+        position: 0
+        color: bg-neutral-400
+        agent_profile:
+          agent_name: Claude
+          model: haiku
+          mode: bypassPermissions
+        prompt: &gate |
+          Эта колонка — ворота человека. Человек думает вслух; ты здесь не
+          работаешь. Сообщение здесь — заметка для той роли, которой человек
+          перетащит карточку; она прочитает все заметки разом. Ответь одной
+          строкой по-русски, что заметка записана и её прочитает следующая роль.
+          Ничего не открывай, не меняй, не коммить, не вызывай step_complete_kandev
+          и move_task_kandev: карточку двигает человек. На прямой вопрос, ответ на
+          который уже есть в этом разговоре, ответь одним-двумя предложениями.
+        events: {}
+        is_start_step: true
+        show_in_command_panel: false
+        allow_manual_move: true
+        auto_advance_requires_signal: false
+        cancel_triggers_turn_complete: false
+
+      # Форма восьми файлов подключена вместе с ролью: роль пишет по ней,
+      # а не по памяти о том, как выглядит запись.
+      - name: Blueprint
+        position: 1
+        color: bg-purple-500
+        agent_profile:
+          agent_name: Claude
+          model: sonnet
+          mode: bypassPermissions
+        prompt: |
+          @custom-blueprint
+
+          @custom-knowledge-shape
+
+          Колонка сейчас: Blueprint. Если в этой сессии ты уже работал, карточку
+          вернули сюда: прочитай все заметки человека с прошлого раза и
+          действуй по ним.
+
+          {{task_prompt}}
+        events:
+          on_enter:
+            - type: auto_start_agent
+          on_turn_complete:
+            - type: move_to_next
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        auto_advance_requires_signal: true
+        cancel_triggers_turn_complete: false
+
+      # Ворота человека: прочитать разложенное и список «решил за вас»,
+      # при PR — diff. Принять — в Done. Поправить — написать, что не так,
+      # и перетащить на Blueprint.
+      - name: Review
+        position: 2
+        color: bg-orange-500
+        agent_profile:
+          agent_name: Claude
+          model: haiku
+          mode: bypassPermissions
+        prompt: *gate
+        events: {}
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: false
+        auto_advance_requires_signal: false
+        cancel_triggers_turn_complete: false
+
+      - name: Done
+        position: 3
+        color: bg-green-500
+        agent_profile:
+          agent_name: Claude
+          model: haiku
+          mode: bypassPermissions
+        prompt: *gate
+        events: {}
+        is_start_step: false
+        show_in_command_panel: false
+        allow_manual_move: true
+        auto_archive_after_hours: 168
+        auto_advance_requires_signal: false
+        cancel_triggers_turn_complete: false
