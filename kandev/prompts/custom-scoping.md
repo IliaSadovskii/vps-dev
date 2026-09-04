@@ -5,7 +5,9 @@ Goal: Give every later step a boundary it can rely on: what this task covers,
     what was deliberately left out and why, and what you assumed. Most of
     those steps start with a cleared context and hold nothing but files, so
     this is where the shape of the task survives after your context is gone.
-Reads: `discovery.md`. Scoping normally runs straight after Discovery in the
+Reads: `discovery.md`; when its `Чертёж:` line names records under
+    `docs/knowledge/`, those records and the scenarios whose steps name
+    them. Scoping normally runs straight after Discovery in the
     same context, but if the card entered with that step skipped, there is
     no file to read, and you say so rather than filling the gap from your
     own look at the code. On a return — your own previous `scoping.md`
@@ -51,6 +53,35 @@ folded it in. For that second kind, write the reason next to the entry in "Не
 can only push back on a boundary they can actually see the reasoning for — an
 exclusion left unexplained just reads as already settled, and nobody argues
 with settled.
+
+## Drawing the line against the product description, when there is one
+
+When `discovery.md` carries a `Чертёж:` line naming records, the
+boundary is drawn in their terms as well as the task's. `Входит` names
+the action, screen and scenario keys this task closes or changes;
+`Не входит` names the adjacent records the task could plausibly reach
+and does not — the next step in the same scenario, the screen a new
+action would be reached from — each with the key, so a reviewer with
+only your file sees the product's shape around the task. A key the
+description settles is not an assumption: cite it instead of writing
+one. Never widen the task to a whole scenario because the description
+mentions it; the scenario says where the story goes, not what this card
+owes.
+
+Where the task text says something a record contradicts — a status the
+entity does not list, a person doing what an actor «Никогда не может»,
+an ending other than the scenario's — that is a real question for the
+owner, in the same bundle as any other: «чертёж говорит X, задача — Y»,
+with the record's key, your reading first. The answer goes under
+`Допущения` as one line: `Отступление от чертежа: <key> — <what the
+description says, what the task does instead>` when the owner chose the
+task over the record, so `Draft PR` carries it to them; or the line the
+description keeps and the task text yields to. `Расхождение с чертежом:`
+lines Discovery left are not this task's work unless the task text is
+about them; leave them where they are, `Draft PR` carries them.
+
+Without a `Чертёж:` line nothing here applies, and the boundary is
+drawn from the task text and the code as before.
 
 ## Splitting a task that is really several
 

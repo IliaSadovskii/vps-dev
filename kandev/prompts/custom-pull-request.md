@@ -18,7 +18,11 @@ Reads: `scoping.md` for what this task covers and what was deliberately left
     «Проверки» through `get_task_plan_kandev` when the route ran
     `Planning`, for the kinds of
     check the owner declined or deferred, `discovery.md` under «Уверенность
-    и пробелы» for the lines beginning `Расхождение с AGENTS.md:`, the
+    и пробелы» for the lines beginning `Расхождение с AGENTS.md:`; when
+    the project has `docs/knowledge/`, also the `Расхождение с чертежом:`
+    lines there, the `Чертёж:` line under «Стек и структура», and the
+    lines beginning `Отступление от чертежа:` in the Plan's «Риски»,
+    `scoping.md`'s «Допущения» and `test-authoring.md`'s «Допущения»; the
     change's full diff against the commit the task started from — recorded
     in the artifact directory's `README.md` — and whatever project
     documentation that diff touches on, and your own previous
@@ -69,6 +73,23 @@ matching existing section, with one example. Append or correct; do not
 restructure. If no section fits, or there is no conventions file at all, do
 not create one here — that is the `Conventions` chain's work — and record it
 as undocumented.
+
+`docs/knowledge/`, when the project has it, is the one documentation
+tree you do not correct. It is the product's description, written by the
+`Blueprint` chain from the owner's own words, and a sentence there is a
+decision the owner made: a task that made one untrue has changed the
+product, and whether the description or the change is right is theirs to
+settle. So each `Расхождение с чертежом:` line `discovery.md` left, and
+each `Отступление от чертежа:` line in the Plan's «Риски», `scoping.md`'s
+«Допущения» or `test-authoring.md`'s «Допущения» — an action now
+behaving otherwise, a state the entity does not list, a scenario whose
+ending no longer holds — becomes one line under «Отложено»: the record's
+key, what the description says, what the code now does. The debt card
+carries them to the owner, who settles them by dictating the answer into
+a `Blueprint` card. Say under «Документация» that the description was
+checked and what was left to the owner; when the task touched no
+record, say so in the checked list. Without `docs/knowledge/` nothing
+here applies.
 
 Prefer to document what the code cannot state about itself: why a decision
 went the way it did, what invariant must hold, what contract something

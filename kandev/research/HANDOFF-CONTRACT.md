@@ -59,6 +59,28 @@ Test Authoring, Implementation) и `custom-skill-frontend-verify`
 протокол, `custom-git-safety` и владение тестами. Новая специальность — один
 промпт и одна строка в таблице, не колонка и не цепочка.
 
+## Чертёж продукта
+
+`docs/knowledge/` — описание продукта из восьми файлов, которое пишет
+цепочка Blueprint (форма — `custom-knowledge-shape`, решение 61). Для
+Deep оно необязательно: без папки всё ниже не действует, роли работают
+как прежде. С папкой: `Discovery` читает `product.md` и записи, до
+которых дотягивается задача, и оставляет в «Стек и структура» строку
+`Чертёж: <ключи>` (или `Чертёж: нет записей`), а противоречия кода
+описанию — строками `Расхождение с чертежом:` в «Уверенность и пробелы»,
+как с `AGENTS.md`. `Scoping` рисует границы в ключах записей и спрашивает
+владельца, когда текст задачи спорит с записью. `Planning` цитирует
+записи в «Источники», отступления от них — строками `Отступление от
+чертежа:` в «Риски» (тем же маркером их пишут `Scoping` и `Test
+Authoring` в «Допущения»). `Test Authoring` берёт сценарии как тесты:
+концовка — ожидание, сквозной тест помечается `kandev:scenario
+<заголовок>` — читателя у пометки пока нет, счёт доказанных сценариев
+отложен. `Draft PR` описание не чинит — строки `Расхождение с чертежом:`
+и `Отступление от чертежа:` собирает по маркеру в «Отложено», карточка
+долга доносит их владельцу, тот отвечает рассказом в карточку Blueprint.
+В `docs/knowledge/` роли Deep не пишут: писатель один (решение 62,
+правило в `custom-artifact-protocol`).
+
 ## Таблица
 
 Колонка «контекст» — сброшен ли он на входе в шаг (по YAML цепочки).
@@ -81,13 +103,13 @@ Test Authoring, Implementation) и `custom-skill-frontend-verify`
 
 | Роль | Контекст | Читает | Пишет |
 |---|---|---|---|
-| Discovery | первый шаг | — | `README.md`, `discovery.md` |
-| Scoping | продолжает | `discovery.md`; при возврате — свой прошлый `scoping.md` и разговор задачи | `scoping.md`; если владелец согласился разбить задачу — по карточке на каждую остальную часть в `Backlog` через `create_task_kandev` (`start_agent: false`, `source_task_id` = эта задача) |
+| Discovery | первый шаг | — (репозиторий: `AGENTS.md`, `docs/knowledge/` если есть) | `README.md`, `discovery.md` |
+| Scoping | продолжает | `discovery.md`; записи из строки `Чертёж:` и их сценарии, если есть; при возврате — свой прошлый `scoping.md` и разговор задачи | `scoping.md`; если владелец согласился разбить задачу — по карточке на каждую остальную часть в `Backlog` через `create_task_kandev` (`start_agent: false`, `source_task_id` = эта задача) |
 | Research | **сброшен** | `scoping.md`, `discovery.md` | `research.md` |
 | Solution Synthesis | **сброшен**; заметки человека — через разговор задачи | `research.md`, `scoping.md`, `discovery.md`, свой прошлый `solution-synthesis.md` при возврате | `solution-synthesis.md` |
-| Planning | **сброшен**; заметки человека — через разговор задачи | нативный Plan (обязательно до записи), `scoping.md`, `solution-synthesis.md` и `research.md` если есть, `discovery.md`, `plan-review.md` если есть | нативный Kandev Plan, строка в `README.md` |
+| Planning | **сброшен**; заметки человека — через разговор задачи | нативный Plan (обязательно до записи), `scoping.md`, `solution-synthesis.md` и `research.md` если есть, `discovery.md` и записи из строки `Чертёж:` если есть, `plan-review.md` если есть | нативный Kandev Plan, строка в `README.md` |
 | Plan Review | **сброшен** | нативный Plan, `discovery.md`, `scoping.md`, `solution-synthesis.md` и `research.md` если есть, свой прошлый `plan-review.md`, разговор задачи | `plan-review.md`; блокирующий вердикт на попытке 1 — возврат на `Planning` |
-| Test Authoring | **сброшен** | нативный Plan если есть, `plan-review.md` если есть («Незаблокирующие замечания» — названные там сценарии тестов), `scoping.md`, `discovery.md` («Тесты и проверки»), `research.md` если есть, свой прошлый `test-authoring.md`, разговор задачи | `test-authoring.md`, коммит тестов с трейлером `Kandev-Step: Test Authoring` |
+| Test Authoring | **сброшен** | нативный Plan если есть, `plan-review.md` если есть («Незаблокирующие замечания» — названные там сценарии тестов), `scoping.md`, `discovery.md` («Тесты и проверки»), `research.md` если есть, `docs/knowledge/scenarios.md` и `actions.md` (состояния) если строка `Чертёж:` называет записи, свой прошлый `test-authoring.md`, разговор задачи | `test-authoring.md`, коммит тестов с трейлером `Kandev-Step: Test Authoring` |
 | Implementation | продолжает Test Authoring | контекст Test Authoring; `research.md` и `solution-synthesis.md` если есть; `verification.md` при возврате | код и коммиты с трейлером `Kandev-Step: Implementation`, файла нет |
 | Verification | продолжает | `README.md` (стартовый коммит), свой прошлый `verification.md`, разговор задачи (время последнего сообщения человека) | `verification.md`; красный прогон на попытке 1 — возврат на `Implementation` |
 | Code Review | **сброшен** | `README.md`, `scoping.md`, `discovery.md`, `verification.md`, `research.md` если есть, нативный Plan если есть, свой прошлый `code-review.md`, разговор задачи | `code-review.md` + `publish_review_findings_kandev` |
@@ -95,7 +117,7 @@ Test Authoring, Implementation) и `custom-skill-frontend-verify`
 | Review Fixes | **сброшен**, в том числе при возврате с `Human Review`/`Done` | `code-review.md`, `security-review.md`, `fix-review.md` или `final-verification.md` если вернули они, `discovery.md`, свой прошлый `review-fixes.md`, разговор задачи | `review-fixes.md`, коммиты с трейлером `Kandev-Step: Review Fixes`, без тестов |
 | Fix Review | **сброшен** | `README.md`, `discovery.md`, `scoping.md`, `code-review.md`, `security-review.md`, `review-fixes.md`, `final-verification.md` если она вернула карточку, свой прошлый `fix-review.md`, разговор задачи | `fix-review.md` + `publish_review_findings_kandev` (только новые дефекты); блокирующий вердикт при доступном автовозврате — возврат на `Review Fixes` |
 | Final Verification | **сброшен** | `review-fixes.md`, `fix-review.md`, `verification.md`, `README.md`, `discovery.md`, свой прошлый `final-verification.md` | `final-verification.md`; провал при доступном автовозврате — возврат на `Review Fixes` |
-| Draft PR | продолжает Final Verification | `scoping.md`, `plan-review.md`, `fix-review.md`, `final-verification.md`, `test-authoring.md` («Допущения», строки `Нужны руки человека:`), `verification.md` («Отклонения от плана», те же строки), `review-fixes.md`, нативный Plan («Проверки») если есть, `discovery.md` (строки `Расхождение с AGENTS.md:`), `README.md` (стартовый коммит), диф задачи с него и документация проекта, свой прошлый `pull-request.md` | `pull-request.md`, коммиты в документацию проекта с трейлером `Kandev-Step: Draft PR` (код и тесты не трогаются), draft PR на хосте (обновляется, не дублируется); при непустом «Отложено» — карточка «Долг по PR N» в `Backlog` через `create_task_kandev` (`start_agent: false`, `source_task_id` = эта задача; на повторном заходе обновляется та, что записана в прошлом `pull-request.md`) |
+| Draft PR | продолжает Final Verification | `scoping.md`, `plan-review.md`, `fix-review.md`, `final-verification.md`, `test-authoring.md` («Допущения», строки `Нужны руки человека:`), `verification.md` («Отклонения от плана», те же строки), `review-fixes.md`, нативный Plan («Проверки», строки `Отступление от чертежа:` в «Риски») если есть, `discovery.md` (строки `Расхождение с AGENTS.md:` и `Расхождение с чертежом:`, строка `Чертёж:`), строки `Отступление от чертежа:` в `scoping.md` и `test-authoring.md`, `README.md` (стартовый коммит), диф задачи с него и документация проекта, свой прошлый `pull-request.md` | `pull-request.md`, коммиты в документацию проекта с трейлером `Kandev-Step: Draft PR` (код и тесты не трогаются), draft PR на хосте (обновляется, не дублируется); при непустом «Отложено» — карточка «Долг по PR N» в `Backlog` через `create_task_kandev` (`start_agent: false`, `source_task_id` = эта задача; на повторном заходе обновляется та, что записана в прошлом `pull-request.md`) |
 
 ### Про Implementation
 
@@ -175,7 +197,8 @@ Test Authoring, Implementation) и `custom-skill-frontend-verify`
 карточку, глубину все определяют по наличию входных файлов.
 
 **`discovery.md`** — Стек и структура (в конце — строка `Навыки: <имена>`
-или `Навыки: нет`) · Правила проекта · Тесты и проверки (шаблоны тестовых
+или `Навыки: нет`; при наличии `docs/knowledge/` — строка `Чертёж:
+<ключи>` или `Чертёж: нет записей`) · Правила проекта · Тесты и проверки (шаблоны тестовых
 файлов и точные команды прогона, линтера, тайпчекера) · Существенные файлы ·
 Уверенность и пробелы.
 

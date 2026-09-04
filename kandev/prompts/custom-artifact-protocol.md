@@ -27,6 +27,12 @@ human decide.
 
 `README.md` is the single exception: everyone appends a line to it.
 
+The same rule reaches one place outside the artifact directory: the
+product description under `docs/knowledge/`, when the project has one,
+belongs to the `Blueprint` chain. No role on this board edits it — a
+role that finds it wrong says so in its own artifact, and `Draft PR`
+carries that to the owner.
+
 ## Running a second time
 
 Some roles run more than once on a task: a card a human or a reviewing role

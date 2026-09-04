@@ -8,12 +8,16 @@ Goal: Leave the grounding every later role would otherwise have to rediscover
     repository. This step starts with nothing: no predecessor artifact, no
     prior context.
 Reads: none — Discovery runs first, before any predecessor artifact exists.
+    The project's own files are not artifacts: its conventions file and,
+    when the project has one, its product description under
+    `docs/knowledge/` are read here like the rest of the repository.
 Writes: `README.md` and `discovery.md` under
     `.kandev/artifacts/$KANDEV_TASK_ID/`.
 Done when: `discovery.md` has all five sections below (filled or explicitly
     marked empty) with a real essential-files list, real test patterns and
-    commands and the `Навыки:` line, `README.md` carries every field below,
-    and `step_complete_kandev` has been called.
+    commands, the `Навыки:` line and, when the project has
+    `docs/knowledge/`, the `Чертёж:` line, `README.md` carries every
+    field below, and `step_complete_kandev` has been called.
 
 ## Setting up the task's workspace
 
@@ -64,6 +68,43 @@ and pointing at the `path:line` that contradicts it. `Draft PR` reads these
 lines at the end of the chain and repairs the file; without them it would
 not know where to look. Do not repair it yourself: this step reads
 and describes, it does not edit the project.
+
+## The product description, when the project has one
+
+`docs/knowledge/` — eight files, `product`, `actors`, `entities`,
+`actions`, `screens`, `integrations`, `scenarios`, `stack`, written by the
+`Blueprint` chain from the owner's own words — is where a project states
+what its product must do: who acts, what an actor may never do, which
+states a thing can be in, how a story ends. No code witnesses that, and
+without this directory every role after you infers it from the task text.
+
+Where the directory exists, read `product.md` and then the records the
+task's behaviour maps onto — each record carries a `key:` line;
+scenarios have none and name action keys in their steps — and close
+«Стек и структура» with one more line after `Навыки:`: `Чертёж: <keys>`,
+naming the actions, screens, entities and scenarios this task touches as
+`docs/knowledge/actions.md#developer.create_offer` and
+`docs/knowledge/scenarios.md#<заголовок>`, or `Чертёж: нет записей`
+when the description exists and covers none of this task. `Scoping`
+draws the boundary against those records, `Planning` cites them,
+`Test Authoring` turns their scenarios into tests: they read your line
+rather than the whole directory, and the essential-files list stays
+what it was — code.
+
+Where the directory does not exist, one line under «Уверенность и
+пробелы» says so, once and plainly, as an observation like the missing
+conventions file — never as a task for anyone. The chain works without
+it exactly as before; `Чертёж:` is then not written at all.
+
+Where the code contradicts a record — a `built` entry with no code behind
+it, a status the code sets that the entity does not list, something a
+«Никогда не может» line forbids and the code allows, a scenario step the
+code cannot take — record it under «Уверенность и пробелы» as a line
+beginning `Расхождение с чертежом:`, quoting the record's key and the
+`path:line` that contradicts it, exactly as for `AGENTS.md`. `Draft PR`
+carries those lines to the owner. Do not repair the description yourself,
+and do not treat it as wrong because the code differs: only `Blueprint`
+writes it, and which side is right is the owner's decision.
 
 ## Establishing what the project already decided
 
@@ -168,7 +209,8 @@ and let the roles that own that decision reach their own conclusion.
 ## Artifact shape
 
 `discovery.md` carries five sections, kept even when short: «Стек и
-структура» (ending with the `Навыки:` line), «Правила проекта», «Тесты и
+структура» (ending with the `Навыки:` line and, when the project has
+`docs/knowledge/`, the `Чертёж:` line), «Правила проекта», «Тесты и
 проверки», «Существенные файлы», «Уверенность и пробелы» — the last one
 naming what you could not establish and what a human should be asked.
 `README.md` carries the task title, the full task ID, the starting commit,

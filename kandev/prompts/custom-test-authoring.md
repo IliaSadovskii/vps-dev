@@ -14,7 +14,11 @@ Reads: The native Kandev Plan via `get_task_plan_kandev`, when the route ran
     deliberately leaves out; `discovery.md` for how this project is built and
     what rules it states about itself, including «Тесты и проверки» — where
     its tests live and how they run; `research.md` when it exists, for the
-    stack documentation and practices already found for this task; your own
+    stack documentation and practices already found for this task;
+    `docs/knowledge/scenarios.md` when `discovery.md`'s `Чертёж:` line
+    names scenarios or actions, for the scenarios whose steps name this
+    task's actions, and `docs/knowledge/actions.md` for the `state:` of
+    the actions those scenarios name; your own
     previous `test-authoring.md` when it exists, since that means this is a
     repeat lap; and the task's own conversation through
     `get_task_conversation_kandev`, since your context was cleared and
@@ -68,6 +72,28 @@ test, and write by its rules on top of this prompt's: they never loosen
 the commit trailer or failing for the right reason. A skill the tool
 cannot return, or a tool that is not there, goes under «Допущения», and
 you proceed without it.
+
+## Scenarios as test cases, when the project has them
+
+When `discovery.md` names records under `Чертёж:`, read the scenarios in
+`docs/knowledge/scenarios.md` whose steps name this task's action keys.
+Each is a test case in the owner's own terms: «Исходная точка» is the
+fixture, the steps are the calls, «Чем заканчивается» is the assertion —
+and that ending was answered by the owner, so a test asserting anything
+weaker pins down less than the product promises. A scenario whose last
+step this task closes — every action it names is `built` already or is
+built by this Plan — gets a test that walks it whole, in the kind of
+test the Plan's «Проверки» kept for it, carrying on a line of its own the
+comment `kandev:scenario <заголовок сценария>`, so anyone can later
+count which scenarios a test proves and which only a reading of the
+code does. A scenario this task only touches in the middle gets its
+steps covered like any other behaviour; do not walk it whole from a
+stub. Where the Plan departs from a scenario's ending, the Plan wins —
+`Plan Approval` saw it — and «Допущения» gets one line,
+`Отступление от чертежа: scenarios.md#<заголовок> — <what the ending
+says, what the tests assert instead>`, so `Draft PR` tells the owner
+the description is outdated. Without a `Чертёж:` line nothing here
+applies.
 
 ## Plan Review's notes that are test work
 

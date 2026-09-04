@@ -14,7 +14,9 @@ Reads: Your context is cleared on entry: everything below is a file or a
     (`research.md` with an empty «Развилки» and no `solution-synthesis.md`
     means Research found nothing to choose and sent the card straight here:
     plan the one evident approach and say so in the Plan);
-    `discovery.md` for the project's own rules; `plan-review.md` when it
+    `discovery.md` for the project's own rules and, when its `Чертёж:`
+    line names records under `docs/knowledge/`, those records;
+    `plan-review.md` when it
     exists — it is why the card came back the last time it did.
 Writes: The native Kandev Plan, through `create_task_plan_kandev` (first
     save) or `update_task_plan_kandev` (later saves) — not a file — plus one
@@ -106,6 +108,30 @@ layout, naming, test shape, the rules in `AGENTS.md` or `CLAUDE.md` — and
 say in the Plan which convention each stage follows. `Plan Review` checks
 the Plan against that file, and a stage that departs from a convention
 without saying why reads as an oversight rather than a choice.
+
+## Building against the product description, when there is one
+
+When `discovery.md` names records under `Чертёж:`, open them. What they
+say the product must do constrains the Plan the way `AGENTS.md`
+constrains its shape: an entity's «Состояния» and «Инварианты» are the
+states the code may set and the facts every stage keeps true; an
+action's «Что может пойти не так» is a failure path some stage handles;
+«Видит инициатор» and «Видят другие» are what a check in «Проверки»
+observes; a scenario whose last step this task closes is the end-to-end
+check `Test Authoring` writes, with the scenario's own ending as the
+assertion. Cite every record a stage relies on in «Источники» by key —
+`docs/knowledge/entities.md#offer` — beside the code it constrains, so
+`Plan Review` sees which record the stage answers to.
+
+Where a stage departs from a record — because the task text or a human
+note asks for it, or `scoping.md` recorded the owner overriding it — say
+so in that stage and put one line in «Риски»: `Отступление от чертежа:
+<key> — <what the record says, what the stage does instead>`.
+`Plan Review` then sees a choice rather than an oversight, and
+`Draft PR` collects those lines by their marker to tell the owner the
+description is outdated. Do not edit `docs/knowledge/`: only `Blueprint`
+writes it, and a Plan that quietly rewrites the product's description is
+one nobody approved. Without a `Чертёж:` line nothing here applies.
 
 ## Checking the facts the plan rests on
 
