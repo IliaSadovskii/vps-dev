@@ -39,6 +39,12 @@
 # трогается. Так цепочка с моделями уезжает на машину без этих подписок и
 # ничего не ломает.
 #
+# ПОРЯДОК НА ДОСКЕ. Необязательный ключ `sort_order` у цепочки в файле
+# (не часть переносимого формата: перед импортом вырезается) задаёт, в
+# каком порядке дорожки стоят на доске. После сверки всех файлов цепочки
+# с ключом выстраиваются по нему, остальные — за ними в прежнем порядке,
+# одним вызовом `PUT /workspaces/{ws}/workflows/reorder`.
+#
 # ЧЕГО НЕ ДЕЛАЕТ. Не удаляет цепочки и профили: файл пропал — на доске
 # остаётся. Не трогает `stage_type` (в переносимом формате его нет).
 
@@ -409,6 +415,29 @@ def expand_workflow(desired, prompts):
     return desired
 
 
+def reorder(api, ws, wanted_order, result):
+    """Выстроить дорожки на доске по `sort_order` из файлов.
+
+    Цепочки без ключа остаются за перечисленными в своём прежнем порядке.
+    Порядок уже такой — вызова нет и в отчёте ничего.
+    """
+    if not wanted_order:
+        return
+    live = sorted(
+        api.call("GET", f"/workspaces/{ws}/workflows").get("workflows", []),
+        key=lambda w: w.get("sort_order") or 0,
+    )
+    by_name = {w["name"]: w["id"] for w in live}
+    first = [by_name[n] for _, n in sorted(wanted_order, key=lambda x: x[0]) if n in by_name]
+    rest = [w["id"] for w in live if w["id"] not in first]
+    ids = first + rest
+    if ids == [w["id"] for w in live]:
+        return
+    api.call("PUT", f"/workspaces/{ws}/workflows/reorder",
+             {"workspace_id": ws, "workflow_ids": ids})
+    result["reordered"] = [n for _, n in sorted(wanted_order, key=lambda x: x[0])]
+
+
 def main():
     payload = json.load(sys.stdin)
     api = Api(payload["api"])
@@ -418,6 +447,7 @@ def main():
     lookup = ensure_profiles(api, payload.get("profiles") or [], result)
 
     existing = api.call("GET", f"/workspaces/{ws}/workflows")
+    wanted_order = []
     by_name = {}
     for wf in existing.get("workflows", []):
         by_name.setdefault(wf["name"], wf)
@@ -432,6 +462,8 @@ def main():
             continue
         for desired in doc.get("workflows") or []:
             desired = expand_workflow(desired, prompts)
+            if desired.get("sort_order") is not None:
+                wanted_order.append((desired.pop("sort_order"), desired["name"]))
             wf = by_name.get(desired["name"])
             if wf is None:
                 # Импорт без профилей (Kandev сопоставил бы их сам, но не
@@ -464,6 +496,8 @@ def main():
                 )
                 continue
             reconcile(api, wf, desired, result, lookup)
+
+    reorder(api, ws, wanted_order, result)
 
     json.dump(result, sys.stdout, ensure_ascii=False)
     print()

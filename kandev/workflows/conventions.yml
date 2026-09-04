@@ -12,6 +12,8 @@ version: 1
 type: kandev_workflow
 workflows:
   - name: Conventions
+    # Порядок дорожек на доске (ключ наш, не Kandev; выкатка вырезает его перед импортом).
+    sort_order: 2
     description: "AGENTS.md / CLAUDE.md: собрать соглашения по коду, спросить владельца о приоритетах, отдать на приёмку."
     prompt: |
       @custom-git-safety
