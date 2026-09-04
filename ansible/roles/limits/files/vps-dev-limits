@@ -414,15 +414,20 @@ def probe_zai(secrets):
     if not windows:
         raise ProviderError("ответ получен, но полей лимита в нём не нашлось "
                             "(сырой ответ — в zai-last.json)")
-    return {"windows": windows, "plan": str(find_key(payload, "planName") or find_key(payload, "plan") or ""),
+    return {"windows": windows, "plan": str(find_key(payload, "planName") or find_key(payload, "plan")
+                                            or find_key(payload, "level") or ""),
             "as_of": time.time()}
 
 
 # Имена полей в недокументированной точке z.ai разнятся по версиям, поэтому
-# на каждое значение — список кандидатов, а не одно имя.
+# на каждое значение — список кандидатов, а не одно имя. Реальный формат
+# (снят с ответа 2026-09): limits[] с полями currentValue (израсходовано),
+# usage (размер окна), percentage (целый, округлённый), nextResetTime (мс),
+# а окно задано парой unit+number (3=часы, 6=недели).
 ZAI_PERCENT_KEYS = ("usedPercent", "usagePercent", "percent", "usedRate", "rate", "used_percent")
 ZAI_RESET_KEYS = ("resetTime", "resetAt", "nextResetTime", "refreshTime", "reset_time")
 ZAI_WINDOW_KEYS = ("windowMinutes", "duration", "period", "interval", "window", "limitType", "type")
+ZAI_UNIT_MINUTES = {3: 60, 6: 60 * 24 * 7}
 
 
 def zai_windows(payload):
@@ -438,22 +443,9 @@ def zai_windows(payload):
 
     windows = []
     for entry in entries:
-        percent = first_key(entry, ZAI_PERCENT_KEYS)
+        percent = zai_percent(entry)
         if percent is None:
-            used, total = first_key(entry, ("used", "usedTokens", "consumed")), first_key(entry, ("total", "limit", "quota"))
-            if used is None or not total:
-                continue
-            try:
-                percent = float(used) / float(total) * 100.0
-            except (TypeError, ValueError, ZeroDivisionError):
-                continue
-        # Доля приходит и процентами, и долей единицы — отличаем по величине.
-        try:
-            percent = float(percent)
-        except (TypeError, ValueError):
             continue
-        if 0 < percent <= 1:
-            percent *= 100.0
         windows.append(window(
             zai_label(entry),
             percent,
@@ -462,8 +454,33 @@ def zai_windows(payload):
     return windows
 
 
+def zai_percent(entry):
+    """Сколько процентов окна израсходовано. Точная пара currentValue/usage
+    даёт дробные проценты, поэтому она первая; поле percentage — целое
+    и округлённое (6 из 2000 приходило как 1), оно только запасной путь."""
+    used = first_key(entry, ("currentValue", "used", "usedTokens", "consumed"))
+    total = first_key(entry, ("usage", "total", "limit", "quota"))
+    try:
+        return float(used) / float(total) * 100.0
+    except (TypeError, ValueError, ZeroDivisionError):
+        pass
+    raw = first_key(entry, ZAI_PERCENT_KEYS)
+    try:
+        raw = float(raw)
+    except (TypeError, ValueError):
+        return None
+    # Доля приходит и процентами, и долей единицы — отличаем по величине.
+    return raw * 100.0 if 0 < raw <= 1 else raw
+
+
 def zai_label(entry):
     raw = first_key(entry, ZAI_WINDOW_KEYS)
+    # Окно у z.ai задаётся парой unit (единица времени) + number (сколько),
+    # а не готовой длиной в минутах — переводим и дальше как у всех.
+    unit_minutes = ZAI_UNIT_MINUTES.get(entry.get("unit")) if isinstance(entry, dict) else None
+    number = entry.get("number") if isinstance(entry, dict) else None
+    if unit_minutes and isinstance(number, (int, float)) and number > 0:
+        return window_label(unit_minutes * number, str(raw or "лимит"))
     minutes = None
     try:
         minutes = int(raw)
@@ -472,7 +489,7 @@ def zai_label(entry):
     if minutes:
         return window_label(minutes, str(raw))
     text = str(raw or "лимит")
-    return {"TOKENS_LIMIT": "Токены", "CREDIT_LIMIT": "Токены", "TIME_LIMIT": "Поиск в вебе"}.get(text, text)
+    return {"TOKENS_LIMIT": "Токены", "CREDIT_LIMIT": "Кредиты", "TIME_LIMIT": "Поиск в вебе"}.get(text, text)
 
 
 def first_key(entry, keys):
