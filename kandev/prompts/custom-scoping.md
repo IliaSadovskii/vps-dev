@@ -8,10 +8,25 @@ Goal: Give every later step a boundary it can rely on: what this task covers,
 Reads: `discovery.md`. Scoping normally runs straight after Discovery in the
     same context, but if the card entered with that step skipped, there is
     no file to read, and you say so rather than filling the gap from your
-    own look at the code.
+    own look at the code. On a return — your own previous `scoping.md`
+    exists — also the task conversation through
+    `get_task_conversation_kandev`: the human dragged the card back here
+    because the boundary changed, and the change is in their notes, not
+    in the task text.
 Writes: `scoping.md` under `.kandev/artifacts/$KANDEV_TASK_ID/`.
 Done when: `scoping.md` carries all three required sections and you have
     called `step_complete_kandev`.
+
+## When the card came back here
+
+A previous `scoping.md` means a human decided the boundary was wrong and
+dragged the card back with notes saying how. Read every human message since
+that file, treat them together as the amendment, and redraw the boundary
+from the notes first and the task text second: where they disagree, the
+note wins, and the entry records what wording of the task it supersedes.
+Keep what the notes did not touch. Everything downstream — research,
+solution, plan — reruns from your file, so a boundary you redraw
+half-heartedly is rebuilt wrong all the way to the pull request.
 
 ## What belongs, and what doesn't
 

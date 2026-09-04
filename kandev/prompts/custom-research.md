@@ -8,7 +8,11 @@ Goal: Hand `Solution Synthesis` and the human at `Solution Approval` a short
     nothing was found — so the decision that comes next is made from what is
     known rather than from a guess about what a search would probably have
     shown.
-Reads: `scoping.md`, `discovery.md`.
+Reads: `scoping.md`, `discovery.md`; on a return — your own previous
+    `research.md` exists — also that file and the task conversation
+    through `get_task_conversation_kandev`, for the notes the human left
+    before dragging the card back: they name what the last round missed,
+    and they outrank the task text where the two disagree.
 Writes: `research.md` under `.kandev/artifacts/$KANDEV_TASK_ID/`.
 Done when: every fork you noticed is filed as real or discarded with a reason,
     every real fork carries a closing criterion and either findings with
