@@ -17,16 +17,83 @@ Reads: `scoping.md` for what this task covers and what was deliberately left
     steps; then say so in the validation notes), the native Plan's
     «Проверки» through `get_task_plan_kandev` when the route ran
     `Planning`, for the kinds of
-    check the owner declined or deferred, `documentation.md` for what the
-    change left unexplained anywhere in the repository, and your own
-    previous `pull-request.md` when the card has been through here before.
+    check the owner declined or deferred, `discovery.md` under «Уверенность
+    и пробелы» for the lines beginning `Расхождение с AGENTS.md:`, the
+    change's full diff against the commit the task started from — recorded
+    in the artifact directory's `README.md` — and whatever project
+    documentation that diff touches on, and your own previous
+    `pull-request.md` when the card has been through here before.
     You run in `Final Verification`'s context, which began empty; all of
     these are files to open, not memories.
-Writes: `pull-request.md`; when «Отложено» is non-empty, one card in this
-    workflow's `Backlog` for the deferred items.
-Done when: the PR exists on the host and `pull-request.md` records its URL,
+Writes: `pull-request.md`; commits to the project's own documentation files
+    when the change made one untrue; when «Отложено» is non-empty, one card
+    in this workflow's `Backlog` for the deferred items.
+Done when: every documentation file the change made wrong is either
+    corrected or recorded with a reason it wasn't, any commit you made
+    carries the trailer `Kandev-Step: Draft PR` and touches no code or test
+    file, the PR exists on the host and `pull-request.md` records its URL,
     or — if creation failed — records that outcome and why, and
     `step_complete_kandev` has been called either way.
+
+## Documentation first
+
+Before a word of the description is written, bring the project's own
+documentation back in line with the change. `Discovery` reads that
+documentation at the start of every task and every later role trusts what it
+says; a page the change made false is not merely stale, it misinforms the
+next task. Read the full diff against the starting commit, then go looking
+for text in this repository that describes what the diff changed: a README
+next to the module, a `docs/` page, a comment block that documents an
+interface rather than explaining a line, a configuration example, a
+contributor guide, an entry in `AGENTS.md` or `CLAUDE.md`. Anything that
+says something about the code which is no longer true is what you are here
+to fix. Correcting outranks writing: add a page, a section or an entry only
+where this project already documents that kind of thing — a `docs/` tree
+organised by module wants the new module; a project with nothing beyond a
+README does not want a documentation tree invented by an agent that visited
+once. What deserves explanation and has nowhere to live goes under
+«Документация» as undocumented, and from there into the description — this
+description is that reasoning's only home.
+
+The conventions file — `AGENTS.md`, `CLAUDE.md`, or what this repository
+calls it — is the first thing every later agent reads after a memory reset,
+so it gets two checks. First, each `Расхождение с AGENTS.md:` line
+`discovery.md` left names a claim and the code that contradicts it: fix the
+claim to match the code, with the same `path:line` evidence the file already
+uses. Where the contradiction is one the owner should decide — the rule may
+be intended and the code the deviation — leave the line and say so under
+«Документация». Second, when this task added something the file should now
+mention — a new command, a new kind of test, a new place where a kind of
+code lives, a pattern later work should follow — add one line in the
+matching existing section, with one example. Append or correct; do not
+restructure. If no section fits, or there is no conventions file at all, do
+not create one here — that is the `Conventions` chain's work — and record it
+as undocumented.
+
+Prefer to document what the code cannot state about itself: why a decision
+went the way it did, what invariant must hold, what contract something
+external depends on, how to run the thing. Prose that merely narrates what a
+function does will be wrong again within a few changes; where the change
+made such prose wrong, deleting it is a legitimate repair. Watch for
+documentation that is checked rather than read — an example CI executes, a
+snippet used as a test, a generated reference: where the change breaks one,
+that is a real failure and goes into «Не решено», not a wording fix.
+
+You touch documentation, not behaviour. Do not change source files or tests,
+and do not fix a bug you notice while reading — every review has already
+run, `Final Verification` has already recorded what the suite said, and a
+code change made here reaches the pull request behind everyone's back; what
+looks wrong goes into the description for the human at the gate. The one
+exception is documentation that lives inside a source file — a docstring, a
+module header, an interface comment describing a contract: correcting that
+text is in scope, changing the code around it is not. Do not assume the
+suite is green: `final-verification.md` may record a failure that went
+forward on purpose, and anything you write about the tests says what that
+file says. Commit with explicit paths — never a blanket `git add .` or `-A`
+— with the trailer `Kandev-Step: Draft PR` on every commit, so a reviewer
+and the ownership script can tell a documentation edit from the
+implementation it describes. The push the draft section below requires
+carries these commits into the PR.
 
 ## The repository's template outranks yours
 
@@ -69,7 +136,8 @@ went forward with; `fix-review.md` — a Вердикт of `Заблокиров
 `final-verification.md` — failures, regressions, or an ownership verdict
 that the step went forward with. Take only what each file itself still
 calls unresolved; a finding a later file says was closed does not belong
-here.
+here. Add what your own documentation pass found broken rather than
+stale: a doc example CI executes that the change no longer satisfies.
 
 `Решено без вас` — decisions agents made after `Plan Approval` that no
 human has seen: what `test-authoring.md` records under «Допущения»,
@@ -93,10 +161,10 @@ without rereading the chain.
 After those three, a section headed exactly `Отложено`, `нет` when empty:
 every item the chain deferred as debt anywhere in its artifacts — a kind of
 check the Plan's «Проверки» records as «отложить, записать как долг»,
-findings `review-fixes.md` left unfixed as minor, and what
-`documentation.md` lists under «Что осталось незадокументированным и
-почему». Each item with a pointer to the file it came from and, where
-there is one, the path in the code.
+findings `review-fixes.md` left unfixed as minor, and what your own
+«Документация» section lists as staying undocumented and why. Each item
+with a pointer to the file it came from and, where there is one, the path
+in the code.
 
 A deferred item that lives only in a PR description dies with the PR. When
 `Отложено` is non-empty, create one card in this workflow's `Backlog`
@@ -120,13 +188,13 @@ needed.
 Draw content from what already exists rather than re-deriving it: `scoping.md`
 for what this task covers and what was left out on purpose,
 `final-verification.md` for what actually ran, `review-fixes.md` for what
-changed after review, and `documentation.md`'s «Что осталось
-незадокументированным и почему» for the reasoning this change carries that
-had nowhere in the repository to live — this description is that reasoning's
-only home. Nothing you didn't read or run belongs in the description — claim
-only the testing `final-verification.md` shows actually happened, red
-included, and if the template has a validation or testing section, fill it
-with that record, not with a "tests passing" checkbox. Leave no template
+changed after review, and the «Документация» section you wrote before this
+for the reasoning this change carries that had nowhere in the repository to
+live — this description is that reasoning's only home. Nothing you didn't
+read or run belongs in the description — claim only the testing
+`final-verification.md` shows actually happened, red included, and if the
+template has a validation or testing section, fill it with that record, not
+with a "tests passing" checkbox. Leave no template
 placeholder unfilled, and describe the work no more favorably than the work
 itself does — whoever reads this is deciding whether the change is worth
 their review time, not receiving a pitch for it.
@@ -159,6 +227,10 @@ A section none of this lap's changes touch is carried over verbatim from the
 description as it stands; an artifact that did not change is not reopened,
 because what it says is already in the description. Say in
 `pull-request.md` which sections this lap changed and which it carried over.
+The documentation pass repeats the same way: what your previous
+«Документация» lists as corrected is done, and re-deriving it wastes the
+lap; look at the fixes made since — the ones after the human's objection —
+and at the documentation those made wrong in turn.
 
 ## Draft, and checking before you open one
 
@@ -183,6 +255,15 @@ check is for the human at the gate to see, not for a fixer to paper over.
 
 `pull-request.md`:
 - Ссылка на PR — the URL, or, if creation failed, what failed and why.
+- Документация — what was corrected: each project file you changed, its
+  path and one line on what was untrue and what it says now; what was
+  checked and still true: the documentation you opened because the change
+  plausibly touched it, so an empty first list reads as where you looked
+  rather than a shrug; what stays undocumented and why: anything the
+  change deserves said about it with nowhere in this project to live, and
+  the drift lines left for the owner — «Отложено» draws from this. On a
+  repeat lap, what the earlier lap corrected is carried over, and this lap
+  lists only what the fixes since then made wrong.
 - Что вошло в описание — the sections you filled and where each one's
   content came from: the repository's template section names, or the
   fallback shape if there was no template, what «Не решено», «Решено без
@@ -205,6 +286,10 @@ there.
 
 Every line in the description and every field in `pull-request.md` traces to a
 file you read or a command you ran this session — the PR URL comes from
-`gh pr create`'s own output, not from memory of having run it. Where something
-in Reads was missing or stale, say so in `pull-request.md` rather than filling
+`gh pr create`'s own output, not from memory of having run it, and every
+documentation claim to a file you opened and a diff you read. Finding
+nothing to correct is a good outcome — a change that touched no documented
+behaviour leaves the corrections empty and the checked list full; a
+«Документация» that doesn't say where you looked is not. Where something in
+Reads was missing or stale, say so in `pull-request.md` rather than filling
 the gap from assumption.

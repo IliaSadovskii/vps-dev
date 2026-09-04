@@ -27,7 +27,7 @@ Quick и Standard временно убраны — и с доски, и из `w
 ```text
 Quick     │ Backlog │ Discovery │ Scoping │ Test Authoring │ Implementation │
           │ Verification │ Code Review │ Security Review │ Review Fixes │
-          │ Fix Review │ Final Verification │ Documentation │ Draft PR │
+          │ Fix Review │ Final Verification │ Draft PR │
           │ Human Review │ Done
 
 Standard  │ Backlog │ Discovery │ Scoping │ Planning │ Plan Review │
@@ -54,7 +54,7 @@ Deep      │ Backlog │ Discovery │ Scoping │ Research │ Solution Synthe
 | Test Authoring, Implementation, Verification | всегда есть |
 | Code Review, Security Review | есть диф |
 | Review Fixes, Fix Review, Final Verification | ревью что-то нашло |
-| Documentation, Draft PR, Human Review | всегда есть |
+| Draft PR, Human Review | всегда есть |
 
 Пустой вход бывает только у первых двух групп, поэтому убирать можно только их.
 **Режется обдумывание, а не контроль качества**: хвост от Code Review до
@@ -103,7 +103,7 @@ Human Review одинаков во всех трёх маршрутах.
 нужна по делу: `Discovery` с `Scoping` (свежее чтение репозитория),
 `Research` с `Solution Synthesis`, тройка `Test Authoring`,
 `Implementation`, `Verification` (один цикл «красный тест — код —
-зелёный») и хвост `Final Verification`, `Documentation`, `Draft PR`.
+зелёный») и хвост `Final Verification`, `Draft PR`.
 Самый длинный отрезок — три шага (решение 43).
 
 В Quick перед `Test Authoring` сброса нет намеренно: в контексте лежат только
@@ -138,14 +138,14 @@ Plan Review, тащить их в реализацию дороже, чем пе
   разные промпты. Первая замыкает red-green в контексте реализации и при
   красном прогоне один раз возвращает карточку на `Implementation`; вторая
   работает в контексте `Fix Review` и гоняет полный прогон после правок.
-- `Documentation` идёт после `Final Verification`, в её же контексте: правки
-  по ревью уже улеглись, прогон зелёный, и документацию имеет смысл править
-  по итоговому коду, а не по промежуточному. Её работа — прежде всего чинить
-  разошедшееся с кодом; писать новое она имеет право только там, где проект
-  и так документирует такие вещи.
-- После `Documentation` создаётся draft PR с разделом «Не решено» из
-  `plan-review.md`, `fix-review.md` и `final-verification.md`. Нативный CI
-  auto-fix выключен: его коммиты появлялись бы после всех ревью.
+- `Draft PR` идёт после `Final Verification`, в её же контексте, и сначала
+  чинит документацию проекта: правки по ревью уже улеглись, прогон зелёный,
+  и документацию имеет смысл править по итоговому коду, а не по
+  промежуточному. Прежде всего чинится разошедшееся с кодом; писать новое
+  можно только там, где проект и так документирует такие вещи. Затем
+  создаётся draft PR с разделом «Не решено» из `plan-review.md`,
+  `fix-review.md` и `final-verification.md`. Нативный CI auto-fix выключен:
+  его коммиты появлялись бы после всех ревью.
 
 ## Переходы и возвраты
 
@@ -201,7 +201,6 @@ Workflow-level prompt `@custom-artifact-protocol` будет общим конт
   security-review.md
   review-fixes.md
   final-verification.md
-  documentation.md
   pull-request.md
 ```
 

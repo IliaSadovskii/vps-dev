@@ -8,7 +8,9 @@ Goal: Leave a red test suite that pins down what "done" means for this task,
     failed on the missing behaviour, not on a mistake in the test itself.
 Reads: The native Kandev Plan via `get_task_plan_kandev`, when the route ran
     `Planning` — when it did not, no Plan existing is the expected state, not
-    a gap to report; `scoping.md` for what this task covers and what it
+    a gap to report; `plan-review.md` when it exists, for the non-blocking
+    notes that name a test scenario; `scoping.md` for what this task covers
+    and what it
     deliberately leaves out; `discovery.md` for how this project is built and
     what rules it states about itself, including «Тесты и проверки» — where
     its tests live and how they run; `research.md` when it exists, for the
@@ -55,6 +57,21 @@ person with access can provide — a credential, a service account, a
 variable on the host — goes there too, as a line beginning
 `Нужны руки человека:` with the exact command or step; `Draft PR` collects
 those lines by their marker.
+
+## Plan Review's notes that are test work
+
+`plan-review.md`, when it exists, holds «Незаблокирующие замечания» — what
+`Plan Review` saw and let the plan go forward with. Some of them name a test
+scenario the plan is missing or has too weak: an empty query, a boundary
+«Проверки» skipped, a failure path no stage exercises. Those are test work
+for this step, not advice for someone later: write those tests too, in the
+same red state as the rest. Nobody downstream reads that section for tests —
+`Implementation` builds against your files — and a scenario left there
+resurfaces one lap later as a `Code Review` finding that could have been a
+test today. Record in `test-authoring.md` which notes you took — each under
+«Какое поведение покрыто», tied to the note — and which you did not and
+why, under «Допущения»: the note was outside `scoping.md`, the Plan already
+settled it, or it names no test at all.
 
 ## A repeat lap
 
@@ -143,14 +160,16 @@ is worse than an honest gap: it reads downstream as coverage that isn't there.
 `Какое поведение покрыто`, `Файлы тестов`, `Вывод прогона`, `Допущения`,
 `Заход`.
 `Какое поведение покрыто` names each behaviour a test targets, tied to the
-Plan or `scoping.md` if either named it. `Файлы тестов` lists the paths you
+Plan, `scoping.md` or a `plan-review.md` note if any of them named it.
+`Файлы тестов` lists the paths you
 wrote or changed. `Вывод прогона` carries the actual terminal output of the
 failing run for each test — not a description of it — so a reader can see the
 failure reason for themselves instead of taking your word for its meaning.
 `Допущения` holds what you decided where neither the Plan nor `scoping.md`
-settled it, and the `Нужны руки человека:` lines, or says plainly that
-there were none. `Заход` carries the lap number and, past the first lap,
-what sent the card back here.
+settled it, the `plan-review.md` notes you did not turn into tests and why,
+and the `Нужны руки человека:` lines, or says plainly that there were none.
+`Заход` carries the lap number and, past the first lap, what sent the card
+back here.
 
 ## Finishing
 

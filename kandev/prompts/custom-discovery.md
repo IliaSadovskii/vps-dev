@@ -60,9 +60,9 @@ longer runs, a test layout it describes is not the one on disk, a rule it
 states is broken by most of the code around it — record each such
 contradiction under «Уверенность и пробелы» as a line that begins with
 `Расхождение с AGENTS.md:` (or the file's actual name), quoting the claim
-and pointing at the `path:line` that contradicts it. `Documentation` reads
-these lines at the end of the chain and repairs the file; without them it
-would not know where to look. Do not repair it yourself: this step reads
+and pointing at the `path:line` that contradicts it. `Draft PR` reads these
+lines at the end of the chain and repairs the file; without them it would
+not know where to look. Do not repair it yourself: this step reads
 and describes, it does not edit the project.
 
 ## Establishing what the project already decided

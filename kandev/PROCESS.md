@@ -24,7 +24,7 @@
  Спланировать  Planning ⇄ Plan Review → [Plan Approval]
  Сделать       Test Authoring → Implementation ⇄ Verification
  Проверить     Code Review → Security Review → Review Fixes → Fix Review
-               → Final Verification → Documentation → Draft PR
+               → Final Verification → Draft PR
  Принять       [Human Review] → Done
 ```
 

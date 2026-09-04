@@ -420,7 +420,7 @@ workflows:
       # Гоняет полный прогон после правок — поэтому у неё свой промпт.
       # Возврат на Review Fixes — только если в этом заходе автовозврата
       # ещё не было; предел один на заход для Fix Review и Final
-      # Verification вместе. Documentation и Draft PR продолжают её память.
+      # Verification вместе. Draft PR продолжает её память.
       - name: Final Verification
         position: 16
         color: bg-blue-500
@@ -444,38 +444,9 @@ workflows:
         auto_advance_requires_signal: true
         cancel_triggers_turn_complete: false
 
-      # Документация проекта после того, как правки по ревью улеглись.
-      # Работает в контексте Final Verification, читает review-fixes.md
-      # файлом, чинит разошедшееся с кодом и не трогает сам код.
-      - name: Documentation
-        position: 17
-        color: bg-teal-500
-        prompt: |
-          @custom-documentation
-
-          Колонка сейчас: Documentation. Если в этой сессии ты уже работал, карточку
-          вернули сюда: прочитай все заметки человека с прошлого раза и
-          действуй по ним.
-
-          {{task_prompt}}
-        events:
-          on_enter:
-            - type: auto_start_agent
-          on_turn_complete:
-            - type: move_to_next
-        is_start_step: false
-        show_in_command_panel: true
-        allow_manual_move: true
-        auto_advance_requires_signal: true
-        cancel_triggers_turn_complete: false
-
-      # PR создаётся draft, при повторном заходе обновляется, а не
-      # создаётся второй. CI auto-fix намеренно выключен: его коммиты
-      # появились бы уже после Code/Security/Fix Review. Раздел «Не решено»
-      # в описании PR собирается из plan-review, fix-review и
       # final-verification.
       - name: Draft PR
-        position: 18
+        position: 17
         color: bg-indigo-500
         prompt: |
           @custom-pull-request
@@ -498,7 +469,7 @@ workflows:
 
       # Последние ворота человека. Назад — за правками, вперёд — в Done.
       - name: Human Review
-        position: 19
+        position: 18
         color: bg-yellow-500
         # Принять: дождаться CI, проверить итоговый diff и перетащить вправо,
         # в Done. Доработать: написать замечания и перетащить на Review
@@ -514,7 +485,7 @@ workflows:
         cancel_triggers_turn_complete: false
 
       - name: Done
-        position: 20
+        position: 19
         color: bg-green-500
         # Переоткрыть: написать, что изменилось, и перетащить на Review
         # Fixes, тем же путём, что и с Human Review.

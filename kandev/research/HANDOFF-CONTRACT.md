@@ -1,7 +1,7 @@
 # Контракт передачи между ролями
 
 Сведён до написания промптов и перепроверен после их переписывания.
-Шестнадцать ролевых промптов, написанных по отдельности, не состыкуются:
+Пятнадцать ролевых промптов, написанных по отдельности, не состыкуются:
 одна роль оставит раздел, которого другая не читает, или спросит поле,
 которого никто не производит. Поодиночке это не видно.
 
@@ -25,7 +25,6 @@
   review-fixes.md
   fix-review.md
   final-verification.md
-  documentation.md
   pull-request.md
 ```
 
@@ -72,7 +71,7 @@
 | Solution Synthesis | продолжает; при возврате с `Solution Approval` — тот же контекст, заметки человека в разговоре | `research.md`, `scoping.md`, `discovery.md`, свой прошлый `solution-synthesis.md` при возврате | `solution-synthesis.md` |
 | Planning | **сброшен**; заметки человека — через разговор задачи | нативный Plan (обязательно до записи), `scoping.md`, `solution-synthesis.md` и `research.md` если есть, `discovery.md`, `plan-review.md` если есть | нативный Kandev Plan, строка в `README.md` |
 | Plan Review | **сброшен** | нативный Plan, `discovery.md`, `scoping.md`, `solution-synthesis.md` и `research.md` если есть, свой прошлый `plan-review.md`, разговор задачи | `plan-review.md`; блокирующий вердикт на попытке 1 — возврат на `Planning` |
-| Test Authoring | **сброшен** | нативный Plan если есть, `scoping.md`, `discovery.md` («Тесты и проверки»), `research.md` если есть, свой прошлый `test-authoring.md`, разговор задачи | `test-authoring.md`, коммит тестов с трейлером `Kandev-Step: Test Authoring` |
+| Test Authoring | **сброшен** | нативный Plan если есть, `plan-review.md` если есть («Незаблокирующие замечания» — названные там сценарии тестов), `scoping.md`, `discovery.md` («Тесты и проверки»), `research.md` если есть, свой прошлый `test-authoring.md`, разговор задачи | `test-authoring.md`, коммит тестов с трейлером `Kandev-Step: Test Authoring` |
 | Implementation | продолжает Test Authoring | контекст Test Authoring; `research.md` и `solution-synthesis.md` если есть; `verification.md` при возврате | код и коммиты с трейлером `Kandev-Step: Implementation`, файла нет |
 | Verification | продолжает | `README.md` (стартовый коммит), свой прошлый `verification.md`, разговор задачи (время последнего сообщения человека) | `verification.md`; красный прогон на попытке 1 — возврат на `Implementation` |
 | Code Review | **сброшен** | `README.md`, `scoping.md`, `discovery.md`, `verification.md`, `research.md` если есть, нативный Plan если есть, свой прошлый `code-review.md`, разговор задачи | `code-review.md` + `publish_review_findings_kandev` |
@@ -80,8 +79,7 @@
 | Review Fixes | **сброшен**, в том числе при возврате с `Human Review`/`Done` | `code-review.md`, `security-review.md`, `fix-review.md` или `final-verification.md` если вернули они, `discovery.md`, свой прошлый `review-fixes.md`, разговор задачи | `review-fixes.md`, коммиты с трейлером `Kandev-Step: Review Fixes`, без тестов |
 | Fix Review | **сброшен** | `README.md`, `discovery.md`, `scoping.md`, `code-review.md`, `security-review.md`, `review-fixes.md`, `final-verification.md` если она вернула карточку, свой прошлый `fix-review.md`, разговор задачи | `fix-review.md` + `publish_review_findings_kandev` (только новые дефекты); блокирующий вердикт при доступном автовозврате — возврат на `Review Fixes` |
 | Final Verification | **сброшен** | `review-fixes.md`, `fix-review.md`, `verification.md`, `README.md`, `discovery.md`, свой прошлый `final-verification.md` | `final-verification.md`; провал при доступном автовозврате — возврат на `Review Fixes` |
-| Documentation | продолжает Final Verification | `review-fixes.md`, `final-verification.md`, `README.md` (стартовый коммит), диф задачи и документация проекта, свой прошлый `documentation.md`, `discovery.md` (строки `Расхождение с AGENTS.md:`) | `documentation.md`, коммиты в документацию с трейлером `Kandev-Step: Documentation` |
-| Draft PR | продолжает Final Verification | `scoping.md`, `plan-review.md`, `fix-review.md`, `final-verification.md`, `test-authoring.md` («Допущения», строки `Нужны руки человека:`), `verification.md` («Отклонения от плана», те же строки), `review-fixes.md`, нативный Plan («Проверки») если есть, `documentation.md`, свой прошлый `pull-request.md` | `pull-request.md`, draft PR на хосте (обновляется, не дублируется); при непустом «Отложено» — карточка «Долг по PR N» в `Backlog` через `create_task_kandev` (`start_agent: false`, `source_task_id` = эта задача; на повторном заходе обновляется та, что записана в прошлом `pull-request.md`) |
+| Draft PR | продолжает Final Verification | `scoping.md`, `plan-review.md`, `fix-review.md`, `final-verification.md`, `test-authoring.md` («Допущения», строки `Нужны руки человека:`), `verification.md` («Отклонения от плана», те же строки), `review-fixes.md`, нативный Plan («Проверки») если есть, `discovery.md` (строки `Расхождение с AGENTS.md:`), `README.md` (стартовый коммит), диф задачи с него и документация проекта, свой прошлый `pull-request.md` | `pull-request.md`, коммиты в документацию проекта с трейлером `Kandev-Step: Draft PR` (код и тесты не трогаются), draft PR на хосте (обновляется, не дублируется); при непустом «Отложено» — карточка «Долг по PR N» в `Backlog` через `create_task_kandev` (`start_agent: false`, `source_task_id` = эта задача; на повторном заходе обновляется та, что записана в прошлом `pull-request.md`) |
 
 ### Про Implementation
 
@@ -208,10 +206,9 @@
 **`final-verification.md`** — Что запущено, дословный вывод (включая скрипт
 владения) · Результат · Расхождения с `verification.md`, если есть · Заход.
 
-**`documentation.md`** — Что исправлено · Что проверено и осталось верным ·
-Что осталось незадокументированным и почему · Заход.
-
-**`pull-request.md`** — Ссылка на PR · Что вошло в описание (в том числе
+**`pull-request.md`** — Ссылка на PR · Документация (что исправлено ·
+что проверено и осталось верным · что осталось незадокументированным и
+почему — последнее питает «Отложено») · Что вошло в описание (в том числе
 карточка долга или её отсутствие) · Заход. Автоматическая починка CI не
 включается (решение 32).
 
