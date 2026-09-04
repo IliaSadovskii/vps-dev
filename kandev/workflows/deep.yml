@@ -20,6 +20,30 @@
 # Условий по содержанию в переносимом YAML нет: все переходы безусловны.
 # Маршрут выбирает человек, заводя карточку сразу на нужной дорожке, а не
 # агент по дороге. Отдельной колонки выбора маршрута нет.
+#
+# Настройки колонки и как они расставлены (решение 57):
+#   is_start_step            — только Backlog: новые карточки встают туда.
+#   show_in_command_panel    — карточки колонки видны в быстром поиске
+#                              Cmd+K; выключено у Backlog и Done, чтобы не
+#                              засорять поиск.
+#   allow_manual_move        — можно ли перетащить карточку сюда руками;
+#                              открыты только колонки из PROCESS.md, куда
+#                              тащит человек (решение 55).
+#   auto_advance_requires_signal — переход по on_turn_complete только после
+#                              step_complete_kandev; true у всех агентных
+#                              колонок, false у ворот и Backlog/Done.
+#   cancel_triggers_turn_complete — false везде: остановка агента кнопкой
+#                              Stop не считается завершением шага.
+#   auto_archive_after_hours — только Done: карточка уходит в архив через
+#                              неделю, доска не зарастает.
+#   wip_limit, pull_from_step_position, agent_profile — не заданы; профиль
+#                              модели по колонкам отложен (решение 12).
+#   stage_type               — не задаётся: переключает боковую панель
+#                              карточки в режим «ревьюеры/одобряющие»,
+#                              который нам не нужен.
+#   Цвета: фиолетовый — понять и спланировать, синий — сделать, жёлтый —
+#   ревью, янтарный — безопасность, оранжевый — ворота человека, индиго —
+#   PR, зелёный — Done, серый — Backlog.
 version: 1
 type: kandev_workflow
 workflows:
@@ -470,7 +494,7 @@ workflows:
       # Последние ворота человека. Назад — за правками, вперёд — в Done.
       - name: Human Review
         position: 18
-        color: bg-yellow-500
+        color: bg-orange-500
         # Принять: дождаться CI, проверить итоговый diff и перетащить вправо,
         # в Done. Доработать: написать замечания и перетащить на Review
         # Fixes — хвост до PR пройдёт снова. Если менялся план или сама
@@ -494,5 +518,6 @@ workflows:
         is_start_step: false
         show_in_command_panel: false
         allow_manual_move: true
+        auto_archive_after_hours: 168
         auto_advance_requires_signal: false
         cancel_triggers_turn_complete: false

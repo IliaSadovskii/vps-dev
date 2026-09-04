@@ -60,7 +60,7 @@ workflows:
       # Поправить — написать, что не так, и перетащить на Conventions.
       - name: Review
         position: 2
-        color: bg-yellow-500
+        color: bg-orange-500
         prompt: *gate
         events: {}
         is_start_step: false
@@ -77,5 +77,6 @@ workflows:
         is_start_step: false
         show_in_command_panel: false
         allow_manual_move: true
+        auto_archive_after_hours: 168
         auto_advance_requires_signal: false
         cancel_triggers_turn_complete: false
