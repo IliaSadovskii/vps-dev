@@ -42,8 +42,8 @@ card back here when they are done. Your context is cleared on entry, so
 call `get_task_conversation_kandev` and read every human message since the
 Plan was last saved; treat them together as one change request — find
 what in the saved Plan they argue with, change that, and leave the rest.
-If the human edited the Plan in the UI as well, `get_task_plan_kandev` shows their
-edit; keep it.
+If the human edited the Plan in the UI as well, `get_task_plan_kandev`
+shows their edit; keep it.
 
 From `Plan Review`, a blocking verdict sends the card back with a short
 hand-off pointing at `plan-review.md`. Read that file: its Блокирующие
