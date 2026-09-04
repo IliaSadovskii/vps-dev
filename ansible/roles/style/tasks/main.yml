@@ -144,7 +144,7 @@
 - name: Куда смотреть
   ansible.builtin.debug:
     msg: >-
-      Стиль разговора агентов: порт {{ style_port }} на дашборде, текст в
+      Общий промпт для всех агентов: порт {{ style_port }} на дашборде, текст в
       {{ style_file }}, ссылки:
       {{ style_targets | map(attribute='path') | join(', ') }}.
       {% set moved = style_present.results | selectattr('stat.exists') | rejectattr('stat.islnk') | map(attribute='item.path') | list %}

@@ -1,6 +1,6 @@
 # Управляется Ansible: roles/style/templates/vps-dev-style.service.j2
 [Unit]
-Description=Стиль разговора агентов (страница на :{{ style_port }})
+Description=Общий промпт для всех агентов (страница на :{{ style_port }})
 After=network-online.target
 Wants=network-online.target
 

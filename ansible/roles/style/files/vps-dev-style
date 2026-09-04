@@ -153,7 +153,7 @@ def render(text, note=None, saved=False, error=None):
     stamp = f"сохранён {esc(human_ago(when))}" if when else "файла нет"
     return f"""<!doctype html><html lang="ru"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Стиль разговора агентов</title>
+<title>Общий промпт для всех агентов</title>
 <style>
  /* Тот же язык, что у дашборда (:8062) и лимитов (:8070): цвет темы из
     системной, страница самодостаточна — без внешних запросов. */
@@ -184,8 +184,9 @@ def render(text, note=None, saved=False, error=None):
  .note{{opacity:.6;font-size:.85rem;margin-top:1rem}}
  @media(prefers-color-scheme:dark){{:root{{--accent:#7aa7ff}} li.bad .hint,.flash.bad{{color:#f87171}}}}
 </style></head><body>
-<h1>Стиль разговора агентов</h1>
-<div class="sub">один текст для Claude Code, Codex, Gemini и OpenCode: как отвечать владельцу · {stamp}</div>
+<h1>Общий промпт для всех агентов</h1>
+<div class="sub">один текст, который Claude Code, Codex, Gemini и OpenCode читают перед любым разговором в любом проекте:
+как отвечать владельцу, а дальше всё, что должно быть верно везде · {stamp}</div>
 {flash}
 <form method="post" action="/save">
 <textarea name="text" spellcheck="false" maxlength="{MAX_BYTES}">{esc(text)}</textarea>
