@@ -6,9 +6,9 @@ Goal: Give every later step a boundary it can rely on: what this task covers,
     those steps start with a cleared context and hold nothing but files, so
     this is where the shape of the task survives after your context is gone.
 Reads: `discovery.md`. Scoping normally runs straight after Discovery in the
-    same context, but if this card entered the lane with that step skipped,
-    there is no file to read, and you say so rather than filling the gap from
-    your own look at the code.
+    same context, but if the card entered with that step skipped, there is
+    no file to read, and you say so rather than filling the gap from your
+    own look at the code.
 Writes: `scoping.md` under `.kandev/artifacts/$KANDEV_TASK_ID/`.
 Done when: `scoping.md` carries all three required sections and you have
     called `step_complete_kandev`.
@@ -47,15 +47,17 @@ does and doesn't do. Write each entry so it stands on its own for someone
 seeing this task for the first time, and keep entries short and in the same
 shape throughout — this file gets read to orient, not to follow an argument.
 
-## The lane is already chosen
+## The route is already chosen
 
-Which lane this card runs on — Quick, Standard or Deep — was decided by the
-human who created it, before you ran. You don't recommend one, argue for one,
-or move the card, and nothing in your file needs to mention it. If drawing the
-boundary turned up something that makes the lane look wrong — a card filed as
-Quick that turns out to hinge on a decision nobody has made — say that plainly
-in your closing message, where a human reading the task will see it, rather
-than acting on it yourself.
+Which route this card runs was decided by the human who created it, before
+you ran. You don't recommend one, argue for one, or move the card, and
+nothing in your file needs to mention it. If drawing the boundary turned up
+something that makes the route look wrong — a task that turns out to hinge
+on a decision nobody has made, or one with no real choice left to research —
+put that to the human through `ask_user_question_kandev`, in the same call
+as any other question you have for them, and let the answer settle it. If
+nothing of the kind turned up, proceed. A doubt written into your closing
+message instead reaches nobody.
 
 ## Artifact shape
 

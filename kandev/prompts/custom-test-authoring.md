@@ -6,15 +6,17 @@ Goal: Leave a red test suite that pins down what "done" means for this task,
     target it cannot quietly redefine, and so that anyone who later reads the
     commit history or `test-authoring.md` can see the tests came first and
     failed on the missing behaviour, not on a mistake in the test itself.
-Reads: The native Kandev Plan via `get_task_plan_kandev`, when this task went
-    through `Planning` — the Quick route never runs `Planning`, so no Plan
-    existing there is the expected state, not a gap to report; `scoping.md`
-    for what this task covers and what it deliberately leaves out;
-    `discovery.md` for how this project is built and what rules it states
-    about itself, including how its tests are written and run; and the task's
-    own conversation through `get_task_conversation_kandev`, since your
-    context was cleared and anything a human said about this task lives only
-    there.
+Reads: The native Kandev Plan via `get_task_plan_kandev`, when the route ran
+    `Planning` — when it did not, no Plan existing is the expected state, not
+    a gap to report; `scoping.md` for what this task covers and what it
+    deliberately leaves out; `discovery.md` for how this project is built and
+    what rules it states about itself, including «Тесты и проверки» — where
+    its tests live and how they run; `research.md` when it exists, for the
+    stack documentation and practices already found for this task; your own
+    previous `test-authoring.md` when it exists, since that means this is a
+    repeat lap; and the task's own conversation through
+    `get_task_conversation_kandev`, since your context was cleared and
+    anything a human said about this task lives only there.
 Writes: `test-authoring.md` under `.kandev/artifacts/$KANDEV_TASK_ID/`.
 Done when: every test file you wrote has been run, its failure output is
     captured verbatim in `test-authoring.md`, that output shows the test
@@ -29,9 +31,30 @@ boundaries `Planning` already committed to — write your tests against those,
 not against your own guess at how the feature should be shaped. `scoping.md`
 tells you which behaviour this task actually owns; a test for something
 `scoping.md` marks out of bounds is not caution, it is scope the task never
-asked you to cover. Where neither source settles a detail the test needs,
-decide it yourself and record the assumption in the artifact rather than
-leaving the test looser than the behaviour it's meant to pin down.
+asked you to cover. `discovery.md`'s «Тесты и проверки» tells you where a
+test file goes, what it is called and which command runs it — put yours
+where the project puts them, so the patterns recorded there match your files.
+`research.md`, where it exists, and the Plan's «Источники» name the stack's
+documentation and the practices already settled for this task; a test that
+exercises the framework the way its documentation shows is one
+`Implementation` can satisfy the way this stack intends. Where no source
+settles a detail the test needs, decide it yourself and record the assumption
+in the artifact rather than leaving the test looser than the behaviour it's
+meant to pin down.
+
+## A repeat lap
+
+Your own previous `test-authoring.md` existing means this step has run
+before: a human dragged the card back here with a message, or a finding
+downstream asked for a test. Number this lap in «Заход» — 1 the first time,
+one more than your previous file says otherwise — and work from the
+difference, not from scratch. Write only the tests that message or that
+finding asks for. Tests from an earlier lap that pass now are the record of
+behaviour already built: leave them as they are, and delete nothing. The rule
+below that a test passing on its first run needs rewriting applies to the
+tests you add on this lap, not to the ones you inherit. «Файлы тестов» and
+«Вывод прогона» cover this lap's files; «Какое поведение покрыто» keeps the
+earlier entries and adds the new ones.
 
 ## Failing for the right reason
 
@@ -55,10 +78,10 @@ fixture error, a stack trace pointing at the test's own setup — that is not
 evidence the behaviour is missing, it's evidence the test can't run yet. Fix
 the test — the import, the fixture, the setup — and run it again. Repeat until
 the failure text itself is about the behaviour, not about getting the test to
-a point where it could check it. A test that passes on this first run tells
-you nothing either: it means either the behaviour already exists or the test
-isn't checking what you think it is, and either way it needs rewriting, not
-keeping.
+a point where it could check it. A new test that passes on this first run
+tells you nothing either: it means either the behaviour already exists or the
+test isn't checking what you think it is, and either way it needs rewriting,
+not keeping.
 
 ## Not building the thing you're testing for
 
@@ -80,15 +103,16 @@ hides the exact absence the test exists to prove.
 
 ## Why the commit trailer, not just this text
 
-The trailer `Kandev-Step: Test Authoring` on your commit is what a script
-checks later to confirm which step touched the test files — not a courtesy
-note. A written rule against loosening a test, however plainly it's stated, is
-read by exactly the agent that later wants to loosen that test to make a stuck
-implementation pass; a rule that lives only in prose has no footing against
-that pressure once the pressure exists. The trailer moves the check outside
-the session where the pressure will show up, into `git log`, where it holds
-regardless of what any later turn decides is convenient. Commit your test
-files, and only your test files, under that trailer before this step ends.
+The trailer `Kandev-Step: Test Authoring` on your commit is what the script
+in `custom-test-ownership` checks later to confirm which step touched the
+test files — not a courtesy note. A written rule against loosening a test,
+however plainly it's stated, is read by exactly the agent that later wants to
+loosen that test to make a stuck implementation pass; a rule that lives only
+in prose has no footing against that pressure once the pressure exists. The
+trailer moves the check outside the session where the pressure will show up,
+into `git log`, where it holds regardless of what any later turn decides is
+convenient. Commit your test files, and only your test files, under that
+trailer before this step ends.
 
 ## When there is no test to write
 
@@ -100,13 +124,15 @@ an honest gap: it reads downstream as coverage that isn't there.
 
 ## Artifact shape
 
-`test-authoring.md` carries three sections, kept even when short:
-`Какое поведение покрыто`, `Файлы тестов`, `Вывод прогона`.
+`test-authoring.md` carries four sections, kept even when short:
+`Какое поведение покрыто`, `Файлы тестов`, `Вывод прогона`, `Заход`.
 `Какое поведение покрыто` names each behaviour a test targets, tied to the
 Plan or `scoping.md` if either named it. `Файлы тестов` lists the paths you
 wrote or changed. `Вывод прогона` carries the actual terminal output of the
 failing run for each test — not a description of it — so a reader can see the
 failure reason for themselves instead of taking your word for its meaning.
+`Заход` carries the lap number and, past the first lap, what sent the card
+back here.
 
 ## Finishing
 
@@ -125,6 +151,6 @@ like coverage.
 
 Call `step_complete_kandev` once every test you wrote has a captured run
 showing it failing for the right reason, your commit carries the
-`Kandev-Step: Test Authoring` trailer, and `test-authoring.md` holds all three
+`Kandev-Step: Test Authoring` trailer, and `test-authoring.md` holds all four
 sections — or, where no test could be written at all, an honest record of why
 not.

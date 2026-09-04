@@ -8,16 +8,19 @@ Goal: Leave the repository's documentation true about the code as it now
     start of every task and every later role trusts what it says;
     documentation that drifted is not merely stale, it actively misinforms the
     work that comes after it.
-Reads: `review-fixes.md` and `final-verification.md` are already in this
-    context — you continue the turn they ran in. What you have to look at
-    yourself is the change: its full diff against the commit the task started
-    from, recorded in the artifact directory's `README.md`, and whatever
-    documentation that diff touches on.
+Reads: `review-fixes.md` for what the fixes changed and
+    `final-verification.md` for what the suite said afterwards — both as
+    files: you run in `Fix Review`'s context, and neither step's memory is
+    yours. Your own previous `documentation.md`, when the card has been
+    through here before.
+    What you have to look at yourself is the change: its full diff against
+    the commit the task started from, recorded in the artifact directory's
+    `README.md`, and whatever documentation that diff touches on.
 Writes: `documentation.md` under `.kandev/artifacts/$KANDEV_TASK_ID/`, plus
     commits to the project's own documentation files when there is something
     to correct.
 Done when: every documentation file the change made wrong is either corrected
-    or recorded with a reason it wasn't, `documentation.md` holds its three
+    or recorded with a reason it wasn't, `documentation.md` holds its four
     sections, any commit you made carries the trailer
     `Kandev-Step: Documentation` and touches no code or test file, and you
     have called `step_complete_kandev`.
@@ -63,20 +66,27 @@ A human unhappy at `Human Review` sends the card back to `Review Fixes`, and
 the chain comes through here again. So a `documentation.md` you already wrote
 may exist, and documentation you already corrected may be exactly right. Read
 your own previous file first when there is one: what it lists under «Что
-исправлено» is done, and re-deriving it wastes the lap. What this round is
+исправлено» is done, and re-deriving it wastes the lap. What this lap is
 about is what changed since — the fixes made after the human's objection, and
-any documentation those made wrong in turn. Write the file for this round in
-full anyway; it replaces the previous one, and a section left empty because
-"it was in the last one" reads as nothing having been checked.
+any documentation those made wrong in turn. Write the file for this lap in
+full anyway, with Заход one higher than the previous file shows; it replaces
+the previous one, and a section left empty because "it was in the last one"
+reads as nothing having been checked.
 
 ## Staying out of the code
 
 You touch documentation, not behaviour. Don't change source files, don't
 change tests, and don't fix a bug you notice while reading — the review steps
-have already run, the suite has already been run green by
-`Final Verification`, and a code change made here goes to the pull request
+have already run, `Final Verification` has already run the suite and written
+down what it found, and a code change made here goes to the pull request
 behind everyone's back. Something you notice that looks wrong goes into
 `documentation.md` as an observation for the human at the review gate.
+
+Do not assume the suite is green. On a lap where the automatic return was
+already spent, `final-verification.md` may record a failure that went forward
+on purpose; take the state of the tests from that file, and where you write
+anything about them — in a doc's testing section, in your own artifact — say
+what it says, not what a finished change would normally have.
 
 The one exception is documentation that lives inside a source file: a
 docstring, a module header comment, an interface comment that describes a
@@ -87,12 +97,12 @@ the code around it is not.
 
 Commit with explicit paths — never a blanket `git add .` or `-A` — and carry
 the trailer `Kandev-Step: Documentation` on every commit you make. That
-trailer is what lets a reviewer, and the script that checks who touched what,
+trailer is what lets a reviewer — and the ownership script, on a later lap —
 tell a documentation edit apart from the implementation it describes.
 
 ## Artifact shape
 
-`documentation.md` carries three sections, kept even when short:
+`documentation.md` carries four sections, kept even when short:
 
 `## Что исправлено` — each documentation file you changed, with its path and
 one line on what was untrue and what it says now.
@@ -107,6 +117,9 @@ deserves said about it that has nowhere in this project to live, plus anything
 you deliberately left alone. Whoever writes the pull request description reads
 this.
 
+`## Заход` — this step's ordinal count on this task: 1 the first time, one
+more than your own prior `documentation.md` shows on any later lap.
+
 ## Finishing
 
 Nobody is watching this turn, and finding nothing to correct is a perfectly
@@ -120,5 +133,5 @@ stop, reread your last message: if it describes documentation you intend to
 correct rather than corrections you already committed, do that work now
 instead of describing it.
 
-Call `step_complete_kandev` once `documentation.md` holds its three sections
+Call `step_complete_kandev` once `documentation.md` holds its four sections
 and every correction you made is committed, and stop.

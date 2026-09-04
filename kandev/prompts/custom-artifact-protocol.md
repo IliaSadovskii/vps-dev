@@ -11,8 +11,8 @@ the full task ID from the environment. The ID is stable; the task title is
 not, so never key anything on the title.
 
 `README.md` in that directory is the index: task title, task ID, the commit
-the work started from, the chosen route, and one line per artifact. Discovery
-creates it. Every later step appends its own line and changes nothing else.
+the work started from, and one line per artifact. Discovery creates it. Every
+later step appends its own line and changes nothing else.
 
 If the directory does not exist when you need it, create it with a minimal
 `README.md` and note that you did — it means an earlier step was skipped or
@@ -26,6 +26,27 @@ them. If a predecessor's file is wrong, say so in your own file and let a
 human decide.
 
 `README.md` is the single exception: everyone appends a line to it.
+
+## Running a second time
+
+Some roles run more than once on a task: a card a human or a reviewing role
+sent back lands on a column it has already passed. If yours is one of them,
+read your own previous artifact before you write, record the run number in
+it — `Заход N`, or under the heading your role names for it: 1 the first
+time, one more than the previous file says after that — and work from what
+changed since that file, not from scratch. A second file that reads as
+though the first never existed repeats findings already dealt with and hides
+the one thing the reader needs: what is different now.
+
+## Exactly one transition per turn
+
+A turn ends with one of two calls, never both: `step_complete_kandev` to
+move forward, or `move_task_kandev` to send the card back. The platform does
+not clear a completion signal when an agent moves the card; a signal given
+alongside a return survives and fires the next time the card reaches your
+column, whether or not you meant it to. `move_task_kandev` takes only
+`task_id`, `workflow_step_id` and `prompt`; the step ID comes from
+`list_workflow_steps_kandev`.
 
 ## Reading
 

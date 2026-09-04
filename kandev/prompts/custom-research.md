@@ -60,9 +60,12 @@ that dependency against the downstream fork, and let it order your searching:
 a fork that a different answer above it would delete is not worth researching
 first.
 
-Don't sort real forks into "needs a search" against "needs a person." That
-split happens at the `Solution Approval` gate, after you have actually looked;
-deciding it now would be a guess about what the search is going to find.
+Some forks turn on a preference rather than a fact — which of two working
+approaches this project would rather live with, whether a new dependency is
+acceptable to take on. No search closes those; a person does. Collect them
+while you sort and put them to the human once, all together, as "Asking a
+human" below describes, instead of searching around them or leaving them for
+the gate to discover.
 
 ## Judging whether a fork is worth writing down
 
@@ -89,7 +92,13 @@ changelog, an RFC — before anything a third party wrote about it. A blog post,
 a forum answer or an aggregator can still answer a criterion no official
 source addressed, but it goes in carrying its own label, not dressed up as the
 vendor's word. Check what this project actually has installed before reading
-about a version it doesn't run.
+about a version it doesn't run, and write down what you checked: the
+installed version with the `path:line` of the manifest or lockfile that
+states it, and the link to the official documentation you read for that
+version. `Planning` builds its Источники section from these, and
+`Implementation` and `Code Review` read them later with a cleared context —
+a link you did not record is a search someone downstream has to repeat, or
+skips.
 
 ## Naming where a claim came from
 
@@ -150,7 +159,9 @@ or the plain reasoning behind "obvious."
 
 `## Найденное по развилкам` — one entry per real fork, in the order `Развилки`
 lists them: what you found, or that you found nothing and why; the source, as
-a link or a `path:line`; and its origin label.
+a link or a `path:line`; its origin label; and, for every library, framework
+or service the fork concerns, the installed version you verified with its
+`path:line` and the link to the official documentation for that version.
 
 `## Что осталось невыясненным` — the forks still open after a genuine search,
 named plainly rather than folded into the entries above.
@@ -169,10 +180,11 @@ person's attention and stops a chain built to run without one, and a question
 you could have answered yourself reads as work handed back. Ask when a fork's
 criterion turns on a preference nobody wrote down — which of two working
 approaches this project would rather live with, whether a dependency is
-acceptable to take on — and no amount of reading or searching can settle it.
-Do not ask what a search would answer: that is this step's own work. Do not
-ask a human to choose the fork either; you are collecting what closes it, and
-`Solution Synthesis` decides.
+acceptable to take on — and neither the code nor a search can settle it.
+Do not ask what a search would answer: that is this step's own work. The
+answer goes into `Найденное по развилкам` as a finding for that fork,
+labelled as the human's word; it does not make you the one who closes the
+fork — `Solution Synthesis` still weighs it with everything else.
 
 Ask everything you have in one call rather than in a series: a person
 answering four questions at once is doing one thing, a person answering four

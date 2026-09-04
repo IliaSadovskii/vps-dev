@@ -28,6 +28,7 @@ workflows:
     prompt: |
       @custom-artifact-protocol
       @custom-git-safety
+      @custom-test-ownership
     steps:
       # Ручная очередь на вход: у шага нет событий, поэтому новая задача
       # ждёт здесь, пока её не двинут на Discovery. Есть время дописать
@@ -128,10 +129,14 @@ workflows:
       - name: Solution Approval
         position: 5
         color: bg-orange-500
-        # Возврат на доработку — вручную: написать замечание и перетащить
-        # карточку на Solution Synthesis. Автоматический возврат по сообщению
-        # (`on_turn_start`) здесь стоял и убран — см. решение 21.
-        events: {}
+        # Принять: перетащить вправо, на Planning. Возразить: написать
+        # сообщение; Kandev сначала вернёт карточку в Solution Synthesis,
+        # затем отдаст этой роли само сообщение.
+        events:
+          on_turn_start:
+            - type: move_to_step
+              config:
+                step_position: 4
         is_start_step: false
         show_in_command_panel: true
         allow_manual_move: true
@@ -183,10 +188,14 @@ workflows:
       - name: Plan Approval
         position: 8
         color: bg-orange-500
-        # Возврат — вручную на Planning, а не на предыдущую колонку:
-        # переписывать План имеет право только он, и с него карточка снова
-        # пройдёт Plan Review.
-        events: {}
+        # Принять: перетащить вправо, на Test Authoring. Возразить: написать
+        # сообщение; оно попадёт сразу в Planning, единственному владельцу
+        # нативного Plan, а затем план снова пройдёт Plan Review.
+        events:
+          on_turn_start:
+            - type: move_to_step
+              config:
+                step_position: 6
         is_start_step: false
         show_in_command_panel: true
         allow_manual_move: true
@@ -233,7 +242,9 @@ workflows:
         cancel_triggers_turn_complete: false
 
       # Замыкает red-green цикл в том же контексте, что Test Authoring
-      # и Implementation.
+      # и Implementation. Кода не пишет: красный прогон один раз возвращает
+      # карточку на Implementation через move_task_kandev, второй раз идёт
+      # вперёд с пометкой «Не решено».
       - name: Verification
         position: 11
         color: bg-blue-500
@@ -293,8 +304,9 @@ workflows:
         auto_advance_requires_signal: true
         cancel_triggers_turn_complete: false
 
-      # Выполняется один раз и может быть пустым, если замечаний нет.
-      # Дополнительный круг делается ручным возвратом на нужную колонку.
+      # Может быть пустым, если замечаний нет. Сюда возвращают: Fix Review
+      # и Final Verification (не больше одного автовозврата на заход) и
+      # человек сообщением с Human Review или Done.
       - name: Review Fixes
         position: 14
         color: bg-blue-500
@@ -314,10 +326,35 @@ workflows:
         auto_advance_requires_signal: true
         cancel_triggers_turn_complete: false
 
-      # Работает в контексте Review Fixes, а не реализации, и гоняет полный
-      # прогон после правок — поэтому у неё свой промпт.
-      - name: Final Verification
+      # Свежим взглядом проверяет именно правки по ревью. Без этого между
+      # Review Fixes и человеком был только прогон тестов: логическую ошибку
+      # в исправлении никто независимо не читал.
+      - name: Fix Review
         position: 15
+        color: bg-yellow-500
+        prompt: |
+          @custom-fix-review
+
+          {{task_prompt}}
+        events:
+          on_enter:
+            - type: reset_agent_context
+            - type: auto_start_agent
+          on_turn_complete:
+            - type: move_to_next
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        auto_advance_requires_signal: true
+        cancel_triggers_turn_complete: false
+
+      # Работает в контексте Fix Review (он сброшен перед ним), а не
+      # реализации, и гоняет полный прогон после правок — поэтому у неё
+      # свой промпт. Возврат на Review Fixes — только если в этом заходе
+      # автовозврата ещё не было; предел один на заход для Fix Review и
+      # Final Verification вместе.
+      - name: Final Verification
+        position: 16
         color: bg-blue-500
         prompt: |
           @custom-final-verification
@@ -334,11 +371,11 @@ workflows:
         auto_advance_requires_signal: true
         cancel_triggers_turn_complete: false
 
-      # Документация проекта после того, как правки по ревью улеглись и
-      # прогон снова зелёный. Работает в контексте Review Fixes, чинит
-      # разошедшееся с кодом и не трогает сам код.
+      # Документация проекта после того, как правки по ревью улеглись.
+      # Работает в контексте Fix Review, читает review-fixes.md файлом,
+      # чинит разошедшееся с кодом и не трогает сам код.
       - name: Documentation
-        position: 16
+        position: 17
         color: bg-teal-500
         prompt: |
           @custom-documentation
@@ -355,11 +392,13 @@ workflows:
         auto_advance_requires_signal: true
         cancel_triggers_turn_complete: false
 
-      # Нативный CI auto-fix — переключатель на самой задаче, а не шаг
-      # цепочки. Если он нужен, @custom-pull-request включает его через
-      # `update_task_pr_automation_kandev` после связывания PR.
+      # PR создаётся draft, при повторном заходе обновляется, а не
+      # создаётся второй. CI auto-fix намеренно выключен: его коммиты
+      # появились бы уже после Code/Security/Fix Review. Раздел «Не решено»
+      # в описании PR собирается из plan-review, fix-review и
+      # final-verification.
       - name: Draft PR
-        position: 17
+        position: 18
         color: bg-indigo-500
         prompt: |
           @custom-pull-request
@@ -378,13 +417,18 @@ workflows:
 
       # Последние ворота человека. Назад — за правками, вперёд — в Done.
       - name: Human Review
-        position: 18
+        position: 19
         color: bg-yellow-500
-        # Доработка: написать замечание и перетащить карточку на Review
-        # Fixes. Оттуда правка снова пойдёт через Final Verification,
-        # Documentation и Draft PR. Review Fixes читает разговор задачи,
-        # потому что его контекст сброшен, и замечание найдёт там.
-        events: {}
+        # Принять: дождаться CI, проверить итоговый diff и перетащить вправо,
+        # в Done. Доработать: написать замечание — карточка уедет на Review
+        # Fixes и снова пройдёт хвост до PR. Если менялся план или сама
+        # задача, человек сам перетаскивает карточку на Planning или Scoping:
+        # только он знает, что именно передумал.
+        events:
+          on_turn_start:
+            - type: move_to_step
+              config:
+                step_position: 14
         is_start_step: false
         show_in_command_panel: true
         allow_manual_move: true
@@ -392,11 +436,15 @@ workflows:
         cancel_triggers_turn_complete: false
 
       - name: Done
-        position: 19
+        position: 20
         color: bg-green-500
-        # Переоткрыть завершённую задачу — перетаскиванием на Review Fixes,
-        # тем же путём, что и доработка с Human Review.
-        events: {}
+        # Переоткрыть: написать, что изменилось. Сообщение уйдёт на Review
+        # Fixes, тем же путём, что и с Human Review.
+        events:
+          on_turn_start:
+            - type: move_to_step
+              config:
+                step_position: 14
         is_start_step: false
         show_in_command_panel: false
         allow_manual_move: true

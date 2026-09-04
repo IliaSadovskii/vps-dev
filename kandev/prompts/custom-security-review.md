@@ -7,13 +7,14 @@ Goal: Produce an assessment that argues from how this change reshapes trust
     after it specifically because its checklist stops where this begins.
 Reads: `scoping.md` (what this task was meant to cover, so scope creep isn't
     mistaken for a vulnerability), `discovery.md` (the project's stack and
-    structure, so you know what this change sits inside), and `code-review.md`
+    structure, so you know what this change sits inside), `code-review.md`
     (its Находки, so you don't reopen what it already caught, and its Что
-    проверялось section, which already names the diff base and the files read
-    — reuse that instead of recomputing it against a reset context), and the
-    task's own conversation through `get_task_conversation_kandev`, since your
-    context was cleared and anything a human said about this task lives only
-    there.
+    проверялось section, which already names the starting commit, the last
+    commit reviewed and the files read — reuse that instead of recomputing
+    it against a reset context), your own previous `security-review.md` when
+    it exists (this is then a repeat lap), and the task's own conversation
+    through `get_task_conversation_kandev`, since your context was cleared
+    and anything a human said about this task lives only there.
 Writes: `security-review.md`, and every finding you keep also goes live
     through `publish_review_findings_kandev`.
 Done when: `security-review.md` states applicability, a verdict, and a Находки
@@ -38,6 +39,18 @@ When none of the signs are present, say so in Применимость — name 
 you checked and why each is absent — and stop there: Находки stays empty and
 Вердикт records that the surface wasn't touched. This is a legitimate, common
 outcome, not a shortcut that owes anyone an explanation.
+
+## A repeat lap
+
+Your own previous `security-review.md` existing means this step has run
+before. Number this lap in «Заход» — one more than the previous file says —
+and read only the commits made since the last commit your previous file
+names; the earlier ones were already judged, and applicability is decided
+again for the new commits alone. Do not republish a finding from an earlier
+lap: the review panel is additive and cannot close an item, so the old entry
+is still there for the human to resolve. Where an old finding is now fixed
+or still open, say so in one line under Применимость rather than as a new
+finding, and record the last commit you read so the next lap starts after it.
 
 ## Reason about the threat model, not the checklist again
 
@@ -74,10 +87,14 @@ severity belongs lower, not a reason to drop the finding.
 Attach two independent ratings. Confidence is how sure you are this survives a
 second look, from a guess that might not hold up to something you traced
 through the actual code path. Severity is exploitability and impact, not
-confidence — how reachable the path is and what it costs if reached. Report
-everything, including a finding you doubt and one you'd call minor; filtering
-happens downstream, not here. A clean result is a complete one — write it as a
-finding of absence, not a hedge.
+confidence — how reachable the path is and what it costs if reached — stated
+as one of the four the review panel accepts: `blocker` when the path is
+reachable and the cost is a compromise, data loss or exposure; `major` when
+it is real and a senior engineer would insist on it before merging; `minor`
+when it is real but would not hold up a merge; `nit` when it is hygiene.
+Report everything, including a finding you doubt and one you'd call minor;
+filtering happens downstream, not here. A clean result is a complete one —
+write it as a finding of absence, not a hedge.
 
 Where a finding's evidence is a credential, token, connection string or key,
 apply the shared rule on secrets to it.
@@ -103,22 +120,30 @@ reflect it, rather than describing a run you didn't perform.
 
 Every finding you keep, not only the severe ones, also goes to
 `publish_review_findings_kandev` with the same substance as its entry in
-`security-review.md`: file and line, the scenario stated so it stands on its
-own, confidence, severity. Skip the call rather than sending it an empty list
-when nothing survived scrutiny — record that outcome in Вердикт instead,
-worded so a reader can tell "reviewed and clean" apart from "surface wasn't
-touched."
+`security-review.md`. Each item uses the tool's schema exactly: `file`,
+1-based `line`, optional `line_end` when the scenario spans more than one
+line, `severity` from `blocker|major|minor|nit`, a kebab-case `category`
+(`trust-boundary`, `data-flow`, `authorization` and the like), a one-line
+`title`, and a Markdown `body` carrying the scenario stated so it stands on
+its own and your confidence, which is not a tool field and lives in the body
+only. In a multi-repository task also give `repo`. Skip the call rather than
+sending it an empty list when nothing survived scrutiny — record that
+outcome in Вердикт instead, worded so a reader can tell "reviewed and clean"
+apart from "surface wasn't touched."
 
 ## Artifact shape
 
 `security-review.md`:
 
 - Применимость — whether the attack surface was touched and which signs you
-  checked to decide, present even when the answer is no.
+  checked to decide, present even when the answer is no; on a repeat lap,
+  the last commit read and the state of earlier findings.
 - Находки — one entry per finding you kept, in the form above; stays empty
   when Применимость found nothing to review.
 - Вердикт — one of `Готов к слиянию`, `Готов с оговорками`, `Заблокирован`,
-  with the deciding finding named if it's blocked.
+  with the deciding finding named if it's blocked: blocked when a `blocker`
+  stands, with reservations when anything else was kept.
+- Заход — this lap's number, and what opened it past the first.
 
 ## Finishing
 

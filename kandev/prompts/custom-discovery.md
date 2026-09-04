@@ -2,16 +2,18 @@ Learn the project before anyone discusses what to do about the task, and set
 up the artifact workspace the rest of the chain will write into.
 
 Goal: Leave the grounding every later role would otherwise have to rediscover
-    — the project's stack, structure, its own stated rules, and which files
-    the task actually touches. Most later roles start with a cleared context
-    and read this file instead of the repository. This step starts with
-    nothing: no predecessor artifact, no prior context.
+    — the project's stack, structure, its own stated rules, how its tests are
+    laid out and run, and which files the task actually touches. Most later
+    roles start with a cleared context and read this file instead of the
+    repository. This step starts with nothing: no predecessor artifact, no
+    prior context.
 Reads: none — Discovery runs first, before any predecessor artifact exists.
 Writes: `README.md` and `discovery.md` under
     `.kandev/artifacts/$KANDEV_TASK_ID/`.
-Done when: `discovery.md` has all four sections below (filled or explicitly
-    marked empty) with a real essential-files list, `README.md` carries every
-    field below, and `step_complete_kandev` has been called.
+Done when: `discovery.md` has all five sections below (filled or explicitly
+    marked empty) with a real essential-files list and real test patterns and
+    commands, `README.md` carries every field below, and
+    `step_complete_kandev` has been called.
 
 ## Setting up the task's workspace
 
@@ -20,7 +22,9 @@ the full task ID from the environment rather than the task title, which can
 change later. Initialise `README.md` with the task title, the full task ID,
 the commit the repository is on right now (`git rev-parse HEAD`, run through
 `git -C <repo root>` since the step's working directory is not guaranteed to
-be the repository root), and one line for `discovery.md` itself.
+be the repository root), and one line for `discovery.md` itself. That commit
+is the starting commit every later role diffs from and the ownership script
+counts from, so record the full hash, labelled as such.
 
 Add the artifacts directory to `.git/info/exclude`, never the versioned
 `.gitignore` — check the file first so re-running this step doesn't append the
@@ -77,6 +81,22 @@ job of telling which part applies to them. Repository-wide rules — how tests
 run, how contributions are made — belong here whatever the task; a subsystem's
 stack belongs here only when the task reaches into it.
 
+## How tests are laid out and how checks run
+
+«Тесты и проверки» is read by roles that never open the tree: `Verification`
+and `Final Verification` run the commands you record here, and the ownership
+script in `custom-test-ownership` takes its test-file patterns from here.
+Record the glob patterns that match this project's test files — as the
+project actually lays them out (`*_test.go`, `tests/**/*.py`,
+`src/**/*.spec.ts`), each with a `path:line` example that matches it — and
+the exact commands, copied rather than paraphrased, for running the tests
+(the narrow form for one file or package and the full run), the linter and
+the type checker, each with the `path:line` where the project defines it: a
+`Makefile` target, a `package.json` script, a CI job, a rule file. A command
+you inferred from the language rather than found in the repository is marked
+`(inferred)`. Where there is no runner, no linter or no type checker, say so
+here plainly: a later role that finds the section empty will otherwise guess.
+
 ## Tracing flow instead of matching names
 
 Start from wherever execution actually begins for a project of this kind — a
@@ -114,12 +134,13 @@ and let the roles that own that decision reach their own conclusion.
 
 ## Artifact shape
 
-`discovery.md` carries four sections, kept even when short: «Стек и
-структура», «Правила проекта», «Существенные файлы», «Уверенность и пробелы» —
-the last one naming what you could not establish and what a human should be
-asked. `README.md` carries the task title, the full task ID, the starting
-commit, and one line for `discovery.md`'s own status; later roles append their
-own lines below yours, and you do not add to theirs.
+`discovery.md` carries five sections, kept even when short: «Стек и
+структура», «Правила проекта», «Тесты и проверки», «Существенные файлы»,
+«Уверенность и пробелы» — the last one naming what you could not establish
+and what a human should be asked. `README.md` carries the task title, the
+full task ID, the starting commit, and one line for `discovery.md`'s own
+status; later roles append their own lines below yours, and you do not add
+to theirs.
 
 ## Finishing
 

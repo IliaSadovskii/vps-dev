@@ -1,19 +1,23 @@
 Turn the finished change into a draft pull request that reads like it belongs
-to this repository, then switch on automatic CI repair once the PR is linked.
+to this repository, with everything the chain left unresolved stated up front.
 
 Goal: Hand `Human Review` and whoever holds merge rights on the host a pull
     request they'd recognize as one of their own — draft, because no human has
     looked at this work yet, and a ready PR would pull reviewers in before
-    that gate happens.
+    that gate happens — and one that tells the reviewer first what the chain
+    could not settle on its own.
 Reads: `scoping.md` for what this task covers and what was deliberately left
-    out, `final-verification.md` for the literal output of what last ran,
-    `review-fixes.md`, if the route passed through review, for what changed as
-    a result, and `documentation.md` for what the change left unexplained
-    anywhere in the repository.
+    out, `plan-review.md`, `fix-review.md` and `final-verification.md` for
+    what each left unresolved (and the last for the literal output of what
+    last ran), `review-fixes.md` for what changed as a result of review,
+    `documentation.md` for what the change left unexplained anywhere in the
+    repository, and your own previous `pull-request.md` when the card has
+    been through here before. You run in `Fix Review`'s context; all of
+    these are files to open, not memories.
 Writes: `pull-request.md`.
-Done when: the PR exists on the host and `pull-request.md` records its URL and
-    whether automatic CI repair is on, or — if creation failed — records that
-    outcome and why, and `step_complete_kandev` has been called either way.
+Done when: the PR exists on the host and `pull-request.md` records its URL,
+    or — if creation failed — records that outcome and why, and
+    `step_complete_kandev` has been called either way.
 
 ## The repository's template outranks yours
 
@@ -24,7 +28,8 @@ description inside its sections, not the shape described below: the template
 records what this specific team agreed a PR description should contain, and
 this step is a visitor to that agreement, not a party to it. Fall back to a
 plain summary-plus-validation shape only when no template exists anywhere in
-the repository.
+the repository. The one section that goes in either way is «Не решено»,
+below.
 
 ## Title
 
@@ -37,21 +42,41 @@ message and lands in release notes. If the project doesn't use that
 convention, write a title that reads like the rest of its history instead of
 importing one.
 
-## What the description is built from
+## Не решено comes first
+
+The chain's checking roles are allowed to go forward with a problem they
+could not settle, and this description is the only place the human at
+`Human Review` is guaranteed to see the sum of it. Collect, from three files:
+`plan-review.md` — a blocking verdict the plan went forward with;
+`fix-review.md` — a Вердикт of `Заблокировано` or `Готово с оговорками` and
+any Новые находки left open; `final-verification.md` — failures, regressions,
+or an ownership verdict that the step went forward with. Take only what each
+file itself still calls unresolved; a finding a later file says was closed
+does not belong here.
+
+Put those under a heading that reads exactly `Не решено`, so the gate finds
+it by name, with the body in the description's language. When the list is
+non-empty, it is the first section of the description — before the template's
+own sections, if there is a template, because a reviewer who reads a summary
+first and the blocker last has been pitched. When it is empty, the section
+still exists, wherever it fits best, and says exactly `нет`: an absent section
+cannot be told from a step that forgot to look.
+
+## What the rest of the description is built from
 
 Draw content from what already exists rather than re-deriving it: `scoping.md`
 for what this task covers and what was left out on purpose,
 `final-verification.md` for what actually ran, `review-fixes.md` for what
-changed after review, if the route went through one, and `documentation.md`'s
-«Что осталось незадокументированным и почему» for the reasoning this change
-carries that had nowhere in the repository to live — this description is that
-reasoning's only home. Nothing you didn't read or run belongs in the
-description — claim only the testing `final-verification.md` shows actually
-happened, and if the template has a validation or testing section, fill it
+changed after review, and `documentation.md`'s «Что осталось
+незадокументированным и почему» for the reasoning this change carries that
+had nowhere in the repository to live — this description is that reasoning's
+only home. Nothing you didn't read or run belongs in the description — claim
+only the testing `final-verification.md` shows actually happened, red
+included, and if the template has a validation or testing section, fill it
 with that record, not with a "tests passing" checkbox. Leave no template
 placeholder unfilled, and describe the work no more favorably than the work
-itself does — whoever reads this is deciding whether the change is worth their
-review time, not receiving a pitch for it.
+itself does — whoever reads this is deciding whether the change is worth
+their review time, not receiving a pitch for it.
 
 Do not sign the description with a tool-attribution footer. Who wrote a change
 is what the commit trailers already record, and a repository that wants the
@@ -74,27 +99,21 @@ remote doesn't have. Check whether a PR already exists for this branch
 (`gh pr list --head <branch>`, or the equivalent on GitLab) before creating
 one. This step runs again on every rework lap — a human unhappy at
 `Human Review` sends the card back to `Review Fixes`, and the chain returns
-here — so a repeat visit is the ordinary case, not an anomaly. When a PR is
-already open for this branch, do not create a second one: bring its title and
-description up to date with what changed since, leave it a draft, and record
-that URL. Two open requests would leave the review gate reading whichever one
-it happened to open. Otherwise create it with this host's CLI —
+here — so a repeat visit is the ordinary case, not an anomaly. Read your own
+previous `pull-request.md` first when there is one: it holds the URL and what
+the description was built from last time, and this lap's work is what changed
+since. When a PR is already open for this branch, do not create a second one:
+bring its title and description up to date with what changed since — «Не
+решено» included, rebuilt from the current files — leave it a draft, and
+record that URL. Two open requests would leave the review gate reading
+whichever one it happened to open. Otherwise create it with this host's CLI —
 `gh pr create --draft` on GitHub, `glab mr create --draft` on GitLab, matching
 whichever this repository's remote actually is — and pass the draft flag
 explicitly rather than relying on whatever the CLI defaults to today.
 
-## Switching on CI auto-fix
-
-Once the PR exists and is linked to the task, turn on automatic repair so a
-failing check gets fixed without a human relaunching this chain: call
-`update_task_pr_automation_kandev` (GitHub) with `repository_id` and
-`pr_number` naming the PR you just created, or
-`update_task_mr_automation_kandev` (GitLab) with `repository_id`,
-`project_path`, and `mr_iid` naming the MR — either way pass
-`auto_fix_enabled: true` scoped to that one PR, not the whole task, so the
-call doesn't reach into some earlier PR the task still happens to be linked
-to. If PR creation failed, leave the switch alone; there is nothing to attach
-it to, and the failure belongs in `pull-request.md` instead.
+Do not switch on the host's automatic CI repair for this PR. Its commits
+would land after every review in this chain has already run, and a failing
+check is for the human at the gate to see, not for a fixer to paper over.
 
 ## Artifact shape
 
@@ -102,10 +121,10 @@ it to, and the failure belongs in `pull-request.md` instead.
 - Ссылка на PR — the URL, or, if creation failed, what failed and why.
 - Что вошло в описание — the sections you filled and where each one's
   content came from: the repository's template section names, or the
-  fallback shape if there was no template.
-- Включена ли автоматическая починка CI — on and scoped to this PR, off
-  because creation failed, or off with the reason if you chose not to
-  enable it.
+  fallback shape if there was no template, and what «Не решено» contains.
+- Заход — this step's ordinal count on this task: 1 the first time, one
+  more than your own prior `pull-request.md` shows on any later lap, and
+  whether this lap created the PR or updated an existing one.
 
 ## Finishing
 
