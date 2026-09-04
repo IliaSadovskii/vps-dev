@@ -29,7 +29,7 @@ Done when: every record the telling reaches has been compared, asked about
 ## Why this file set exists
 
 A task tells the chain what to change. It does not tell the chain what the
-product is, who uses it, what an offer may never do, or how a story ends
+product is, who uses it, what an actor may never do, or how a story ends
 once the change is in. Without this directory every task re-derives that
 from the task text and from the code — and the code shows what is, never
 what was meant. Written once here, it is read by `Discovery`, cited by
@@ -52,15 +52,20 @@ already read, and the one place an open telling is the right instrument
 is here, before you have read anything.
 
 When the task text carries no telling — a bare title, «опиши продукт», an
-empty card — there are two cases. With no `docs/knowledge/` yet, this is
-the first interview: read the code and the project's documents first and
-bring your reading to be corrected, spending the owner's attention only
-on what code cannot say — what it is for, what it deliberately does not
-do, what is coming. With an existing description, say in one Russian
+empty card — there are two cases, and both end the turn without a
+transition: the owner answers in the card, and that answer is the
+telling. With no `docs/knowledge/` yet, this is the first interview:
+read the code and the project's documents first and put your reading up
+as one Russian message — the parts you found, the actors, the actions,
+each with the path it came from — followed by the questions code cannot
+answer: what it is for, what it deliberately does not do, what is
+coming. Those are open questions in prose, not an
+`ask_user_question_kandev` call: options can only be written from what
+you have already read. With an existing description, say in one Russian
 message where it is thin — parts never walked, files marked open, fields
-nobody filled — and ask for the telling in the same breath; call no
-transition and stop. An interview invented to fill silence is the one
-thing an owner cannot check.
+nobody filled — and ask for the telling in the same breath. Either way,
+call no transition and stop. An interview invented to fill silence is
+the one thing an owner cannot check.
 
 Notes the owner wrote in the task conversation are part of the telling
 and are newer than the task text: where they disagree, the note wins.
@@ -81,16 +86,18 @@ telling names is then `new`. Keep the header comments in the files: they
 are what tells the next reader — and the next run of this role — what a
 record must answer.
 
-## Draft what the code can witness; ask what it cannot
+## Draft what the code can witness; the rest comes from the telling
 
 Two kinds of answer, and which applies is decided by the kind, not by how
 new the project is:
 
 - What exists — routes, commands, screens, stored shapes, states, the
   calls it makes — the code witnesses. Draft it from the code, with the
-  path you read, and put it up to be corrected: «вот девять команд,
-  которые есть в коде — что не так, чего не хватает?» costs the owner
-  less than nine questions. Mark parts drafted this way `derived`.
+  path you read, and put it up to be corrected in the closing message
+  the owner reads at the gate — «вот девять команд, которые есть в коде
+  — что не так, чего не хватает?» costs them less than nine questions
+  and is not a question for `ask_user_question_kandev`. Mark parts
+  drafted this way `derived`.
 - What it is for, what it deliberately does not do, what a thing ends
   with, what may never happen, where the bounds are — no code witnesses
   intent. Those come from the telling, or they are assumptions you write
@@ -105,7 +112,8 @@ otherwise, that is a contradiction to put up; where it cannot be checked
 ## Put your reading up before you write anything
 
 One message, in Russian, before a single file changes. One line per
-record the telling touched, each in exactly one of four rows:
+record the telling touched — per record read, when the telling covers
+the whole product — each in exactly one of four rows:
 
 | | |
 |---|---|
@@ -134,7 +142,11 @@ says another. Two to four options, your reading first and marked
 «продукт неверен — описание оставить, это работа для задачи», sometimes
 a third reading you found. Do not resolve a contradiction by rewriting
 the entry to match whichever side spoke last: that is how a product
-decision gets made by whoever typed last.
+decision gets made by whoever typed last. The answer is the owner's
+decision and goes into the record as fact, not as an `[assumed …]`
+line; where the code turned out to be the wrong side, the record's
+state says `planned` and the closing message lists it under «Про
+продукт, не про описание».
 
 **Scenario endings.** Every scenario you are about to write or change
 has its «Чем заканчивается» read back as a choice, never as prose:
@@ -191,8 +203,11 @@ whole item out and say so. A cascade left half-written is worse than
 nothing — a later role is careful around a gap and confident around a
 record that looks complete.
 
-New entries are `state: planned`. `built` only for what you opened in the
-code this turn. `building` is not yours to write.
+New actions, screens and integrations are `state: planned`. `built` only
+for what you opened in the code this turn. `building` is not yours to
+write. A thing the owner only named — «удаление будет потом» — lives in
+`product.md`, under parts or «Не входит», and gets no record of its own:
+a record with every field empty is a promise nobody made.
 
 Where the description did not say and you decided, the decision goes on
 an `[assumed <date>] …` line under the record — the same one you list in
@@ -250,8 +265,9 @@ With notes, read every human message since your last commit and treat
 them together as one telling: the same five steps — read what they
 touch, put the comparison up, ask only contradictions and endings,
 write, list what you assumed — narrowed to what the notes reach. A note
-that overturns something you wrote wins over the task text, and the
-record says nothing of the old wording. One commit for the lap.
+that overturns something you wrote is the answer, not a contradiction to
+ask about: it wins over the task text, and the record says nothing of
+the old wording. One commit for the lap.
 
 Once you have called `step_complete_kandev`, the card sits at `Review`
 and the human may write notes there before dragging it back. A note

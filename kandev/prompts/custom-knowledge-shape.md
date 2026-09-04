@@ -13,11 +13,13 @@ headings and field labels below are translated together with the prose.
 What never gets translated: `key:`, `state:`, `walked:`, `derived`,
 `entry_point`, `[assumed …]`, and the state names `planned`, `building`,
 `built`. A later role finds records by these marks, and a mark in two
-languages is two marks.
+languages is two marks. Field labels it finds through the `fields:` line
+of the file's own header, which is why the header travels with the file
+and is translated together with the labels.
 
 ## Marks every file uses
 
-- **Slot verdict** — the first line under the title, one of
+- **Slot verdict** — the first line after the header comment, one of
   `Состояние: заполнен`, `Состояние: не применимо — <причина>`,
   `Состояние: открытый вопрос — <что неизвестно>`. A slot the product
   does not need is closed with a reason, not filled with invention: a
@@ -25,7 +27,9 @@ languages is two marks.
 - **Key** — the line right under a record's heading, in backticks:
   `` `key: developer.create_offer` ``. Keys are lowercase English slugs
   whatever the prose language. Every key a record names — actor, entity,
-  status, screen, action — must exist in its own file.
+  status, screen, action — must exist in its own file. Scenarios have no
+  key and are referred to by heading: `scenarios.md#<заголовок>`; a
+  record elsewhere is referred to as `actions.md#developer.create_offer`.
 - **State** — on the same line for actions, screens and integrations:
   `` `key: …` · `state: planned` ``. `planned` — nothing built;
   `building (pr: N)` — a pull request is open for it; `built` — the code
@@ -33,13 +37,15 @@ languages is two marks.
   `planned`, or `built` only for what it read in the code in this very
   turn. Moving `planned` to `building` and `built` is not this role's
   job and is not done yet by anyone.
-- **`[assumed <date>] …`** — a line under a record, for what the
-  description did not say and the writer decided instead of asking. It
-  is the decision of record until the owner changes it; deleting the
-  line is the resolution, and only `Blueprint` may delete it. Left where
-  being wrong costs something — stored data, who may and may not, money,
-  a contract outside this codebase — or where confidence was low. Not
-  for mechanics: how something is stored or layered is never a block.
+- **`[assumed <date>] …`** — a line of its own under a record, for what
+  the description did not say and the writer decided instead of asking.
+  It is the decision of record until the owner changes it; deleting the
+  line is the resolution, and only `Blueprint` may delete it. An answer
+  the owner gave is not an assumption: it goes into the field as fact.
+  Left where being wrong costs something — stored data, who may and may
+  not, money, a contract outside this codebase — or where confidence was
+  low. Not for mechanics: how something is stored or layered is never a
+  block.
 - **Fields with a list** — a field's answer may be a list on the lines
   below the label; the field is filled when that list has content.
 
@@ -98,6 +104,8 @@ languages is two marks.
 Все, кто и что запускает действие: роль пользователя, оператор CLI,
 внешняя система, расписание, сам продукт. Так описание работает и для
 библиотеки, и для конвейера.
+«Никогда не может» — о правах, а не о том, что ещё не построено: код
+показывает, кто может, и никогда не говорит, задумано ли это.
 fields: Появляется, Может, Никогда не может
 Ключ: короткий слаг — developer, buyer, scheduler, payment_gateway.
 Готово, когда: у каждого актора из рассказа есть запись, и у каждого
