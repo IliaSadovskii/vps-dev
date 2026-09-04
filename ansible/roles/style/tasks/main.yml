@@ -1,0 +1,151 @@
+# Стиль разговора агентов: один текст, четыре ссылки, страница с кнопкой.
+# См. defaults/main.yml — зачем так.
+
+- name: Каталог состояния
+  ansible.builtin.file:
+    path: "{{ style_state_dir }}"
+    state: directory
+    owner: "{{ style_user }}"
+    group: "{{ style_user }}"
+    mode: '0755'
+
+- name: Заготовка текста — один раз
+  # force: false — роль кладёт текст, только если файла нет. Дальше его
+  # правит человек со страницы, и перезапись стёрла бы правки.
+  ansible.builtin.copy:
+    src: agent-style.md
+    dest: "{{ style_file }}"
+    owner: "{{ style_user }}"
+    group: "{{ style_user }}"
+    mode: '0644'
+    force: false
+
+# ═══ Ссылки в домашнем каталоге ══════════════════════════════════════
+
+- name: Каталоги CLI, куда ведут ссылки  # noqa: risky-file-permissions
+  # Права не задаём: у существующих каталогов (~/.codex — 0700, его завёл
+  # сам Codex) они свои, и менять их не наше дело; новый получит umask.
+  ansible.builtin.file:
+    path: "/home/{{ style_user }}/{{ item.path | dirname }}"
+    state: directory
+    owner: "{{ style_user }}"
+    group: "{{ style_user }}"
+  loop: "{{ style_targets }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Что сейчас на месте ссылок
+  ansible.builtin.stat:
+    path: "/home/{{ style_user }}/{{ item.path }}"
+  loop: "{{ style_targets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: style_present
+
+- name: Обычный файл на месте ссылки — отложить рядом
+  # Человек мог написать свои инструкции до этой роли. Не стираем: файл
+  # переезжает с суффиксом .before-style, и об этом сказано в конце.
+  ansible.builtin.command:
+    argv:
+      - mv
+      - "-n"
+      - "/home/{{ style_user }}/{{ item.item.path }}"
+      - "/home/{{ style_user }}/{{ item.item.path }}.before-style"
+  loop: "{{ style_present.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - item.stat.exists
+    - not item.stat.islnk
+  changed_when: true
+
+- name: Ссылки на общий текст
+  ansible.builtin.file:
+    src: "{{ style_file }}"
+    dest: "/home/{{ style_user }}/{{ item.path }}"
+    state: link
+    owner: "{{ style_user }}"
+    group: "{{ style_user }}"
+    force: true
+  loop: "{{ style_targets }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# ═══ Claude Code: встроенный краткий стиль вывода ════════════════════
+
+- name: Есть ли settings.json Claude Code
+  ansible.builtin.stat:
+    path: "/home/{{ style_user }}/.claude/settings.json"
+  register: style_claude_settings
+
+- name: Прочитать settings.json
+  ansible.builtin.slurp:
+    src: "/home/{{ style_user }}/.claude/settings.json"
+  register: style_claude_raw
+  when: style_claude_settings.stat.exists
+
+- name: Текущие настройки Claude Code
+  ansible.builtin.set_fact:
+    style_claude_now: >-
+      {{ (style_claude_raw.content | b64decode | from_json)
+         if style_claude_settings.stat.exists else {} }}
+
+- name: Ключ outputStyle в settings.json
+  # Файлом владеет сам Claude Code (тема, уведомления), поэтому меняем
+  # один ключ и переписываем остальное как было.
+  ansible.builtin.copy:
+    dest: "/home/{{ style_user }}/.claude/settings.json"
+    owner: "{{ style_user }}"
+    group: "{{ style_user }}"
+    mode: '0644'
+    content: "{{ style_claude_now | combine({'outputStyle': style_claude_output_style}) | to_nice_json }}\n"
+  when: style_claude_now.outputStyle | default('') != style_claude_output_style
+
+# ═══ Служба ══════════════════════════════════════════════════════════
+
+- name: Скрипт службы
+  ansible.builtin.copy:
+    src: vps-dev-style
+    dest: "{{ style_install_dir }}/vps-dev-style"
+    owner: root
+    group: root
+    mode: '0755'
+  register: style_script
+
+- name: Служба
+  ansible.builtin.template:
+    src: vps-dev-style.service.j2
+    dest: /etc/systemd/system/vps-dev-style.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: style_unit
+
+# Намеренно не обработчик: службу поднимает следующая задача, обработчик опоздал бы.
+- name: Перечитать systemd, если юнит изменился  # noqa: no-handler
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: style_unit.changed
+
+- name: Есть ли уже юнит
+  ansible.builtin.stat:
+    path: /etc/systemd/system/vps-dev-style.service
+  register: style_unit_exists
+  check_mode: false
+  when: ansible_check_mode
+
+- name: Служба включена и работает
+  ansible.builtin.systemd:
+    name: vps-dev-style
+    enabled: true
+    state: "{{ 'restarted' if (style_script.changed or style_unit.changed) else 'started' }}"
+  when: not (ansible_check_mode and not (style_unit_exists.stat.exists | default(false)))
+
+- name: Куда смотреть
+  ansible.builtin.debug:
+    msg: >-
+      Стиль разговора агентов: порт {{ style_port }} на дашборде, текст в
+      {{ style_file }}, ссылки:
+      {{ style_targets | map(attribute='path') | join(', ') }}.
+      {% set moved = style_present.results | selectattr('stat.exists') | rejectattr('stat.islnk') | map(attribute='item.path') | list %}
+      {% if moved %}Прежние файлы отложены рядом с суффиксом .before-style: {{ moved | join(', ') }} — перенесите из них нужное на страницу.{% endif %}

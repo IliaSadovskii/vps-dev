@@ -1,0 +1,288 @@
+#!/usr/bin/env python3
+# vps-dev-style — как агенты разговаривают с владельцем: один текст на все
+# CLI, правится со страницы.
+#
+# Ставит роль style, запускает systemd (vps-dev-style.service). Руками звать
+# не нужно; что отдаёт — curl 127.0.0.1:8071/api/style.
+#
+# ЧТО ДЕЛАЕТ. Показывает текст файла в поле, по кнопке сохраняет его на
+# место. Файл один; четыре файла инструкций в домашнем каталоге (Claude
+# Code, Codex, Gemini, OpenCode) — ссылки на него, их заводит роль. Поэтому
+# «сохранить» здесь и есть «подхватить везде»: каждый агент читает файл при
+# старте разговора, и следующий разговор идёт по новому тексту, а уже
+# идущий — по старому. Страница так и говорит.
+#
+# Отдаёт четыре адреса: «/» — страница, «/save» (POST) — сохранить,
+# «/api/style» — текст как есть, «/healthz» — жив ли.
+#
+# ЗАПИСЬ — АТОМАРНО. Текст пишется во временный файл рядом и подменяет
+# старый одним переименованием: агент, читающий файл в этот миг, получит
+# либо старый, либо новый целиком, а не половину. Ссылки указывают на путь,
+# не на inode, так что подмена их не рвёт.
+#
+# ЗАЩИТА ОТ ЧУЖОЙ ФОРМЫ. Страница видна только из частной сети, но форму
+# может отправить и чужой сайт из браузера владельца (кросс-сайтовый POST
+# не требует разрешения). Поэтому запись принимается, только если Origin
+# (или Referer) совпадает с Host запроса. Токенов не заводим: это единственное
+# место, куда здесь можно что-то записать.
+#
+# Зависимостей нет намеренно: только стандартная библиотека Python 3.12.
+
+import html
+import os
+import time
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+PORT = int(os.environ.get("STYLE_PORT", "8071"))
+STATE_DIR = os.environ.get("STYLE_STATE_DIR", "/var/lib/vps-dev/style")
+FILE = os.environ.get("STYLE_FILE", os.path.join(STATE_DIR, "agent-style.md"))
+HOME = os.environ.get("STYLE_HOME") or os.path.expanduser("~")
+# «Имя=путь;Имя=путь» — куда ведут ссылки, чтобы страница показала, где
+# текст действует. Пути от домашнего каталога.
+TARGETS = os.environ.get(
+    "STYLE_TARGETS",
+    "Claude Code=.claude/CLAUDE.md;Codex=.codex/AGENTS.md;"
+    "Gemini CLI=.gemini/GEMINI.md;OpenCode=.config/opencode/AGENTS.md",
+)
+MAX_BYTES = 64 * 1024
+
+
+def log(msg):
+    print(f"vps-dev-style: {msg}", flush=True)
+
+
+# -------------------------------------------------------------------- файл --
+
+def read_text():
+    try:
+        with open(FILE, encoding="utf-8") as f:
+            return f.read(), None
+    except FileNotFoundError:
+        return "", "файла ещё нет — роль style кладёт заготовку при выкатке; сохранённый здесь текст станет им"
+    except OSError as e:
+        return "", f"не прочитан: {e}"
+
+
+def write_text(text):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    tmp = FILE + ".new"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, FILE)
+
+
+def normalize(text):
+    """Переводы строк как в Unix, один перевод строки в конце: файл читают
+    четыре разных CLI, и \\r\\n из браузера им ни к чему."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return text.rstrip("\n") + "\n" if text.strip() else ""
+
+
+def mtime():
+    try:
+        return os.stat(FILE).st_mtime
+    except OSError:
+        return None
+
+
+def targets():
+    """Куда ведут ссылки и ведут ли: страница показывает это, чтобы «сохранил
+    — а Codex не слушается» разбиралось взглядом, а не по журналам."""
+    out = []
+    for item in TARGETS.split(";"):
+        name, _, rel = item.partition("=")
+        if not rel:
+            continue
+        path = os.path.join(HOME, rel)
+        if os.path.islink(path):
+            state = "ok" if os.path.realpath(path) == os.path.realpath(FILE) else "elsewhere"
+        elif os.path.exists(path):
+            state = "file"
+        else:
+            state = "missing"
+        out.append((name.strip(), path, state))
+    return out
+
+
+# ---------------------------------------------------------------- страница --
+
+def esc(text):
+    return html.escape(str(text or ""), quote=True)
+
+
+def human_ago(epoch):
+    if not epoch:
+        return ""
+    s = int(time.time() - epoch)
+    if s < 60:
+        return "только что"
+    if s < 3600:
+        return f"{s // 60} мин. назад"
+    if s < 86400:
+        return f"{s // 3600} ч. назад"
+    return f"{s // 86400} дн. назад"
+
+
+STATE_TEXT = {
+    "ok": ("✓", "ссылка на этот текст"),
+    "elsewhere": ("✗", "ссылка ведёт не сюда — прогнать выкатку роли style"),
+    "file": ("✗", "обычный файл, не ссылка — CLI читает его, а не этот текст; прогнать выкатку роли style"),
+    "missing": ("–", "файла нет — прогнать выкатку роли style"),
+}
+
+
+def render(text, note=None, saved=False, error=None):
+    when = mtime()
+    rows = []
+    for name, path, state in targets():
+        mark, hint = STATE_TEXT[state]
+        klass = "ok" if state == "ok" else "bad"
+        rows.append(f'<li class="{klass}"><span class="mark">{mark}</span> <b>{esc(name)}</b> '
+                    f'<code>{esc(path)}</code> <span class="hint">{esc(hint)}</span></li>')
+    flash = ""
+    if error:
+        flash = f'<div class="flash bad">{esc(error)}</div>'
+    elif saved:
+        flash = '<div class="flash">Сохранено. Новый разговор с любым агентом пойдёт по этому тексту; уже идущие разговоры его не перечитывают.</div>'
+    elif note:
+        flash = f'<div class="flash bad">{esc(note)}</div>'
+    stamp = f"сохранён {esc(human_ago(when))}" if when else "файла нет"
+    return f"""<!doctype html><html lang="ru"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Стиль разговора агентов</title>
+<style>
+ /* Тот же язык, что у дашборда (:8062) и лимитов (:8070): цвет темы из
+    системной, страница самодостаточна — без внешних запросов. */
+ :root{{color-scheme:light dark;--line:color-mix(in srgb,currentColor 14%,transparent);--accent:#2563eb}}
+ *{{box-sizing:border-box}}
+ body{{font:15px/1.5 system-ui,-apple-system,sans-serif;max-width:940px;margin:0 auto;padding:1.75rem 1rem 3rem}}
+ h1{{font-size:1.3rem;margin:0 0 .25rem}}
+ .sub{{opacity:.55;font-size:.85rem;margin:0 0 1.25rem}}
+ textarea{{width:100%;min-height:32rem;padding:.8rem .9rem;border:1px solid color-mix(in srgb,var(--accent) 22%,var(--line));
+   border-radius:14px;background:color-mix(in srgb,var(--accent) 4%,transparent);color:inherit;
+   font:13.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;resize:vertical}}
+ textarea:focus{{outline:2px solid var(--accent);outline-offset:1px}}
+ .row{{display:flex;align-items:center;gap:1rem;margin:.75rem 0 1.5rem;flex-wrap:wrap}}
+ button{{font:inherit;font-weight:600;padding:.55rem 1.2rem;border-radius:10px;border:0;background:var(--accent);color:#fff;cursor:pointer}}
+ button:hover{{filter:brightness(1.08)}}
+ .stamp{{opacity:.55;font-size:.85rem}}
+ .flash{{padding:.6rem .9rem;border-radius:10px;margin:0 0 1rem;font-size:.9rem;
+   background:color-mix(in srgb,#16a34a 12%,transparent);border:1px solid color-mix(in srgb,#16a34a 35%,transparent)}}
+ .flash.bad{{background:color-mix(in srgb,#dc2626 10%,transparent);border-color:color-mix(in srgb,#dc2626 35%,transparent)}}
+ h2{{font-size:1rem;margin:1.5rem 0 .5rem}}
+ ul{{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:.35rem}}
+ li{{font-size:.88rem;display:flex;gap:.5rem;align-items:baseline;flex-wrap:wrap}}
+ li .mark{{width:1.1rem;text-align:center;font-weight:700}}
+ li.ok .mark{{color:#16a34a}} li.bad .mark{{color:#dc2626}}
+ li .hint{{opacity:.55}}
+ li.bad .hint{{opacity:.85;color:#dc2626}}
+ code{{font:12.5px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;opacity:.8}}
+ .note{{opacity:.6;font-size:.85rem;margin-top:1rem}}
+ @media(prefers-color-scheme:dark){{:root{{--accent:#7aa7ff}} li.bad .hint,.flash.bad{{color:#f87171}}}}
+</style></head><body>
+<h1>Стиль разговора агентов</h1>
+<div class="sub">один текст для Claude Code, Codex, Gemini и OpenCode: как отвечать владельцу · {stamp}</div>
+{flash}
+<form method="post" action="/save">
+<textarea name="text" spellcheck="false" maxlength="{MAX_BYTES}">{esc(text)}</textarea>
+<div class="row"><button type="submit">Сохранить</button>
+<span class="stamp">агент читает файл при старте разговора: новый разговор увидит новый текст, идущий — нет</span></div>
+</form>
+<h2>Где действует</h2>
+<ul>{''.join(rows)}</ul>
+<div class="note">Файл: <code>{esc(FILE)}</code>. Правки со страницы переживают выкатку: роль кладёт заготовку только
+если файла нет. Файл проекта (<code>AGENTS.md</code>, <code>CLAUDE.md</code> в репозитории) читается поверх этого, а не вместо.</div>
+</body></html>"""
+
+
+# ------------------------------------------------------------------- HTTP --
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "vps-dev-style"
+
+    def do_GET(self):  # noqa: N802 — имя задано BaseHTTPRequestHandler
+        path, _, query = self.path.partition("?")
+        path = path.rstrip("/") or "/"
+        if path == "/":
+            text, note = read_text()
+            saved = "saved=1" in query
+            self.reply(200, "text/html; charset=utf-8", render(text, note=note, saved=saved).encode("utf-8"))
+        elif path == "/api/style":
+            text, _ = read_text()
+            self.reply(200, "text/markdown; charset=utf-8", text.encode("utf-8"))
+        elif path == "/healthz":
+            self.reply(200, "text/plain; charset=utf-8", b"ok\n")
+        else:
+            self.reply(404, "text/plain; charset=utf-8", "нет такой страницы\n".encode("utf-8"))
+
+    def do_POST(self):  # noqa: N802
+        if self.path.rstrip("/") != "/save":
+            self.reply(404, "text/plain; charset=utf-8", "нет такой страницы\n".encode("utf-8"))
+            return
+        if not self.same_origin():
+            self.reply(403, "text/plain; charset=utf-8", "форма пришла с чужого адреса\n".encode("utf-8"))
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0 or length > MAX_BYTES * 2:
+            text, _ = read_text()
+            self.reply(413, "text/html; charset=utf-8",
+                       render(text, error=f"слишком длинно: предел {MAX_BYTES // 1024} КБ").encode("utf-8"))
+            return
+        body = self.rfile.read(length).decode("utf-8", "replace")
+        form = urllib.parse.parse_qs(body, keep_blank_values=True)
+        text = normalize((form.get("text") or [""])[0])
+        if len(text.encode("utf-8")) > MAX_BYTES:
+            self.reply(413, "text/html; charset=utf-8",
+                       render(text, error=f"слишком длинно: предел {MAX_BYTES // 1024} КБ").encode("utf-8"))
+            return
+        try:
+            write_text(text)
+        except OSError as e:
+            log(f"не записан: {e}")
+            self.reply(500, "text/html; charset=utf-8", render(text, error=f"не записан: {e}").encode("utf-8"))
+            return
+        log(f"сохранён, {len(text)} символов")
+        self.send_response(303)
+        self.send_header("Location", "/?saved=1")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def same_origin(self):
+        """Origin (или Referer) должен совпасть с Host: чужой сайт не может
+        подделать Origin, а без обоих заголовков современный браузер форму
+        не шлёт — такой запрос отклоняем тоже."""
+        host = (self.headers.get("Host") or "").lower()
+        src = self.headers.get("Origin") or self.headers.get("Referer") or ""
+        if not host or not src:
+            return False
+        return (urllib.parse.urlsplit(src).netloc or "").lower() == host
+
+    def reply(self, code, ctype, body):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except BrokenPipeError:
+            pass
+
+    def log_message(self, fmt, *args):
+        pass  # в журнал идут только сохранения и ошибки
+
+
+def main():
+    os.makedirs(STATE_DIR, exist_ok=True)
+    # Только loopback: в частную сеть отдаёт ports-web с TLS на том же порту.
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    log(f"слушаю 127.0.0.1:{PORT}, файл {FILE}")
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

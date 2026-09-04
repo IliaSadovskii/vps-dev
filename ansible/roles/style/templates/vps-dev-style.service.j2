@@ -1,0 +1,34 @@
+# Управляется Ansible: roles/style/templates/vps-dev-style.service.j2
+[Unit]
+Description=Стиль разговора агентов (страница на :{{ style_port }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Под {{ style_user }} — тем же, под кем работают агенты: ссылки в его
+# домашнем каталоге ведут на файл, которым владеет служба.
+User={{ style_user }}
+WorkingDirectory={{ style_state_dir }}
+Environment=STYLE_PORT={{ style_port }}
+Environment=STYLE_STATE_DIR={{ style_state_dir }}
+Environment=STYLE_FILE={{ style_file }}
+Environment=STYLE_HOME=/home/{{ style_user }}
+Environment=STYLE_TARGETS={{ style_targets | map(attribute='name') | zip(style_targets | map(attribute='path')) | map('join', '=') | join(';') }}
+ExecStart={{ style_install_dir }}/vps-dev-style
+Restart=on-failure
+RestartSec=5
+
+# Служба пишет ровно один файл в своём каталоге и читает домашний каталог
+# только чтобы показать, куда ведут ссылки.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths={{ style_state_dir }}
+
+[Install]
+WantedBy=multi-user.target
