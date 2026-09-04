@@ -303,7 +303,11 @@ cat <<HEAD
  h2::before{content:"";width:.5rem;height:.5rem;border-radius:50%;background:var(--accent);opacity:.8;flex:none}
  .grid{display:grid;gap:.75rem;grid-template-columns:repeat(3,1fr)}
  @media(max-width:720px){.grid{grid-template-columns:repeat(2,1fr)}}
- @media(max-width:430px){.grid{grid-template-columns:1fr}}
+ /* На телефоне тоже две колонки, только плотнее: одна колонка растягивала
+    страницу на три экрана, и до проектов приходилось листать. */
+ @media(max-width:430px){body{padding:1.25rem .6rem 2rem}.grid{gap:.5rem}
+    .card{min-height:5.5rem;padding:.65rem .7rem;border-radius:11px}
+    .icon{font-size:1.15rem;line-height:1.3}.name{font-size:.9rem}.desc{font-size:.74rem}.port{padding-top:.35rem}}
  /* Группу видно по цвету карточек: инфраструктура машины — одним, сервисы
     проектов — другим, незастолблённые порты — предупреждающим. */
  .card{display:flex;flex-direction:column;gap:.15rem;min-height:7rem;padding:.85rem .95rem;
