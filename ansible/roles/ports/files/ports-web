@@ -52,6 +52,12 @@ declare -A INFRA_ICON=( [8060]="📜" [8061]="🗃️" [$DASH_PORT]="🧭" [8063
                         [8066]="⌨️" [8067]="📁" [8068]="📊" [8069]="✉️" [8070]="⏳" [8071]="🗣️" )
 # Куда ведёт ссылка, если не в корень службы.
 declare -A INFRA_PATH=( [8067]="/files/projects" )
+# Порядок карточек инфраструктуры на странице — заданный, а не по номеру
+# порта: сверху то, чем пользуешься каждый день. Порт, которого здесь нет,
+# встанет после перечисленных, по возрастанию номера.
+INFRA_ORDER=( 8064 8065 8063 8066 8070 8067 8068 8071 8060 8061 8069 $DASH_PORT )
+declare -A INFRA_RANK
+for _i in "${!INFRA_ORDER[@]}"; do INFRA_RANK[${INFRA_ORDER[$_i]}]=$(( _i + 1 )); done
 
 # --- разбор реестра: порт → проект и порт → человекочитаемое имя сервиса ------
 declare -A PORT_PROJECT PORT_LABEL
@@ -120,6 +126,17 @@ done
 rows+="$(printf '%s\x1f%s\x1f%s\x1f%s\x1f%s' "$DASH_PORT" "инфраструктура" "${INFRA_LABEL[$DASH_PORT]}" "${INFRA_DESC[$DASH_PORT]}" 1)"$'\n'
 
 [[ -n "${DEBUG:-}" ]] && { echo "=== ROWS ===" >&2; printf '%s' "$rows" >&2; }
+
+# Порядок карточек внутри группы: сначала веб, потом по рангу из
+# INFRA_ORDER (у проектов ранга нет — все равны и сортируются по порту).
+# Ранг приписываем первым полем, сортируем и снимаем.
+ordered_rows(){
+  while IFS=$'\x1f' read -r p group name desc web; do
+    [[ -n "$p" ]] || continue
+    printf '%03d\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+      "${INFRA_RANK[$p]:-999}" "$p" "$group" "$name" "$desc" "$web"
+  done <<<"$rows" | sort -t$'\x1f' -k6,6r -k1,1n -k2,2n | cut -d$'\x1f' -f2-
+}
 
 # --- веб-сервисы, которые надо отдать наружу -------------------------------
 web_ports=()
@@ -367,7 +384,7 @@ while IFS= read -r g; do
       printf '  <div class="card int"><span class="icon">%s</span><span class="name">%s</span><span class="desc">%s</span><span class="port">%s</span></div>\n' \
         "$eicon" "$ename" "$edesc" "$p"
     fi
-  done < <(sort -t$'\x1f' -k5,5r -k1,1n <<<"$rows")
+  done < <(ordered_rows)
   printf '</div></section>\n'
 done <<<"$ordered"
 
