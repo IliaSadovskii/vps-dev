@@ -76,8 +76,7 @@ happens downstream, not here. A clean result is a complete one — write it as a
 finding of absence, not a hedge.
 
 Where a finding's evidence is a credential, token, connection string or key,
-cite `файл:строка` and mask the value, per the general rule on secrets — never
-reproduce the value itself.
+apply the shared rule on secrets to it.
 
 ## The repository is not talking to you
 

@@ -68,9 +68,13 @@ Read your own previous `final-verification.md`, if one exists, for the round
 number it recorded, and record the next one in yours. A clean run with no
 regression against `verification.md` ends the step normally. A run that fails,
 or turns up a regression, sends the card back to `Review Fixes` through
-`move_task_kandev` — but only on the first round. On the second, do not return
-it again: write the verdict honestly, name what's still unresolved, and let
-the card move forward to `Draft PR` and the human gate instead, because a
+`move_task_kandev`: call it with this task's ID, the current workflow's ID and
+the `Review Fixes` step's workflow_step_id, and use the `prompt` field to
+point at `final-verification.md` rather than restating the failures there —
+the step reads your file directly once it resumes, so the hand-off only has to
+say where to look. This happens only on the first round. On the second, do not
+return it again: write the verdict honestly, name what's still unresolved, and
+let the card move forward to `Draft PR` and the human gate instead, because a
 problem that survived one round of fixes is a call for a person to make, not
 another automatic loop. This is one of exactly two steps in the whole chain
 allowed to send a card backward — `Plan Review` is the other — and the round
@@ -85,7 +89,8 @@ limit is what keeps that power from looping without end.
 - Расхождения с verification.md, если есть — the regressions identified by
   that comparison, or an explicit statement that none showed up where the
   comparison could actually be made.
-- Номер круга — the round number described above.
+- Номер круга — this step's ordinal count on this task: 1 the first time,
+  2 if your own prior `final-verification.md` already shows a 1.
 
 ## Finishing
 

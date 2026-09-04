@@ -41,10 +41,9 @@ importing one.
 
 Draw content from what already exists rather than re-deriving it: `scoping.md`
 for what this task covers and what was left out on purpose,
-`final-verification.md` for what actually ran, carried over the way it's
-recorded there rather than restated in your own words, and `review-fixes.md`
-for what changed after review, if the route went through one. Nothing you
-didn't read or run belongs in the description — claim only the testing
+`final-verification.md` for what actually ran, and `review-fixes.md` for what
+changed after review, if the route went through one. Nothing you didn't read
+or run belongs in the description — claim only the testing
 `final-verification.md` shows actually happened, and if the template has a
 validation or testing section, fill it with that record, not with a "tests
 passing" checkbox. Leave no template placeholder unfilled, and describe the
