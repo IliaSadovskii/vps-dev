@@ -15,7 +15,10 @@
 #
 # ВХОД — JSON на stdin:
 #   {"api": ".../api/v1", "workspace_id": "...",
+#    "prompts": {"custom-discovery": "<текст роли>", ...},
 #    "files": [{"name": "deep.yml", "doc": {<разобранный YAML>}}]}
+# Строки `@имя` в промптах колонок разворачиваются здесь в текст роли из
+# `prompts` — см. expand_refs.
 # YAML разбирает Ansible: на машине PyYAML может не быть, а у Ansible он
 # есть всегда.
 #
@@ -281,10 +284,40 @@ def reconcile(api, wf, desired, result):
     result["updated"].append(name)
 
 
+def expand_refs(text, prompts, seen=()):
+    """Развернуть строки `@имя` в текст роли из prompts/.
+
+    Kandev умеет разворачивать такие ссылки сам, но не на всех путях: после
+    `reset_agent_context` и в ходе, который запускает сообщение человека,
+    агент получает `@имя` буквально (проверено на живой доске v0.93.0).
+    Поэтому в Kandev уезжает уже развёрнутый текст, а ссылки остаются
+    только в файлах репозитория, где их удобно читать и проверять.
+    """
+    out = []
+    for line in (text or "").split("\n"):
+        name = line.strip()
+        if name.startswith("@") and name[1:] in prompts and name[1:] not in seen:
+            out.append(expand_refs(prompts[name[1:]], prompts, seen + (name[1:],)))
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
+def expand_workflow(desired, prompts):
+    desired = dict(desired)
+    desired["prompt"] = expand_refs(desired.get("prompt"), prompts)
+    desired["steps"] = [
+        dict(sp, prompt=expand_refs(sp.get("prompt"), prompts))
+        for sp in desired.get("steps") or []
+    ]
+    return desired
+
+
 def main():
     payload = json.load(sys.stdin)
     api = Api(payload["api"])
     ws = payload["workspace_id"]
+    prompts = payload.get("prompts") or {}
     result = {"created": [], "updated": [], "unchanged": [], "warnings": []}
 
     existing = api.call("GET", f"/workspaces/{ws}/workflows")
@@ -301,6 +334,7 @@ def main():
             )
             continue
         for desired in doc.get("workflows") or []:
+            desired = expand_workflow(desired, prompts)
             wf = by_name.get(desired["name"])
             if wf is None:
                 single = dict(doc, workflows=[desired])

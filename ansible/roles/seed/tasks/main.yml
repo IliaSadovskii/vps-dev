@@ -146,6 +146,19 @@
         dest: "{{ seed_tool_dir }}/kandev-seed-workflows"
         mode: "0755"
 
+    - name: Тексты ролей для подстановки в колонки
+      # Ссылки `@имя` в колонках разворачивает скрипт, а не Kandev: после
+      # сброса памяти и в ходе по сообщению человека Kandev отдаёт агенту
+      # `@имя` буквально (проверено на v0.93.0). В файлах ссылки остаются.
+      ansible.builtin.set_fact:
+        seed_prompt_texts: >-
+          {{ seed_prompt_texts | default({})
+             | combine({item | basename | splitext | first:
+                        lookup('file', item)}) }}
+      loop: "{{ seed_prompt_files }}"
+      loop_control:
+        label: "{{ item | basename }}"
+
     - name: Цепочки шагов
       # Не родной импорт, а своя сверка: импорт аддитивен по имени и молча
       # пропускает занятое, а нам нужно, чтобы исправленная цепочка
@@ -157,6 +170,7 @@
         stdin: >-
           {{ {'api': seed_api,
               'workspace_id': seed_workspace_id,
+              'prompts': seed_prompt_texts | default({}),
               'files': seed_workflow_files | default([])} | to_json }}
       register: seed_workflows
       changed_when: >-

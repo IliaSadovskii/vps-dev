@@ -34,8 +34,9 @@ workflow-level prompt `@custom-artifact-protocol`; его формат опис�
 В Kandev промпт шага — обычное текстовое поле, и написанный прямо там текст
 роли пришлось бы повторять в каждой цепочке, где эта роль встречается.
 Поэтому роли живут отдельной сущностью, а шаг ссылается на неё через `@имя`.
-Kandev разворачивает ссылку в скрытый контекст агента; вложенность до восьми
-уровней, циклы пропускаются. Так `@custom-implementation` описан один раз, а
+Разворачивает ссылку в текст роль `seed` при выкатке (и скрипт ниже): сам
+Kandev делает это не на всех путях — после сброса памяти и в ходе по
+сообщению человека агент получает `@имя` буквально. Так `@custom-implementation` описан один раз, а
 работают им и `Quick`, и `Standard`, и `Deep` — поэтому три дорожки с общим
 хвостом стоят дёшево: дублируется только скелет колонок, не смысл ролей.
 
@@ -66,6 +67,8 @@ python3 - <<'PY' | ../ansible/roles/seed/files/kandev-seed-workflows
 import glob, json, os, yaml
 print(json.dumps({"api": os.environ.get("KAN", "http://127.0.0.1:8064/api/v1"),
                   "workspace_id": os.environ["WS"],
+                  "prompts": {os.path.basename(f)[:-3]: open(f).read()
+                              for f in glob.glob("prompts/*.md")},
                   "files": [{"name": os.path.basename(f), "doc": yaml.safe_load(open(f))}
                             for f in sorted(glob.glob("workflows/*.yml"))]}))
 PY
