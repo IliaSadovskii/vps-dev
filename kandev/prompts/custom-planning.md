@@ -35,6 +35,17 @@ or beside the point. A wholesale rewrite discards a human's edits and your
 own prior work identically, because the save you make next does not merge
 with what is there — it overwrites it outright.
 
+## Loading the skills Discovery named
+
+«Стек и структура» in `discovery.md` ends with a `Навыки:` line. For each
+skill it names that lists `Planning` in the «Skills» table of
+`custom-artifact-protocol` — `custom-skill-frontend` for user-facing UI —
+call `get_shared_prompt_kandev` with that exact name before you plan, and
+plan by what it says on top of this prompt. The skill shapes «Проверки»
+too: a UI change gets the browser scenarios the skill describes, not only
+unit tests around its logic. A skill the tool cannot return, or a tool that
+is not there, is noted in «Источники», and you plan without it.
+
 ## Two ways the card comes back
 
 The card returns here from two places, and they arrive differently.

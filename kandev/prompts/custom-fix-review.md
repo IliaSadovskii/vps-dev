@@ -17,6 +17,17 @@ Done when: every current-entry disposition has been checked against code and
     return already spent) or `move_task_kandev` (blocking, return still
     available) has been called. Never call both.
 
+## Loading the skills Discovery named
+
+«Стек и структура» in `discovery.md` ends with a `Навыки:` line. For each
+skill it names that lists `Fix Review` in the «Skills» table of
+`custom-artifact-protocol` — `custom-skill-frontend-verify` for UI work —
+call `get_shared_prompt_kandev` with that exact name before you check the
+fixes, and check by its rules on top of this prompt's. It never overrides
+the protocol, `custom-git-safety` or the test-file rule below. A skill the
+tool cannot return, or a tool that is not there, goes under «Проверка
+исправлений», and you proceed without it.
+
 ## Establish the review-fix diff
 
 Read the starting commit from the artifact `README.md`. Inspect the commits

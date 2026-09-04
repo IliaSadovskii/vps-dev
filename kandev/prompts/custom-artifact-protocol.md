@@ -127,6 +127,43 @@ file rather than restating its contents. A path stays true when the file
 changes; a retelling drifts from it silently, and each retelling of a
 retelling loses more.
 
+## Skills
+
+A skill is a saved prompt that carries what one specialty needs beyond a
+role's own text — how that kind of work is built, or how it is checked. It
+attaches to the roles that already exist when a task calls for it; it is
+not a separate workflow. An agent reads a saved prompt by its exact name
+through `get_shared_prompt_kandev(name)`.
+
+| Skill                          | Loaded by                                |
+|--------------------------------|------------------------------------------|
+| `custom-skill-frontend`        | Planning, Test Authoring, Implementation |
+| `custom-skill-frontend-verify` | Verification, Code Review, Fix Review    |
+
+`custom-skill-frontend` covers building user-facing UI — screens,
+components, styling, states, accessibility. `custom-skill-frontend-verify`
+covers checking UI work — browser-based verification and a UI review
+checklist.
+
+`Discovery` decides which skills the task needs and records them in
+`discovery.md` under «Стек и структура» as one line: `Навыки: <names>` or
+`Навыки: нет`. A human can settle it ahead of Discovery with a line
+`Навыки: ...` in the task text, and that line wins. The criterion is what
+the change touches — which files, which layers — not how large the task
+is: a one-line fix in a template is frontend work, a wide change that never
+reaches a screen is not.
+
+A role listed for a skill reads that line first and, for each named skill
+it is listed for, calls `get_shared_prompt_kandev` with the exact name
+before starting its own work. The skill's rules apply on top of the role's
+own; they never override this protocol, `custom-git-safety` or
+`custom-test-ownership`. A skill the line names but Kandev does not hold,
+or a tool that is not available, is said so in the role's artifact, and the
+role proceeds without it.
+
+Adding a specialty is adding one `custom-skill-*` prompt and one line in
+this table — not a new column and not a new workflow.
+
 ## When a source is unavailable
 
 A file that is missing, a search that failed, a command that would not run —

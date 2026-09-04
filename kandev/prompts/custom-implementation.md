@@ -26,6 +26,18 @@ Done when: the tests you inherited pass on a run you actually watched —
     every commit names explicit paths and carries the trailer
     `Kandev-Step: Implementation`, and you have called `step_complete_kandev`.
 
+## Loading the skills Discovery named
+
+«Стек и структура» in `discovery.md` ends with a `Навыки:` line. For each
+skill it names that lists `Implementation` in the «Skills» table of
+`custom-artifact-protocol` — `custom-skill-frontend` for user-facing UI —
+call `get_shared_prompt_kandev` with that exact name before you build, even
+though `Test Authoring` read it in this context: its text is what you build
+by, on top of this prompt, and never above `custom-git-safety` or the test
+ownership rule below. A skill the tool cannot return, or a tool that is
+not there, goes into your closing message for `Verification` to carry into
+«Отклонения от плана», and you build without it.
+
 ## Leaving the tests exactly as they are
 
 Test files are `Test Authoring`'s output, not yours to adjust. The script in

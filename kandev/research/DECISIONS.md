@@ -539,3 +539,19 @@ Done; Sonnet (high) — остальное. Смена модели рвёт о�
 сбросом, чтобы поиск шёл на Sonnet, а выбор решения на Opus: Synthesis
 читает всё из файлов, сброс почти бесплатен. Основание — замеры Anthropic
 и Cognition: сильная модель на плане и суждении, дешёвая на исполнении.
+
+**59. Специализация — навыками, а не дорожками.** Навык — сохранённый
+промпт `custom-skill-*`, который существующая роль подгружает по точному
+имени через `get_shared_prompt_kandev`, когда `discovery.md` называет его
+в строке «Навыки:» (человек может задать строкой в тексте задачи, она
+главнее). Каталог навыков и кто какой грузит — в протоколе артефактов.
+Первые два: `custom-skill-frontend` (Planning, Test Authoring,
+Implementation) и `custom-skill-frontend-verify` (Verification, Code
+Review, Fix Review). Правила собраны из официального навыка Anthropic
+`frontend-design` и `webapp-testing` (Apache-2.0), Vercel Web Interface
+Guidelines (MIT), OneRedOak `design-review` (MIT), `ui-ux-pro-max` (MIT),
+источники в `research/PREDECESSORS.md` не нужны — атрибуция в шапке
+навыка. Отдельная роль «фронт-тестировщик» не нужна: Test Authoring пишет
+браузерные тесты по «Проверкам» Плана, Verification и Code Review
+проверяют по навыку. Другую модель под специальность так не подключить,
+профиль привязан к колонке.

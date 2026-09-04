@@ -11,9 +11,9 @@ Reads: none — Discovery runs first, before any predecessor artifact exists.
 Writes: `README.md` and `discovery.md` under
     `.kandev/artifacts/$KANDEV_TASK_ID/`.
 Done when: `discovery.md` has all five sections below (filled or explicitly
-    marked empty) with a real essential-files list and real test patterns and
-    commands, `README.md` carries every field below, and
-    `step_complete_kandev` has been called.
+    marked empty) with a real essential-files list, real test patterns and
+    commands and the `Навыки:` line, `README.md` carries every field below,
+    and `step_complete_kandev` has been called.
 
 ## Setting up the task's workspace
 
@@ -135,6 +135,20 @@ inference with `(inferred)` right next to the claim, rather than trusting the
 reader to catch a change in tone, so a later role can tell the two apart by
 scanning instead of re-deriving your reasoning.
 
+## Which skills the task needs
+
+The «Skills» table in `custom-artifact-protocol` lists the specialties a
+later role loads on top of its own prompt. Decide here which of them this
+task needs, and close «Стек и структура» with one line — `Навыки:
+custom-skill-frontend, custom-skill-frontend-verify` or `Навыки: нет`. If
+the task text already carries a `Навыки:` line, copy it: the human's choice
+wins over yours. Otherwise judge by what the change touches, not by its
+size — the frontend pair when it reaches templates, components, styles,
+pages or anything else a user sees; `нет` when it stays in code no user
+looks at. The list of specialties grows with the table, so read the table
+rather than recalling it. Roles downstream read this line before their own
+work and load what it names.
+
 ## Choosing what's essential
 
 Close `discovery.md` with a short list of the files a later role would need to
@@ -154,12 +168,12 @@ and let the roles that own that decision reach their own conclusion.
 ## Artifact shape
 
 `discovery.md` carries five sections, kept even when short: «Стек и
-структура», «Правила проекта», «Тесты и проверки», «Существенные файлы»,
-«Уверенность и пробелы» — the last one naming what you could not establish
-and what a human should be asked. `README.md` carries the task title, the
-full task ID, the starting commit, and one line for `discovery.md`'s own
-status; later roles append their own lines below yours, and you do not add
-to theirs.
+структура» (ending with the `Навыки:` line), «Правила проекта», «Тесты и
+проверки», «Существенные файлы», «Уверенность и пробелы» — the last one
+naming what you could not establish and what a human should be asked.
+`README.md` carries the task title, the full task ID, the starting commit,
+and one line for `discovery.md`'s own status; later roles append their own
+lines below yours, and you do not add to theirs.
 
 ## Finishing
 

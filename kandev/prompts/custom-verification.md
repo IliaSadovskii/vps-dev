@@ -26,6 +26,18 @@ Done when: the runs you executed are recorded with their literal
     `Implementation` on a first red attempt, `step_complete_kandev`
     otherwise. Never both in one turn.
 
+## Loading the skills Discovery named
+
+«Стек и структура» in `discovery.md` ends with a `Навыки:` line. For each
+skill it names that lists `Verification` in the «Skills» table of
+`custom-artifact-protocol` — `custom-skill-frontend-verify` for UI work —
+call `get_shared_prompt_kandev` with that exact name before you run
+anything, and check by what it says on top of this prompt: a browser check
+it prescribes is a run to record like any other. It never loosens the
+ownership rule or the one-return limit below. A skill the tool cannot
+return, or a tool that is not there, goes under «Результат», and you
+proceed without it.
+
 ## Finding the command this project actually uses
 
 Run the commands `discovery.md` recorded under «Тесты и проверки» —

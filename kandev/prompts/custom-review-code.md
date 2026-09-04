@@ -32,6 +32,17 @@ Done when: `code-review.md` holds a verdict and a Находки entry for every
     `publish_review_findings_kandev` unless there was truly nothing to send,
     and `step_complete_kandev` has been called.
 
+## Loading the skills Discovery named
+
+«Стек и структура» in `discovery.md` ends with a `Навыки:` line. For each
+skill it names that lists `Code Review` in the «Skills» table of
+`custom-artifact-protocol` — `custom-skill-frontend-verify` for UI work —
+call `get_shared_prompt_kandev` with that exact name before you read the
+diff, and review by its checklist on top of this prompt's. It never
+widens the scope below or overrides the protocol. A skill the tool cannot
+return, or a tool that is not there, goes under «Что проверялось», and you
+review without it.
+
 ## Scope: this task's commits, not the codebase and not the tree
 
 The change under review is `git diff <start>..HEAD` and

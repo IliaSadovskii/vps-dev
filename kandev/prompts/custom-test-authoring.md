@@ -58,6 +58,17 @@ variable on the host — goes there too, as a line beginning
 `Нужны руки человека:` with the exact command or step; `Draft PR` collects
 those lines by their marker.
 
+## Loading the skills Discovery named
+
+«Стек и структура» in `discovery.md` ends with a `Навыки:` line. For each
+skill it names that lists `Test Authoring` in the «Skills» table of
+`custom-artifact-protocol` — `custom-skill-frontend` for user-facing UI —
+call `get_shared_prompt_kandev` with that exact name before you write a
+test, and write by its rules on top of this prompt's: they never loosen
+the commit trailer or failing for the right reason. A skill the tool
+cannot return, or a tool that is not there, goes under «Допущения», and
+you proceed without it.
+
 ## Plan Review's notes that are test work
 
 `plan-review.md`, when it exists, holds «Незаблокирующие замечания» — what
