@@ -25,6 +25,7 @@ workflows:
     description: "Развилки, точечное исследование, выбранное решение, план с ревью, реализация, ревью, PR."
     prompt: |
       @custom-artifact-protocol
+      @custom-git-safety
     steps:
       - name: Decision Mapping
         position: 0

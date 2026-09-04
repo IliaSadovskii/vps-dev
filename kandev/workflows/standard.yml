@@ -25,6 +25,7 @@ workflows:
     description: "План с независимым ревью, затем тесты, реализация, проверка, ревью, PR."
     prompt: |
       @custom-artifact-protocol
+      @custom-git-safety
     steps:
       - name: Planning
         position: 0

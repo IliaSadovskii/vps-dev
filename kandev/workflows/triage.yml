@@ -13,6 +13,7 @@ workflows:
     description: "Общий вход: разведка, границы задачи и выбор маршрута человеком."
     prompt: |
       @custom-artifact-protocol
+      @custom-git-safety
     steps:
       # Ручная очередь на вход: у шага нет событий, поэтому новая задача
       # ждёт здесь, пока её не двинут на Discovery.
