@@ -34,11 +34,14 @@ with what is there — it overwrites it outright.
 
 The card returns here from two places, and they arrive differently.
 
-From `Plan Approval`, a human who disagrees writes a message: the card moves
-back on its own and that message is the prompt you are reading now. Treat
-it as the change request it is — find what in the saved Plan it argues
-with, change that, and leave the rest. If the human edited the Plan in the
-UI as well, `get_task_plan_kandev` shows their edit; keep it.
+From `Plan Approval`, a human who disagrees writes one or more notes at
+the gate — each answered there with a bare acknowledgement — and drags the
+card back here when they are done. Your context is warm, so those notes
+are in this conversation: read every human message since the Plan was last
+saved and treat them together as one change request — find what in the
+saved Plan they argue with, change that, and leave the rest. If the human
+edited the Plan in the UI as well, `get_task_plan_kandev` shows their
+edit; keep it.
 
 From `Plan Review`, a blocking verdict sends the card back with a short
 hand-off pointing at `plan-review.md`. Read that file: its Блокирующие

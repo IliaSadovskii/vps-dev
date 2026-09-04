@@ -6,8 +6,8 @@
 # Нужна до первой задачи на Deep: роли той цепочки читают этот файл первым
 # после каждого сброса памяти.
 #
-# Возврат — сообщением с Review: карточка уедет на Conventions, текст
-# станет заданием, память не сбросится.
+# Возврат — заметками на Review и перетаскиванием на Conventions, когда
+# мысль закончена; память не сбрасывается, агент видит все заметки.
 version: 1
 type: kandev_workflow
 workflows:
@@ -45,15 +45,13 @@ workflows:
         cancel_triggers_turn_complete: false
 
       # Ворота человека: прочитать файл, при PR — diff. Принять — в Done.
-      # Поправить — написать, что не так.
+      # Поправить — написать, что не так, и перетащить на Conventions.
       - name: Review
         position: 2
         color: bg-yellow-500
-        events:
-          on_turn_start:
-            - type: move_to_step
-              config:
-                step_position: 1
+        prompt: |
+          @custom-gate
+        events: {}
         is_start_step: false
         show_in_command_panel: true
         allow_manual_move: true

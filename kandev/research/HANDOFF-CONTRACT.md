@@ -69,15 +69,15 @@
 | Discovery | первый шаг | — | `README.md`, `discovery.md` |
 | Scoping | продолжает | `discovery.md` | `scoping.md` |
 | Research | продолжает | `scoping.md`, `discovery.md` | `research.md` |
-| Solution Synthesis | продолжает; по сообщению с `Solution Approval` — тот же контекст | `research.md`, `scoping.md`, `discovery.md`, свой прошлый `solution-synthesis.md` при возврате | `solution-synthesis.md` |
-| Planning | продолжает; по сообщению с `Plan Approval` — тот же контекст | нативный Plan (обязательно до записи), `scoping.md`, `solution-synthesis.md` и `research.md` если есть, `discovery.md`, `plan-review.md` если есть | нативный Kandev Plan, строка в `README.md` |
+| Solution Synthesis | продолжает; при возврате с `Solution Approval` — тот же контекст, заметки человека в разговоре | `research.md`, `scoping.md`, `discovery.md`, свой прошлый `solution-synthesis.md` при возврате | `solution-synthesis.md` |
+| Planning | продолжает; при возврате с `Plan Approval` — тот же контекст, заметки человека в разговоре | нативный Plan (обязательно до записи), `scoping.md`, `solution-synthesis.md` и `research.md` если есть, `discovery.md`, `plan-review.md` если есть | нативный Kandev Plan, строка в `README.md` |
 | Plan Review | **сброшен** | нативный Plan, `discovery.md`, `scoping.md`, `solution-synthesis.md` и `research.md` если есть, свой прошлый `plan-review.md`, разговор задачи | `plan-review.md`; блокирующий вердикт на попытке 1 — возврат на `Planning` |
 | Test Authoring | **сброшен** | нативный Plan если есть, `scoping.md`, `discovery.md` («Тесты и проверки»), `research.md` если есть, свой прошлый `test-authoring.md`, разговор задачи | `test-authoring.md`, коммит тестов с трейлером `Kandev-Step: Test Authoring` |
 | Implementation | продолжает Test Authoring | контекст Test Authoring; `research.md` и `solution-synthesis.md` если есть; `verification.md` при возврате | код и коммиты с трейлером `Kandev-Step: Implementation`, файла нет |
 | Verification | продолжает | `README.md` (стартовый коммит), свой прошлый `verification.md`, разговор задачи (время последнего сообщения человека) | `verification.md`; красный прогон на попытке 1 — возврат на `Implementation` |
 | Code Review | **сброшен** | `README.md`, `scoping.md`, `discovery.md`, `verification.md`, `research.md` если есть, нативный Plan если есть, свой прошлый `code-review.md`, разговор задачи | `code-review.md` + `publish_review_findings_kandev` |
 | Security Review | **сброшен** | `scoping.md`, `discovery.md`, `code-review.md`, свой прошлый `security-review.md`, разговор задачи | `security-review.md` + `publish_review_findings_kandev` |
-| Review Fixes | **сброшен**; по сообщению с `Human Review`/`Done` — тёплый контекст `Draft PR` | `code-review.md`, `security-review.md`, `fix-review.md` или `final-verification.md` если вернули они, `discovery.md`, свой прошлый `review-fixes.md`, разговор задачи | `review-fixes.md`, коммиты с трейлером `Kandev-Step: Review Fixes`, без тестов |
+| Review Fixes | **сброшен**, в том числе при возврате с `Human Review`/`Done` | `code-review.md`, `security-review.md`, `fix-review.md` или `final-verification.md` если вернули они, `discovery.md`, свой прошлый `review-fixes.md`, разговор задачи | `review-fixes.md`, коммиты с трейлером `Kandev-Step: Review Fixes`, без тестов |
 | Fix Review | **сброшен** | `README.md`, `discovery.md`, `scoping.md`, `code-review.md`, `security-review.md`, `review-fixes.md`, `final-verification.md` если она вернула карточку, свой прошлый `fix-review.md`, разговор задачи | `fix-review.md` + `publish_review_findings_kandev` (только новые дефекты); блокирующий вердикт при доступном автовозврате — возврат на `Review Fixes` |
 | Final Verification | продолжает Fix Review | `review-fixes.md`, `fix-review.md`, `verification.md`, `README.md`, `discovery.md`, свой прошлый `final-verification.md` | `final-verification.md`; провал при доступном автовозврате — возврат на `Review Fixes` |
 | Documentation | продолжает Fix Review | `review-fixes.md`, `final-verification.md`, `README.md` (стартовый коммит), диф задачи и документация проекта, свой прошлый `documentation.md` | `documentation.md`, коммиты в документацию с трейлером `Kandev-Step: Documentation` |
@@ -95,30 +95,21 @@
 разделом «Отклонения от плана», потому что именно она идёт следом в том же
 контексте и именно там это увидит `Code Review`.
 
-## Возврат по сообщению человека
+## Возврат с ворот
 
-На воротах два действия: перетащить вправо — «принимаю», написать сообщение —
-«переделай». По сообщению Kandev сам переносит карточку (решение 24) и отдаёт
-текст роли как задание; `on_enter` при этом не срабатывает, поэтому контекст
-не сбрасывается и агент не стартует заново — он получает ход с промптом новой
-колонки.
+На воротах два действия: перетащить вправо — «принимаю», написать заметки и
+перетащить назад — «переделай». Пока карточка в воротах, сообщения человека
+принимает промпт `custom-gate`: отвечает «записал» и ничего не делает
+(решение 39). Перетаскивание запускает `on_enter` целевой колонки: агент
+стартует сам, память сбрасывается там, где это задано. Роль читает все
+сообщения человека с момента своего прошлого артефакта, а не последнее.
 
-| Откуда | Куда едет сообщение | Что дальше |
+| Откуда | Куда | Что дальше |
 |---|---|---|
 | `Solution Approval` | `Solution Synthesis` | тот же контекст; роль читает свой прошлый файл и переписывает его вокруг выбора человека |
 | `Plan Approval` | `Planning` | тот же контекст; роль дописывает существующий План; затем снова `Plan Review` |
-| `Human Review`, `Done` | `Review Fixes` | тёплый контекст `Draft PR`; замечание — единственная работа захода; затем весь хвост до `Draft PR` |
-
-Перетаскивание назад остаётся для случаев, куда сообщение не попадёт
-(`PROCESS.md`, «Когда тащить руками»): `Research`, `Planning`,
-`Test Authoring`, `Scoping`, `Draft PR`. Вход перетаскиванием запускает
-`on_enter`, то есть сбрасывает контекст там, где YAML это предписывает.
-
-Роли, которые от возврата повторяются, обязаны быть к повтору готовы
-(решение 35): каждая читает свой прошлый артефакт, пишет номер захода и
-работает с разницей, а не с нуля. `Code Review` и `Security Review` не
-перепубликуют старые находки; `Draft PR` при существующем PR обновляет его, а
-не открывает второй.
+| `Human Review`, `Done` | `Review Fixes` | контекст сброшен; заметки — единственная работа захода; затем весь хвост до `Draft PR` |
+| крупный поворот | `Research`, `Planning`, `Test Authoring`, `Scoping`, `Draft PR` | первая колонка нужного блока, см. `PROCESS.md` |
 
 ## Автовозврат при блокирующем исходе
 

@@ -36,17 +36,17 @@ The review steps. The card arrived from `Security Review` after `Code Review`,
 your context is fresh, and the work is every finding in `code-review.md` and
 `security-review.md`. Record `Вызван: ревью`.
 
-A human. Someone at `Human Review` or `Done` wrote a message, and Kandev moved
-the card back here and handed you that message as this turn's prompt. Your
-context is the warm one `Draft PR` left, so the chain's earlier files are
-already in front of you; if you're not sure the message is complete, or
-whether it was the only one, call `get_task_conversation_kandev` anyway — the
-cost of reading it again is smaller than the cost of answering the wrong
-thing. The work is what the person wrote, and nothing else: the two review
-files were answered in an earlier entry, and reopening them wastes the lap
-and undoes work someone accepted. Where the message contradicts a finding you
-closed earlier, the human wins, and you say plainly in your entry which
-earlier decision you reversed. Record `Вызван: человек`.
+A human. Someone at `Human Review` or `Done` wrote one or more notes there
+— possibly minutes apart, each answered at the gate with a bare
+acknowledgement — and dragged the card back here when they were done. Your
+context was cleared on entry, so call `get_task_conversation_kandev` and
+read every human message since your previous `review-fixes.md` (or since
+`Draft PR` ran, if this is the first human return); treat them together as
+one request. The work is what the person wrote, and nothing else: the two
+review files were answered in an earlier entry, and reopening them wastes
+the lap and undoes work someone accepted. Where a note contradicts a
+finding you closed earlier, the human wins, and you say plainly in your
+entry which earlier decision you reversed. Record `Вызван: человек`.
 
 `Fix Review`. It read your previous entry's diff and found it wanting, and it
 sent the card back with a prompt pointing at `fix-review.md`. Your context is
@@ -64,9 +64,9 @@ change, in this chain, on purpose — directive in a way the task text is not.
 
 ## A message that is not a rework request
 
-Not every human message is an objection. A question about the change, a
-remark, or an approval that happened to be typed instead of dragged still
-brings the card here, and the answer to it is an answer, not a change.
+Not every human note is an objection. A question about the change or a
+remark, when the card was still dragged back here, is answered, not acted
+on.
 Reply to what was asked in your closing message, change no code, write
 `review-fixes.md` with a single entry saying what the message was and that
 no change was warranted, and call `step_complete_kandev`. The chain will run

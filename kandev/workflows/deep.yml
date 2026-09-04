@@ -130,13 +130,12 @@ workflows:
         position: 5
         color: bg-orange-500
         # Принять: перетащить вправо, на Planning. Возразить: написать
-        # сообщение; Kandev сначала вернёт карточку в Solution Synthesis,
-        # затем отдаст этой роли само сообщение.
-        events:
-          on_turn_start:
-            - type: move_to_step
-              config:
-                step_position: 4
+        # столько заметок, сколько нужно, и перетащить карточку на Solution
+        # Synthesis, когда мысль закончена. Сообщение здесь агента не
+        # двигает: колонка отвечает «записал» и ждёт (решение 39).
+        prompt: |
+          @custom-gate
+        events: {}
         is_start_step: false
         show_in_command_panel: true
         allow_manual_move: true
@@ -189,13 +188,11 @@ workflows:
         position: 8
         color: bg-orange-500
         # Принять: перетащить вправо, на Test Authoring. Возразить: написать
-        # сообщение; оно попадёт сразу в Planning, единственному владельцу
-        # нативного Plan, а затем план снова пройдёт Plan Review.
-        events:
-          on_turn_start:
-            - type: move_to_step
-              config:
-                step_position: 6
+        # заметки и перетащить карточку на Planning — единственного владельца
+        # нативного Plan; план снова пройдёт Plan Review.
+        prompt: |
+          @custom-gate
+        events: {}
         is_start_step: false
         show_in_command_panel: true
         allow_manual_move: true
@@ -420,15 +417,13 @@ workflows:
         position: 19
         color: bg-yellow-500
         # Принять: дождаться CI, проверить итоговый diff и перетащить вправо,
-        # в Done. Доработать: написать замечание — карточка уедет на Review
-        # Fixes и снова пройдёт хвост до PR. Если менялся план или сама
-        # задача, человек сам перетаскивает карточку на Planning или Scoping:
-        # только он знает, что именно передумал.
-        events:
-          on_turn_start:
-            - type: move_to_step
-              config:
-                step_position: 14
+        # в Done. Доработать: написать замечания и перетащить на Review
+        # Fixes — хвост до PR пройдёт снова. Если менялся план или сама
+        # задача — на Planning или Scoping: только человек знает, что
+        # именно передумал.
+        prompt: |
+          @custom-gate
+        events: {}
         is_start_step: false
         show_in_command_panel: true
         allow_manual_move: true
@@ -438,13 +433,11 @@ workflows:
       - name: Done
         position: 20
         color: bg-green-500
-        # Переоткрыть: написать, что изменилось. Сообщение уйдёт на Review
+        # Переоткрыть: написать, что изменилось, и перетащить на Review
         # Fixes, тем же путём, что и с Human Review.
-        events:
-          on_turn_start:
-            - type: move_to_step
-              config:
-                step_position: 14
+        prompt: |
+          @custom-gate
+        events: {}
         is_start_step: false
         show_in_command_panel: false
         allow_manual_move: true

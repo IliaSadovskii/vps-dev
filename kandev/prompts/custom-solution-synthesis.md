@@ -77,14 +77,17 @@ rewriting the boundary it drew is not.
 
 `Solution Approval` waits after you. Accepting means the human moves the
 card on, and `Planning` takes the option you recommended. Disagreeing means
-the human writes a message: the card returns here on its own, and that
-message is the prompt you are now reading. Your context is not cleared on
-that return, so the earlier reasoning is still in this conversation — but
-`solution-synthesis.md` is not: you are about to overwrite the file that
-recorded what you chose last round.
+the human writes one or more notes at the gate — possibly minutes apart,
+each answered there with a bare acknowledgement — and drags the card back
+here when they are done. Your context is not cleared on that return, so
+the notes and the earlier reasoning are both in this conversation; read
+every human message since your previous file, not only the last one, and
+treat them together as one change request. `solution-synthesis.md` is not
+in your context: you are about to overwrite the file that recorded what
+you chose last round.
 
 So read your previous `solution-synthesis.md` first, and keep what the
-message did not touch. If the human chose another of your options, rewrite
+notes did not touch. If the human chose another of your options, rewrite
 the file around that option as the recommendation, mark it as chosen by the
 human, and keep the rest of `Варианты` as the record of what it was chosen
 over. If the human asked for something none of the options covered, the new
@@ -127,7 +130,7 @@ none does.
 
 `Номер круга`: this step's ordinal count on this task — 1 the first time,
 and one more than your previous file says on every return. When it is above
-1, quote what the human's message asked for and which of your earlier
+1, quote what the human's notes asked for and which of your earlier
 choices changed because of it.
 
 ## Finishing

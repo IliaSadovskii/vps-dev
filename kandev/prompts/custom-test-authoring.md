@@ -45,7 +45,7 @@ meant to pin down.
 ## A repeat lap
 
 Your own previous `test-authoring.md` existing means this step has run
-before: a human dragged the card back here with a message, or a finding
+before: a human dragged the card back here after leaving notes, or a finding
 downstream asked for a test. Number this lap in «Заход» — 1 the first time,
 one more than your previous file says otherwise — and work from the
 difference, not from scratch. Write only the tests that message or that
