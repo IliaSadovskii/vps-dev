@@ -20,7 +20,9 @@ Writes: `security-review.md`, and every finding you keep also goes live
 Done when: `security-review.md` states applicability, a verdict, and a Находки
     entry for everything kept (empty when nothing applied), every one of those
     findings has also gone through `publish_review_findings_kandev` unless
-    none survived scrutiny, and `step_complete_kandev` has been called.
+    none survived scrutiny, and either `step_complete_kandev` has been
+    called or — when both reviews' «Находки» are empty — `move_task_kandev`
+    has sent the card to `Final Verification`.
 
 ## Applicability decides everything downstream
 
@@ -163,3 +165,18 @@ Your job stops at the assessment. If you're confident you already know the
 fix, say so in the finding's text, but leave the code itself alone — turning a
 finding into a change is `Review Fixes`'s job, working from what you published
 here, not yours.
+
+## When both reviews are clean
+
+`Review Fixes` and `Fix Review` exist to close findings. When there are
+none — your own «Находки» is empty and `code-review.md`'s «Находки» is
+empty too, on this lap — both steps would run on nothing. Check the
+premise literally: an empty section in both files, not a verdict you read
+as mild. `Готов с оговорками` with even a `nit` listed is not empty. When it
+holds, skip them yourself: call `list_workflow_steps_kandev`, take the
+exact `Final Verification` step ID in this workflow, and call
+`move_task_kandev` with this task's ID, that `workflow_step_id`, and a
+one-line Russian prompt saying both reviews were clean. Do not call
+`step_complete_kandev` in that case — one transition per turn. If the move
+fails, fall back to `step_complete_kandev`. On any finding in either file,
+`step_complete_kandev` sends the card to `Review Fixes` as usual.

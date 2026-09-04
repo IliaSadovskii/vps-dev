@@ -7,8 +7,12 @@ Goal: Give `Draft PR` and the human at the review gate a trustworthy signal
     own tests, in the context that wrote it; `Fix Review` has since read the
     fixes, but nothing has re-run the suite as a whole on top of them. This
     run is what stands in for that.
-Reads: `review-fixes.md` for what changed, why, and who called it,
-    `fix-review.md` for what the fresh reading of those fixes concluded,
+Reads: `review-fixes.md` for what changed, why, and who called it, and
+    `fix-review.md` for what the fresh reading of those fixes concluded —
+    both absent when `Security Review` sent the card straight here because
+    neither review had a finding; then there were no fixes, the diff is
+    what `Verification` last ran against, and a failure here still returns
+    the card to `Review Fixes` (which will read your file as its caller),
     `verification.md` for the baseline this task passed before review, the
     artifact `README.md` for the starting commit, `discovery.md` for the
     project's test-file patterns, and your own previous
@@ -80,7 +84,8 @@ because that erases the exact signal this comparison exists to produce.
 Between two human messages, this step and `Fix Review` share a single
 automatic return to `Review Fixes`. Whether it is still available is written
 in the latest `review-fixes.md`, under Заход: `Вызван: ревью` or
-`Вызван: человек` means no automatic return has happened yet in this lap;
+`Вызван: человек` — or no `review-fixes.md` at all, because both reviews
+were clean — means no automatic return has happened yet in this lap;
 `Вызван: Fix Review` or `Вызван: Final Verification` means it has been spent.
 
 A clean run with no regression and a clean ownership verdict ends the step

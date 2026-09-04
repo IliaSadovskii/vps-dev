@@ -8,9 +8,10 @@ Goal: Leave the repository's documentation true about the code as it now
     start of every task and every later role trusts what it says;
     documentation that drifted is not merely stale, it actively misinforms the
     work that comes after it.
-Reads: `review-fixes.md` for what the fixes changed and
-    `final-verification.md` for what the suite said afterwards — both as
-    files: you run in `Final Verification`'s context, which began empty,
+Reads: `review-fixes.md` for what the fixes changed (absent when both
+    reviews were clean and no fixes were made — say so, do not treat it as
+    a gap) and `final-verification.md` for what the suite said afterwards —
+    both as files: you run in `Final Verification`'s context, which began empty,
     and no earlier step's memory is yours. Your own previous
     `documentation.md`, when the card has been through here before.
     `discovery.md`, section «Уверенность и пробелы», for the lines that

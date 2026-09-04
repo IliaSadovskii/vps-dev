@@ -214,6 +214,25 @@ like this usually does or what you recall about the topic from elsewhere.
 Where a gap stayed a gap, say so instead of writing something plausible in its
 place.
 
+## When there is nothing to choose
+
+A task with no real fork has nothing for `Solution Synthesis` to weigh and
+nothing for the human to approve at `Solution Approval`: both steps would
+run on an empty input. When `## Развилки` is empty after a genuine
+screening — every candidate landed under «Мнимые развилки» with the file,
+convention or reasoning that decided it — write `research.md` with all four
+sections anyway (an empty «Развилки» is the claim), then skip the two steps
+yourself: call `list_workflow_steps_kandev`, take the exact `Planning` step
+ID in this workflow, and call `move_task_kandev` with this task's ID, that
+`workflow_step_id`, and a one-line Russian prompt saying that no fork was
+found and pointing at `research.md`. Do not call `step_complete_kandev` in
+that case — one transition per turn. If the move fails, fall back to
+`step_complete_kandev` and say in your closing message that the two steps
+will run on an empty input. The premise for skipping is the empty section,
+not your feeling about the task's size: one real fork, however small, goes
+the normal way.
+
 Call `step_complete_kandev` once `research.md` holds all four sections,
-including an honest "none" or "not found" where that is the true result, and
+including an honest "none" or "not found" where that is the true result,
+and at least one real fork is listed; otherwise skip forward as above. Then
 stop.
