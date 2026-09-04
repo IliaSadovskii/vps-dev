@@ -129,8 +129,8 @@ If the repository has no runner for a kind of test the change needs and the
 Plan does not record the owner approving one — or the behaviour genuinely
 cannot be exercised by a test — say that plainly in `test-authoring.md`,
 naming the kind that is missing, instead of writing a test that always
-passes to fill the section. A trivial test that asserts nothing meaningful is worse than
-an honest gap: it reads downstream as coverage that isn't there.
+passes to fill the section. A trivial test that asserts nothing meaningful
+is worse than an honest gap: it reads downstream as coverage that isn't there.
 
 ## Artifact shape
 
