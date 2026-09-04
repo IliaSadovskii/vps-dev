@@ -1,28 +1,29 @@
 How steps in this workflow hand work to each other.
 
-Each step is a separate agent turn. Some steps start with a cleared context and
-receive nothing but files. What you leave behind is therefore the whole of what
-the next step gets — not a convenience, the entire channel.
+Each step is a separate agent turn. Some steps start with a cleared context
+and receive nothing but files. What you leave behind is therefore the whole of
+what the next step gets — not a convenience, the entire channel.
 
 ## Where the files live
 
-The task's working directory is `.kandev/artifacts/$KANDEV_TASK_ID/`, using the
-full task ID from the environment. The ID is stable; the task title is not, so
-never key anything on the title.
+The task's working directory is `.kandev/artifacts/$KANDEV_TASK_ID/`, using
+the full task ID from the environment. The ID is stable; the task title is
+not, so never key anything on the title.
 
-`README.md` in that directory is the index: task title, task ID, the commit the
-work started from, the chosen route, and one line per artifact. Discovery
+`README.md` in that directory is the index: task title, task ID, the commit
+the work started from, the chosen route, and one line per artifact. Discovery
 creates it. Every later step appends its own line and changes nothing else.
 
 If the directory does not exist when you need it, create it with a minimal
-`README.md` and note that you did — it means an earlier step was skipped or the
-task entered the route directly.
+`README.md` and note that you did — it means an earlier step was skipped or
+the task entered the route directly.
 
 ## One file, one owner
 
-You write your own artifact and nothing else. You may read the artifacts listed
-in your role, and you do not rewrite them, reorganise them, or correct them. If
-a predecessor's file is wrong, say so in your own file and let a human decide.
+You write your own artifact and nothing else. You may read the artifacts
+listed in your role, and you do not rewrite them, reorganise them, or correct
+them. If a predecessor's file is wrong, say so in your own file and let a
+human decide.
 
 `README.md` is the single exception: everyone appends a line to it.
 
@@ -34,8 +35,8 @@ budget, not a suggestion.
 
 When you refer to something a previous step established, give the path to its
 file rather than restating its contents. A path stays true when the file
-changes; a retelling drifts from it silently, and each retelling of a retelling
-loses more.
+changes; a retelling drifts from it silently, and each retelling of a
+retelling loses more.
 
 ## When a source is unavailable
 
@@ -48,13 +49,15 @@ Never fill a gap from memory.
 
 Write it for someone who did not watch you work: a human at an approval gate,
 or a later step whose context was cleared and which holds only your file.
-Introduce names, paths and terms as if the reader sees them for the first time.
-Open with the outcome — what you found or decided — and put the supporting
-detail after it. The shorthand you built up while working is yours, not theirs.
+Introduce names, paths and terms as if the reader sees them for the first
+time. Open with the outcome — what you found or decided — and put the
+supporting detail after it. The shorthand you built up while working is yours,
+not theirs.
 
 Your role names the sections your artifact must have. Keep all of them even
-when one is short: an empty section is a claim that there was nothing, and that
-is different from having forgotten to look. Do not add sections beyond those.
+when one is short: an empty section is a claim that there was nothing, and
+that is different from having forgotten to look. Do not add sections beyond
+those.
 
 Write artifacts and any message a human will read in Russian.
 
