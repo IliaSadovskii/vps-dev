@@ -40,9 +40,10 @@ reviews were clean) — a human dragged the card back; otherwise — the
 review steps.
 
 The review steps. No hand-off opened the turn and neither
-`review-fixes.md` nor `pull-request.md` exists yet: the card arrived from `Security Review` after
-`Code Review`, your context is fresh, and the work is every finding in
-`code-review.md` and `security-review.md`. Record `Вызван: ревью`.
+`review-fixes.md` nor `pull-request.md` exists yet: the card arrived from
+`Security Review` after `Code Review`, your context is fresh, and the work
+is every finding in `code-review.md` and `security-review.md`. Record
+`Вызван: ревью`.
 
 A human. No hand-off opened the turn, but your previous `review-fixes.md`
 exists: someone at `Human Review` or `Done` wrote one or more notes there
