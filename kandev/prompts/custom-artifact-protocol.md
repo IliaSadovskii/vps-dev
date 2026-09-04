@@ -51,6 +51,22 @@ second `step_complete_kandev`. A direct question you can answer from what
 is already in front of you may be answered in a sentence; a request to
 change something is not acted on here.
 
+## A card that arrived without a reason
+
+Before doing anything on a column you have already worked on, establish
+why the card is here. Three signals count: a hand-off prompt from another
+role that moved the card; a human message in the task conversation newer
+than your previous artifact; or no previous artifact of yours at all,
+which means this is your first run. If none of the three holds — your
+artifact exists, nobody wrote anything since, no role sent you the card —
+the card was dragged here by hand without a note, possibly by accident
+from `Done`. Do not redo your work and do not guess at what changed. Write
+one Russian line asking what should be redone («Карточку вернули без
+заметки — что переделать?»), call no transition, and stop. The human
+either writes the note and the card continues, or drags it back where it
+was. A restart after a stall is a human note too: «перезапусти» with the
+reason is enough to proceed.
+
 ## The human's notes outrank the task text
 
 The task description you are handed at the start of every turn is the

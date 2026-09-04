@@ -94,6 +94,10 @@ open a draft pull request, push the branch and open one titled
 «Соглашения для агентов»; otherwise say plainly that the change is only
 committed locally and where.
 
+If the card comes back to `Conventions` and there is no human note newer
+than your last commit, it was dragged here without a reason: ask in one
+line what to change, call no transition, and stop.
+
 Once you have called `step_complete_kandev`, the card sits at `Review` and
 the human may write notes there before dragging it back. A note reaching
 you after your signal is not a task: answer in one short line that it is

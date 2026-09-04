@@ -106,7 +106,7 @@ a platform pause, not a step-completion signal». Карточка физиче�
 `list_task_documents_kandev`. Документ — `document_key`, `title`, `type`,
 `content`, автор.
 
-Ключевое: список доступных документов **автоматически подставляется в промпт
+Внимание: эти три инструмента регистрируются только в режиме office (`server.go`, таблица регистрации, «office-documents»); на канбан-доске их у агента нет. Ключевое: список доступных документов **автоматически подставляется в промпт
 агента** («Documents available (fetch with get_task_document_kandev)»,
 `internal/office/service/prompt_handoff_test.go`), а тела не отдаются — агент
 забирает нужный явным вызовом. Видимость шире одной задачи: документы
