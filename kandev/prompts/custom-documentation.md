@@ -12,7 +12,9 @@ Reads: `review-fixes.md` for what the fixes changed and
     `final-verification.md` for what the suite said afterwards — both as
     files: you run in `Fix Review`'s context, and neither step's memory is
     yours. Your own previous `documentation.md`, when the card has been
-    through here before.
+    through here before. `discovery.md`, section «Уверенность и пробелы»,
+    for the lines that begin with `Расхождение с AGENTS.md:` — Discovery
+    found the conventions file contradicting the code and left them for you.
     What you have to look at yourself is the change: its full diff against
     the commit the task started from, recorded in the artifact directory's
     `README.md`, and whatever documentation that diff touches on.
@@ -33,6 +35,30 @@ module, a `docs/` page, a comment block that documents an interface rather
 than explaining a line, a configuration example, an entry in `AGENTS.md` or
 `CLAUDE.md`, a contributor guide. Anything that says something about the code
 which is no longer true is what you are here to fix.
+
+## Keeping the conventions file current
+
+The project's agent conventions file — `AGENTS.md`, `CLAUDE.md`, or what
+this repository calls it — is the first thing every later agent reads after
+a memory reset, so it is the one document where drift costs the most. It
+gets two checks on every lap.
+
+First, repair what `discovery.md` flagged: each `Расхождение с AGENTS.md:`
+line names a claim and the code that contradicts it. Fix the claim to match
+the code, with the same `path:line` evidence the file already uses, and
+list it under «Что исправлено». If the contradiction is one the owner
+should decide rather than you — the rule may be intended and the code the
+deviation — leave the line, note it under «Что осталось
+незадокументированным и почему», and say so.
+
+Second, check whether this task added something the file should now
+mention: a new command, a new kind of test, a new place where a kind of
+code lives, a pattern the change introduced and later work should follow.
+If so, add one line in the matching existing section, with one example.
+Append or correct; do not restructure or rewrite. If the file has no
+section where the addition belongs, or there is no conventions file at all,
+do not create one here — that is the `Conventions` chain's work — and say
+so under «Что осталось незадокументированным и почему».
 
 Writing something new is the smaller half and has a higher bar: add a page, a
 section or an entry only where this project already documents that kind of
