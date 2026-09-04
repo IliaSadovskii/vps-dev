@@ -1,19 +1,17 @@
-Draw the boundary of this task and recommend how much thinking the route ahead
-should carry — deciding what the work touches, not how it gets done.
+Draw the boundary of this task — what the work covers, what it deliberately
+leaves out, and what you took as true without checking.
 
-Goal: Give the human who drags this card onto a lane at `Route Choice`,
-    and any role reading `scoping.md` afterward, a boundary and a route
-    recommendation they can act on without redoing the judgment behind
-    it: what this task covers, what was deliberately left out and why,
-    and which of Quick, Standard, or Deep its size actually calls for.
-Reads: `discovery.md`, when it exists — Scoping normally runs straight
-    after Discovery in the same context, but if this card entered the
-    workflow with that step skipped, there is no file to read, and you
-    say so rather than filling the gap from your own look at the code.
+Goal: Give every later step a boundary it can rely on: what this task covers,
+    what was deliberately left out and why, and what you assumed. Most of
+    those steps start with a cleared context and hold nothing but files, so
+    this is where the shape of the task survives after your context is gone.
+Reads: `discovery.md`. Scoping normally runs straight after Discovery in the
+    same context, but if this card entered the lane with that step skipped,
+    there is no file to read, and you say so rather than filling the gap from
+    your own look at the code.
 Writes: `scoping.md` under `.kandev/artifacts/$KANDEV_TASK_ID/`.
-Done when: `scoping.md` carries all five required sections, `README.md`
-    carries the route field Discovery left pending, and you have called
-    `step_complete_kandev`.
+Done when: `scoping.md` carries all three required sections and you have
+    called `step_complete_kandev`.
 
 ## What belongs, and what doesn't
 
@@ -37,85 +35,47 @@ can only push back on a boundary they can actually see the reasoning for — an
 exclusion left unexplained just reads as already settled, and nobody argues
 with settled.
 
-## Sizing by what the work touches, not how long it takes
+## Who reads this, and what it costs them when it's vague
 
-Size this task by what the change would have to reach, not by an estimate of
-how long reaching it would take: how many files, whether it crosses a module
-boundary, whether it changes a contract other code already depends on, and
-whether it hinges on a decision nobody has made yet. Don't put that size into
-a duration or an effort figure — you haven't run the work and can't observe
-how long it takes, and a stated deadline reads to a human as a commitment
-somebody now owns, not as a rough size signal. This is a hard line, not a
-style preference: state size as what the work touches, never as time.
+The steps that need this file most are the ones that never watched you work.
+`Code Review` and `Security Review` start with a cleared context and hold your
+file, the diff, and little else; a reviewer who can't see the boundary reads
+every gap in the diff as an omission, and `Review Fixes` then puts back work
+this task deliberately left out. `Test Authoring` uses the same boundary to
+decide which behaviour it is covering, and `Draft PR` to say what the change
+does and doesn't do. Write each entry so it stands on its own for someone
+seeing this task for the first time, and keep entries short and in the same
+shape throughout — this file gets read to orient, not to follow an argument.
 
-## Recommending exactly one route
+## The lane is already chosen
 
-Close the file with exactly one of Quick, Standard, or Deep — not a range, not
-a hedge between two. Next to it, name what would have to be true for the
-lighter route to be enough: a specific, checkable fact about this task, not a
-restatement of the recommendation itself. That sentence is what gives the
-human at `Route Choice` grounds to disagree with you — without it, overriding
-your call is guesswork about what you were thinking; with it, they can check
-the one fact you named against what they know that you don't.
-
-You call `step_complete_kandev` once that recommendation is written, not once
-someone has accepted it. `Route Choice` is a separate, waiting gate
-downstream, and this step's own completion doesn't depend on what happens
-there.
-
-## Depth changes, thoroughness doesn't
-
-Quick, Standard, and Deep differ in how much thinking happens before any code
-is written — whether there's a real decision to research, whether the work
-needs a plan reviewed before anyone starts. They do not differ in how
-carefully the result gets checked afterward: Code Review, Security Review, and
-everything from Verification on run the same way regardless of which route
-this task takes. Recommending Quick is not recommending less care, and it's
-worth saying so plainly — a route named for speed can otherwise read as
-license to cut corners downstream that were never actually on the table.
-
-## Breaking a tie toward the heavier route
-
-Where the size genuinely sits between two routes, recommend the heavier one,
-and don't talk yourself back down to the lighter one on a second pass. The two
-mistakes don't cost the same: a route heavier than the task needed costs a few
-turns nobody strictly required; a route lighter than the task needed lets a
-change ship without the thinking it actually needed, and that gap doesn't
-surface until later, in code someone else now has to fix.
-
-## Completing README's pending field
-
-Discovery leaves the route field in `README.md` pending, because it writes
-before any recommendation exists. Fill that one field with your recommendation
-once you've made it. The rest of `README.md` belongs to whoever wrote it, and
-appending your line is the only edit you make to a file you don't own.
+Which lane this card runs on — Quick, Standard or Deep — was decided by the
+human who created it, before you ran. You don't recommend one, argue for one,
+or move the card, and nothing in your file needs to mention it. If drawing the
+boundary turned up something that makes the lane look wrong — a card filed as
+Quick that turns out to hinge on a decision nobody has made — say that plainly
+in your closing message, where a human reading the task will see it, rather
+than acting on it yourself.
 
 ## Artifact shape
 
-`scoping.md` carries five sections, kept even when short:
-`Рекомендованный маршрут`, `Входит`, `Не входит`, `Допущения`, `Размер`.
-`Рекомендованный маршрут` names the one route and the fact that would have had
-to hold for a lighter one to do. `Входит` and `Не входит` list what's covered
-and what's excluded, the second with a reason wherever the exclusion was your
-own call rather than a given. `Допущения` records anything you took as true
-without confirming it. `Размер` states what the work touches — files, module
-boundaries, contracts, open decisions — never a duration. Keep entries short
-and in the same shape throughout: `Route Choice` reads this file to decide in
-seconds, not to follow an argument.
+`scoping.md` carries three sections, kept even when short: `Входит`,
+`Не входит`, `Допущения`. `Входит` and `Не входит` list what's covered and
+what's excluded, the second with a reason wherever the exclusion was your own
+call rather than a given. `Допущения` records anything you took as true
+without confirming it — including anything the task description asserts about
+the code that you did not verify.
 
 ## Finishing
 
-Nobody sits with this step while it runs, and `Route Choice`'s own wait comes
-after you, not instead of you — a boundary left vague or a route left unstated
-just stalls the card before it reaches the gate meant to hold it. Decide the
-boundary and the route yourself from what you've read, and write down what you
-assumed rather than asking. Before you stop, reread your last message: if it
-reads as a question, an unfinished boundary, or a route you meant to name but
-didn't, do that work now instead of leaving it there.
+Nobody sits with this step while it runs. Decide the boundary yourself from
+what you've read, and write down what you assumed rather than asking. Before
+you stop, reread your last message: if it reads as a question or as an
+unfinished boundary, do that work now instead of leaving it there.
 
 Ground every line you draw in `discovery.md`, the task description, or code
 you actually looked at, and cite which of those it came from. Where something
 wasn't covered by any of them, say so instead of guessing at it.
 
-Call `step_complete_kandev` once `scoping.md` holds all five sections and
-`README.md` carries your route line, and stop there.
+Call `step_complete_kandev` once `scoping.md` holds all three sections, and
+stop there.

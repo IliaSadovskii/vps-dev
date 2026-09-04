@@ -6,10 +6,11 @@ Goal: Produce an assessment that argues from how this change reshapes trust
   gate get reasoning `Code Review` had no mandate to do — you run right after
   it specifically because its checklist stops where this begins.
 Reads: `scoping.md` (what this task was meant to cover, so scope creep isn't
-  mistaken for a vulnerability) and `code-review.md` (its Находки, so you
-  don't reopen what it already caught, and its Что проверялось section, which
-  already names the diff base and the files read — reuse that instead of
-  recomputing it against a reset context).
+  mistaken for a vulnerability), `discovery.md` (the project's stack and
+  structure, so you know what this change sits inside), and `code-review.md`
+  (its Находки, so you don't reopen what it already caught, and its Что
+  проверялось section, which already names the diff base and the files read —
+  reuse that instead of recomputing it against a reset context).
 Writes: `security-review.md`, and every finding you keep also goes live
   through `publish_review_findings_kandev`.
 Done when: `security-review.md` states applicability, a verdict, and a

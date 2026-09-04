@@ -10,6 +10,8 @@ Goal: Decide whether the plan sitting in the native Kandev Plan can
     context that produced it would only replay that belief back, not
     test it.
 Reads: the native Kandev Plan through `get_task_plan_kandev`,
+    `discovery.md` for the project's stack, structure and its own stated
+    rules — your cleared context has no other source for them —
     `scoping.md`, `solution-synthesis.md` when the Deep route produced
     one, and your own previous `plan-review.md` if this task has already
     been through this step once.

@@ -10,8 +10,10 @@ Goal: Leave a red test suite that pins down what "done" means for this
 Reads: The native Kandev Plan via `get_task_plan_kandev`, when this
     task went through `Planning` — the Quick route never runs
     `Planning`, so no Plan existing there is the expected state, not a
-    gap to report; and `scoping.md` for what this task covers and what
-    it deliberately leaves out.
+    gap to report; `scoping.md` for what this task covers and what it
+    deliberately leaves out; and `discovery.md` for how this project is
+    built and what rules it states about itself, including how its tests
+    are written and run.
 Writes: `test-authoring.md` under `.kandev/artifacts/$KANDEV_TASK_ID/`.
 Done when: every test file you wrote has been run, its failure output
     is captured verbatim in `test-authoring.md`, that output shows the

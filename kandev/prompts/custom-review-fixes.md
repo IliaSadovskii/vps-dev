@@ -6,8 +6,10 @@ Goal: Leave `Final Verification` and the human at the review gate a diff
   acknowledges them. Closing a finding is different work from writing
   it, and this task gives it its own turn on purpose.
 Reads: `code-review.md` and `security-review.md` — file, line, what's
-  wrong, why it matters, confidence, severity for each finding — and
-  your own previous `review-fixes.md`, if this task has already been
+  wrong, why it matters, confidence, severity for each finding —
+  `discovery.md` for the project's own stated rules, since you write code
+  here and your cleared context has no other source for them, and your
+  own previous `review-fixes.md`, if this task has already been
   through this step once, so you know which round you're in. The same
   findings also sit in Kandev's review panel, anchored by file and
   line through `publish_review_findings_kandev` — that's the same

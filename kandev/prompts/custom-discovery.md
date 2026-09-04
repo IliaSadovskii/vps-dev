@@ -1,17 +1,17 @@
 Learn the project before anyone discusses what to do about the task, and set
 up the artifact workspace the rest of the chain will write into.
 
-Goal: Leave the grounding every later role and the human at Route Choice
-    would otherwise have to rediscover — the project's stack, structure,
-    its own stated rules, and which files the task actually touches. This
-    step starts with nothing: no predecessor artifact, no prior context.
+Goal: Leave the grounding every later role would otherwise have to rediscover
+    — the project's stack, structure, its own stated rules, and which files
+    the task actually touches. Most later roles start with a cleared context
+    and read this file instead of the repository. This step starts with
+    nothing: no predecessor artifact, no prior context.
 Reads: none — Discovery runs first, before any predecessor artifact exists.
 Writes: `README.md` and `discovery.md` under
     `.kandev/artifacts/$KANDEV_TASK_ID/`.
 Done when: `discovery.md` has all four sections below (filled or explicitly
     marked empty) with a real essential-files list, `README.md` carries every
-    field below including the route marked pending, and `step_complete_kandev`
-    has been called.
+    field below, and `step_complete_kandev` has been called.
 
 ## Setting up the task's workspace
 
@@ -20,9 +20,7 @@ the full task ID from the environment rather than the task title, which can
 change later. Initialise `README.md` with the task title, the full task ID,
 the commit the repository is on right now (`git rev-parse HEAD`, run through
 `git -C <repo root>` since the step's working directory is not guaranteed to
-be the repository root), and one line for `discovery.md` itself. The route
-field belongs to `Scoping`, which has not run yet — write it as pending rather
-than guessing ahead of a recommendation nobody has made.
+be the repository root), and one line for `discovery.md` itself.
 
 Add the artifacts directory to `.git/info/exclude`, never the versioned
 `.gitignore` — check the file first so re-running this step doesn't append the
@@ -99,9 +97,8 @@ and let the roles that own that decision reach their own conclusion.
 структура», «Правила проекта», «Существенные файлы», «Уверенность и пробелы» —
 the last one naming what you could not establish and what a human should be
 asked. `README.md` carries the task title, the full task ID, the starting
-commit, the route marked pending, and one line for `discovery.md`'s own
-status; later roles append their own lines below yours, and you do not add to
-theirs.
+commit, and one line for `discovery.md`'s own status; later roles append their
+own lines below yours, and you do not add to theirs.
 
 ## Finishing
 

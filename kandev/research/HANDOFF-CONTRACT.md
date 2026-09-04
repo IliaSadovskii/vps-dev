@@ -39,6 +39,11 @@
 Колонка «читает» — обязательные входы. Всё, что не перечислено, роль не читает,
 даже если файл существует.
 
+`discovery.md` стоит во входах у каждой роли со сброшенным контекстом: правила
+и структура проекта иначе теряются на границе сброса, и роль судит код по
+привычке, а не по конвенциям этого репозитория. Роли, которые продолжают чужой
+контекст, его не перечитывают — он у них уже есть.
+
 | Роль | Контекст | Читает | Пишет |
 |---|---|---|---|
 | Discovery | продолжает | — | `README.md`, `discovery.md` |
@@ -47,13 +52,13 @@
 | Targeted Research | продолжает | `decision-mapping.md` | `targeted-research.md` |
 | Solution Synthesis | продолжает | `decision-mapping.md`, `targeted-research.md`, `discovery.md` | `solution-synthesis.md` |
 | Planning | продолжает | нативный Plan (обязательно до записи), `scoping.md`, `solution-synthesis.md` если есть | нативный Kandev Plan |
-| Plan Review | **сброшен** | нативный Plan, `scoping.md`, `solution-synthesis.md` если есть, свой прошлый `plan-review.md` | `plan-review.md`, при блокирующем вердикте — возврат на `Planning` |
-| Test Authoring | сброшен в Standard и Deep, продолжает в Quick | нативный Plan если есть, `scoping.md` | `test-authoring.md` |
+| Plan Review | **сброшен** | нативный Plan, `discovery.md`, `scoping.md`, `solution-synthesis.md` если есть, свой прошлый `plan-review.md` | `plan-review.md`, при блокирующем вердикте — возврат на `Planning` |
+| Test Authoring | сброшен в Standard и Deep, продолжает в Quick | нативный Plan если есть, `scoping.md`, `discovery.md` | `test-authoring.md` |
 | Implementation | продолжает | — (тот же контекст, что Test Authoring) | своего файла нет, см. ниже |
 | Verification | продолжает | — | `verification.md` |
-| Code Review | **сброшен** | `scoping.md`, `verification.md`, нативный Plan если есть | `code-review.md` + `publish_review_findings_kandev` |
-| Security Review | **сброшен** | `scoping.md`, `code-review.md` | `security-review.md` + `publish_review_findings_kandev` |
-| Review Fixes | **сброшен** | `code-review.md`, `security-review.md`, находки в Kandev, свой прошлый `review-fixes.md` | `review-fixes.md` |
+| Code Review | **сброшен** | `scoping.md`, `discovery.md`, `verification.md`, нативный Plan если есть | `code-review.md` + `publish_review_findings_kandev` |
+| Security Review | **сброшен** | `scoping.md`, `discovery.md`, `code-review.md` | `security-review.md` + `publish_review_findings_kandev` |
+| Review Fixes | **сброшен** | `code-review.md`, `security-review.md`, `discovery.md`, находки в Kandev, свой прошлый `review-fixes.md` | `review-fixes.md` |
 | Final Verification | продолжает | `verification.md`, `review-fixes.md`, свой прошлый `final-verification.md` | `final-verification.md`, при провале — возврат на `Review Fixes` |
 | Draft PR | продолжает | `scoping.md`, `final-verification.md`, `review-fixes.md` | `pull-request.md` |
 
@@ -102,14 +107,14 @@
 отсутствие данных. Роль не добавляет разделов сверх перечисленных.
 
 **`README.md`** — индекс. Заголовок задачи, полный `KANDEV_TASK_ID`, исходный
-коммит, выбранный маршрут (дописывает `Scoping`), список созданных артефактов
-со статусом.
+коммит, список созданных артефактов со статусом. Поля маршрута нет: дорожку
+выбирает человек, заводя карточку, и ни одна роль это поле не читала — глубину
+все определяют по наличию входных файлов.
 
 **`discovery.md`** — Стек и структура · Правила проекта · Существенные файлы ·
 Уверенность и пробелы.
 
-**`scoping.md`** — Рекомендованный маршрут · Входит · Не входит · Допущения ·
-Размер.
+**`scoping.md`** — Входит · Не входит · Допущения.
 
 **`decision-mapping.md`** — Развилки (по каждой: формулировка выбора, критерий
 решения, что уже задано проектом) · Мнимые развилки и почему отброшены.

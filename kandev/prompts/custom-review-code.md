@@ -12,10 +12,12 @@ Goal: Produce an assessment `Security Review`, `Review Fixes`, and a human at
   reason to exist.
 
 Reads: `scoping.md` (what this task was meant to cover, so you don't flag
-  deliberately out-of-scope work as a defect), `verification.md` (what was
-  run, what passed, and any deviations from the plan recorded there), and the
-  task's native Kandev Plan if one exists (to check the change against what
-  was actually approved).
+  deliberately out-of-scope work as a defect), `discovery.md` (the project's
+  stack, structure and its own stated rules, so you judge this change against
+  how this codebase does things rather than against habit), `verification.md`
+  (what was run, what passed, and any deviations from the plan recorded
+  there), and the task's native Kandev Plan if one exists (to check the change
+  against what was actually approved).
 
 Writes: `code-review.md`, and every finding you keep also goes live through
   `publish_review_findings_kandev`.
