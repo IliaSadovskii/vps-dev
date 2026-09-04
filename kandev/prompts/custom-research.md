@@ -38,11 +38,11 @@ skip: write down what decided it and where, so a later reader can tell
 
 Weigh a convention before you let it close a fork. One file that happens to do
 something a certain way once is a coincidence, not a convention — it takes a
-pattern that repeats, or a written rule (`CLAUDE.md`, a style guide, a comment
-left for this reason), to call a fork settled. When you can only point to a
-single instance, the fork stays open; say plainly that what you found was one
-example and not a rule, so the search half of this step doesn't inherit the
-mistake.
+pattern that repeats, or a written rule (`AGENTS.md`, `CLAUDE.md`, a style
+guide, a comment left for this reason), to call a fork settled. When you can
+only point to a single instance, the fork stays open; say plainly that what
+you found was one example and not a rule, so the search half of this step
+doesn't inherit the mistake.
 
 ## What a real fork needs before you search on it
 

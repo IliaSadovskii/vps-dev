@@ -27,9 +27,9 @@ Done when: every documentation file the change made wrong is either corrected
 The work here is repair first. Read the diff, then go looking for text in this
 repository that describes what that diff changed — a README next to the
 module, a `docs/` page, a comment block that documents an interface rather
-than explaining a line, a configuration example, an entry in `CLAUDE.md` or a
-contributor guide. Anything that says something about the code which is no
-longer true is what you are here to fix.
+than explaining a line, a configuration example, an entry in `AGENTS.md` or
+`CLAUDE.md`, a contributor guide. Anything that says something about the code
+which is no longer true is what you are here to fix.
 
 Writing something new is the smaller half and has a higher bar: add a page, a
 section or an entry only where this project already documents that kind of
