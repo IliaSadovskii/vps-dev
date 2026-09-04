@@ -19,8 +19,14 @@ workflows:
       - name: Backlog
         position: 0
         color: bg-neutral-400
-        prompt: |
-          @custom-gate
+        prompt: &gate |
+          Эта колонка — ворота человека. Человек думает вслух; ты здесь не
+          работаешь. Сообщение здесь — заметка для той роли, которой человек
+          перетащит карточку; она прочитает все заметки разом. Ответь одной
+          строкой по-русски, что заметка записана и её прочитает следующая роль.
+          Ничего не открывай, не меняй, не коммить, не вызывай step_complete_kandev
+          и move_task_kandev: карточку двигает человек. На прямой вопрос, ответ на
+          который уже есть в этом разговоре, ответь одним-двумя предложениями.
         events: {}
         is_start_step: true
         show_in_command_panel: false
@@ -51,8 +57,7 @@ workflows:
       - name: Review
         position: 2
         color: bg-yellow-500
-        prompt: |
-          @custom-gate
+        prompt: *gate
         events: {}
         is_start_step: false
         show_in_command_panel: true
@@ -63,8 +68,7 @@ workflows:
       - name: Done
         position: 3
         color: bg-green-500
-        prompt: |
-          @custom-gate
+        prompt: *gate
         events: {}
         is_start_step: false
         show_in_command_panel: false

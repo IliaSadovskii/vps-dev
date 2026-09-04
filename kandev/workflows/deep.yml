@@ -38,8 +38,14 @@ workflows:
         color: bg-neutral-400
         # Промпт ворот: сообщение в карточке на Backlog не должно запускать
         # работу без роли.
-        prompt: |
-          @custom-gate
+        prompt: &gate |
+          Эта колонка — ворота человека. Человек думает вслух; ты здесь не
+          работаешь. Сообщение здесь — заметка для той роли, которой человек
+          перетащит карточку; она прочитает все заметки разом. Ответь одной
+          строкой по-русски, что заметка записана и её прочитает следующая роль.
+          Ничего не открывай, не меняй, не коммить, не вызывай step_complete_kandev
+          и move_task_kandev: карточку двигает человек. На прямой вопрос, ответ на
+          который уже есть в этом разговоре, ответь одним-двумя предложениями.
         events: {}
         is_start_step: true
         show_in_command_panel: false
@@ -143,8 +149,7 @@ workflows:
         # столько заметок, сколько нужно, и перетащить карточку на Solution
         # Synthesis, когда мысль закончена. Сообщение здесь агента не
         # двигает: колонка отвечает «записал» и ждёт (решение 39).
-        prompt: |
-          @custom-gate
+        prompt: *gate
         events: {}
         is_start_step: false
         show_in_command_panel: true
@@ -203,8 +208,7 @@ workflows:
         # Принять: перетащить вправо, на Test Authoring. Возразить: написать
         # заметки и перетащить карточку на Planning — единственного владельца
         # нативного Plan; план снова пройдёт Plan Review.
-        prompt: |
-          @custom-gate
+        prompt: *gate
         events: {}
         is_start_step: false
         show_in_command_panel: true
@@ -437,8 +441,7 @@ workflows:
         # Fixes — хвост до PR пройдёт снова. Если менялся план или сама
         # задача — на Planning или Scoping: только человек знает, что
         # именно передумал.
-        prompt: |
-          @custom-gate
+        prompt: *gate
         events: {}
         is_start_step: false
         show_in_command_panel: true
@@ -451,8 +454,7 @@ workflows:
         color: bg-green-500
         # Переоткрыть: написать, что изменилось, и перетащить на Review
         # Fixes, тем же путём, что и с Human Review.
-        prompt: |
-          @custom-gate
+        prompt: *gate
         events: {}
         is_start_step: false
         show_in_command_panel: false
