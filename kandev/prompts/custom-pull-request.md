@@ -72,7 +72,7 @@ Confirm the branch is pushed before anything else here — nothing earlier in
 this chain has guaranteed that, and a PR can't open against a branch the
 remote doesn't have. Check whether a PR already exists for this branch
 (`gh pr list --head <branch>`, or the equivalent on GitLab) before creating
-one. This step runs again on every rework lap — a message written at
+one. This step runs again on every rework lap — a human unhappy at
 `Human Review` sends the card back to `Review Fixes`, and the chain returns
 here — so a repeat visit is the ordinary case, not an anomaly. When a PR is
 already open for this branch, do not create a second one: bring its title and

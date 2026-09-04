@@ -69,11 +69,11 @@ the boundary it drew is not.
 
 ## When a human sent this card back
 
-`Solution Approval` waits after you, and a message written there sends the
-card back here. Your context is not cleared on that return, so the objection
-is in front of you in this same conversation — but `solution-synthesis.md` is
-not: you are about to overwrite the file that recorded what you chose last
-round.
+`Solution Approval` waits after you, and a human who disagrees writes why and
+drags the card back here. Your context is not cleared on that return, so the
+objection is in front of you in this same conversation — but
+`solution-synthesis.md` is not: you are about to overwrite the file that
+recorded what you chose last round.
 
 So read your previous `solution-synthesis.md` before you write, and keep what
 the objection did not touch. What changes is the decision the person argued

@@ -128,11 +128,10 @@ workflows:
       - name: Solution Approval
         position: 5
         color: bg-orange-500
-        # Сообщение здесь возвращает карточку на Solution Synthesis: контекст
-        # там не сброшен, так что возражение агент видит в том же разговоре.
-        events:
-          on_turn_start:
-            - type: move_to_previous
+        # Возврат на доработку — вручную: написать замечание и перетащить
+        # карточку на Solution Synthesis. Автоматический возврат по сообщению
+        # (`on_turn_start`) здесь стоял и убран — см. решение 21.
+        events: {}
         is_start_step: false
         show_in_command_panel: true
         allow_manual_move: true
@@ -184,14 +183,10 @@ workflows:
       - name: Plan Approval
         position: 8
         color: bg-orange-500
-        # Сообщение возвращает на Planning, а не на предыдущую колонку:
+        # Возврат — вручную на Planning, а не на предыдущую колонку:
         # переписывать План имеет право только он, и с него карточка снова
         # пройдёт Plan Review.
-        events:
-          on_turn_start:
-            - type: move_to_step
-              config:
-                step_position: 6
+        events: {}
         is_start_step: false
         show_in_command_panel: true
         allow_manual_move: true
@@ -385,14 +380,11 @@ workflows:
       - name: Human Review
         position: 18
         color: bg-yellow-500
-        # Сообщение здесь — это доработка: карточка уходит на Review Fixes,
-        # а оттуда снова через Final Verification, Documentation и Draft PR.
-        # Review Fixes читает разговор задачи, потому что его контекст сброшен.
-        events:
-          on_turn_start:
-            - type: move_to_step
-              config:
-                step_position: 14
+        # Доработка: написать замечание и перетащить карточку на Review
+        # Fixes. Оттуда правка снова пойдёт через Final Verification,
+        # Documentation и Draft PR. Review Fixes читает разговор задачи,
+        # потому что его контекст сброшен, и замечание найдёт там.
+        events: {}
         is_start_step: false
         show_in_command_panel: true
         allow_manual_move: true
@@ -402,13 +394,9 @@ workflows:
       - name: Done
         position: 19
         color: bg-green-500
-        # Сообщение переоткрывает завершённую задачу тем же путём, что и
-        # доработка с Human Review.
-        events:
-          on_turn_start:
-            - type: move_to_step
-              config:
-                step_position: 14
+        # Переоткрыть завершённую задачу — перетаскиванием на Review Fixes,
+        # тем же путём, что и доработка с Human Review.
+        events: {}
         is_start_step: false
         show_in_command_panel: false
         allow_manual_move: true

@@ -59,7 +59,7 @@ the change breaks one of those, it is a real failure and belongs in
 
 ## Running more than once
 
-A message written at `Human Review` sends the card back to `Review Fixes`, and
+A human unhappy at `Human Review` sends the card back to `Review Fixes`, and
 the chain comes through here again. So a `documentation.md` you already wrote
 may exist, and documentation you already corrected may be exactly right. Read
 your own previous file first when there is one: what it lists under «Что

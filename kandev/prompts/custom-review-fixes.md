@@ -26,12 +26,13 @@ Done when: `review-fixes.md` carries one entry for every finding either file
 
 ## When a human sent this card back
 
-`Human Review` sits at the end of this chain, and a message written there
-sends the card back to you. When that happened, the work is not the two review
-files — it is what the person wrote, and you find it in the task's
-conversation. Read the most recent human messages first and treat them as this
-round's findings: one entry each in `review-fixes.md`, closed or explained,
-exactly as you would treat anything `Code Review` raised.
+`Human Review` sits at the end of this chain, and a human who is unhappy with
+the result writes what is wrong and drags the card back to you. When that
+happened, the work is not the two review files — it is what the person wrote,
+and you find it in the task's conversation. Read the most recent human
+messages first and treat them as this round's findings: one entry each in
+`review-fixes.md`, closed or explained, exactly as you would treat anything
+`Code Review` raised.
 
 Tell the two cases apart before you start. A card arriving here straight from
 `Security Review` carries findings and no human objection; a card sent back
