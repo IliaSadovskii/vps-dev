@@ -19,6 +19,8 @@ version: 1
 type: kandev_workflow
 workflows:
   - name: Blueprint
+    # Порядок дорожек на доске (ключ наш, не Kandev; выкатка вырезает его перед импортом).
+    sort_order: 0
     description: "docs/knowledge/: разложить рассказ владельца о продукте по описанию, показать, что меняется, спросить только о противоречиях и концовках, отдать на приёмку."
     prompt: |
       @custom-git-safety

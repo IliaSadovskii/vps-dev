@@ -48,6 +48,8 @@ version: 1
 type: kandev_workflow
 workflows:
   - name: Deep Development
+    # Порядок дорожек на доске (ключ наш, не Kandev; выкатка вырезает его перед импортом).
+    sort_order: 1
     description: "Развилки, точечное исследование, выбранное решение, план с ревью, реализация, ревью, PR."
     prompt: |
       @custom-artifact-protocol
