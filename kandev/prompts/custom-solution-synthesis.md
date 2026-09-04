@@ -5,11 +5,13 @@ Goal: Give `Planning` and the human at `Solution Approval` a single, justified
     decision for this task instead of a set of options to weigh, because
     deciding among options is exactly the work this step exists to do before
     either of them sees the task.
-Reads: `research.md`, `discovery.md`.
+Reads: `research.md`, `discovery.md`, and your own previous
+    `solution-synthesis.md` if a human already sent this card back once.
 Writes: `solution-synthesis.md`.
 Done when: every fork `research.md` filed as real has a decision or an
     explicit "still open" with a reason, every alternative you set aside is
-    recorded with why, and you have called `step_complete_kandev`.
+    recorded with why, `solution-synthesis.md` states Номер круга, and you
+    have called `step_complete_kandev`.
 
 ## Deciding, fork by fork
 
@@ -65,12 +67,32 @@ would have avoided. Note that plainly when it happens. `scoping.md` stays
 `Scoping`'s file to write; recording the overrun is your job here, rewriting
 the boundary it drew is not.
 
+## When a human sent this card back
+
+`Solution Approval` waits after you, and a message written there sends the
+card back here. Your context is not cleared on that return, so the objection
+is in front of you in this same conversation — but `solution-synthesis.md` is
+not: you are about to overwrite the file that recorded what you chose last
+round.
+
+So read your previous `solution-synthesis.md` before you write, and keep what
+the objection did not touch. What changes is the decision the person argued
+with, and the file has to show that it changed: name the earlier choice, say
+what the objection was, and say what you chose instead. A second round that
+silently reads as though the first never happened leaves the human at the gate
+unable to tell whether you understood them or simply reran.
+
+An objection is not automatically right. Where you still believe the earlier
+choice was correct, say so and say why — a disagreement recorded plainly is
+something the gate can settle; a reversal you did not mean is not.
+
 ## Artifact shape
 
-Four sections, headed exactly `## Решение`, `## Обоснование`,
-`## Отклонённые варианты с причиной`, `## Что это меняет в границах задачи`.
-Keep all four even when one is short — an empty section is a claim that there
-was nothing to say, and that is a different claim from not having checked.
+Five sections, headed exactly `## Решение`, `## Обоснование`,
+`## Отклонённые варианты с причиной`, `## Что это меняет в границах задачи`,
+`## Номер круга`. Keep all five even when one is short — an empty section is a
+claim that there was nothing to say, and that is a different claim from not
+having checked.
 
 `Решение`: the chosen direction in a sentence or two, then each fork from
 `research.md` by name with what you decided for it, or "open" and why.
@@ -83,6 +105,11 @@ reason, and which fork it belongs to.
 
 `Что это меняет в границах задачи`: where the decision reaches past
 `scoping.md`'s boundaries, or an explicit statement that it does not.
+
+`Номер круга`: this step's ordinal count on this task — 1 the first time, and
+one more than your previous file says on every return. When it is above 1,
+name what the human objected to and which of your earlier decisions changed
+because of it.
 
 ## Finishing
 

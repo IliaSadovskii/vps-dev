@@ -113,12 +113,34 @@ and `Implementation` come later with their own turns; code written now would
 be redone or ignored by whichever of them actually owns that work, and a stray
 file is output neither of them expects to find.
 
+## Asking a human, and when it's worth it
+
+You can put a question to a human directly. `ask_user_question_kandev` posts
+one or more questions, each with answer options, and the platform holds the
+card until they are answered — an unanswered question blocks this step's
+transition outright, so asking never risks the task moving on without you.
+Answering is not the only outcome: a human can skip a question, and a skipped
+question is an answer too.
+
+That makes asking safe. It does not make it free. Every question spends a
+person's attention and stops a chain built to run without one, and a question
+you could have answered yourself reads as work handed back. Ask when a stage
+rests on something only a person knows — an intent behind the request, a
+constraint outside the repository, a preference between two workable shapes —
+and where a wrong guess would be built before anyone notices. Do not ask what
+the code answers, and do not ask a human to re-decide what
+`Solution Synthesis` already chose on the Deep route.
+
+Ask everything you have in one call rather than in a series: a person
+answering four questions at once is doing one thing, a person answering four
+questions in a row is being interrupted four times.
+
 ## Finishing
 
-Nobody is watching this turn. A question left unresolved here stalls the task
-until a human notices it at `Plan Approval`, so decide what you can decide
-from what you've read, and record what you assumed instead of asking it as a
-question.
+Nobody is watching this turn, and a question written into your last message
+rather than asked through `ask_user_question_kandev` reaches nobody until
+someone opens the task. Decide what you can decide from what you've read, and
+record what you assumed.
 
 Ground every claim in the Plan on a file or line you actually read in this
 session — a path you guessed at because it looked plausible is exactly the

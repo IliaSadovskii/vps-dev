@@ -155,15 +155,39 @@ a link or a `path:line`; and its origin label.
 `## Что осталось невыясненным` — the forks still open after a genuine search,
 named plainly rather than folded into the entries above.
 
+## Asking a human, and when it's worth it
+
+You can put a question to a human directly. `ask_user_question_kandev` posts
+one or more questions, each with answer options, and the platform holds the
+card until they are answered — an unanswered question blocks this step's
+transition outright, so asking never risks the task moving on without you.
+Answering is not the only outcome: a human can skip a question, and a skipped
+question is an answer too.
+
+That makes asking safe. It does not make it free. Every question spends a
+person's attention and stops a chain built to run without one, and a question
+you could have answered yourself reads as work handed back. Ask when a fork's
+criterion turns on a preference nobody wrote down — which of two working
+approaches this project would rather live with, whether a dependency is
+acceptable to take on — and no amount of reading or searching can settle it.
+Do not ask what a search would answer: that is this step's own work. Do not
+ask a human to choose the fork either; you are collecting what closes it, and
+`Solution Synthesis` decides.
+
+Ask everything you have in one call rather than in a series: a person
+answering four questions at once is doing one thing, a person answering four
+questions in a row is being interrupted four times.
+
 ## Finishing
 
-Nobody watches this step happen, and a question left in your last message
-stalls the task until someone notices it. Sort what you found and search what
-you sorted, and where you're unsure whether a fork is real, keep it: a
-discarded fork written down can be checked later, one you never mention can't
-be. Before you stop, reread your last message — if it reads as a question, a
-plan to search further, or a promise to add an entry rather than the entry
-itself, do that work now instead of leaving it described.
+Nobody watches this step happen, and a question written into your last message
+rather than asked through `ask_user_question_kandev` reaches nobody. Sort what
+you found and search what you sorted, and where you're unsure whether a fork
+is real, keep it: a discarded fork written down can be checked later, one you
+never mention can't be. Before you stop, reread your last message — if it
+reads as a question you never actually asked, a plan to search further, or a
+promise to add an entry rather than the entry itself, do that work now instead
+of leaving it described.
 
 Ground every fork, criterion and discard reason in something you actually read
 in `scoping.md`, `discovery.md` or the code, and every finding in a source you

@@ -1,26 +1,48 @@
 Turn what `Code Review` and `Security Review` raised into the narrowest fixes
 that close it, or record exactly why a finding gets none.
 
-Goal: Leave `Final Verification` and the human at the review gate a diff
-  that has actually answered the two review steps, not one that merely
-  acknowledges them. Closing a finding is different work from writing
-  it, and this task gives it its own turn on purpose.
-Reads: `code-review.md` and `security-review.md` — file, line, what's
-  wrong, why it matters, confidence, severity for each finding —
-  `discovery.md` for the project's own stated rules, since you write code
-  here and your cleared context has no other source for them, and your
-  own previous `review-fixes.md`, if this task has already been
-  through this step once, so you know which round you're in. The same
-  findings also sit in Kandev's review panel, anchored by file and
-  line through `publish_review_findings_kandev` — that's the same
-  content built for a human glancing at the diff, not a second source;
-  the two files carry the reasoning, so read those.
+Goal: Leave `Final Verification` and the human at the review gate a diff that
+    has actually answered the two review steps, not one that merely
+    acknowledges them. Closing a finding is different work from writing it,
+    and this task gives it its own turn on purpose.
+Reads: `code-review.md` and `security-review.md` — file, line, what's wrong,
+    why it matters, confidence, severity for each finding — `discovery.md` for
+    the project's own stated rules, since you write code here and your cleared
+    context has no other source for them, and your own previous
+    `review-fixes.md`, if this task has already been through this step once,
+    so you know which round you're in, and the task's own conversation through
+    `get_task_conversation_kandev` — your context was cleared, and a human's
+    own objection reaches you through nothing else. The same findings also sit
+    in Kandev's review panel, anchored by file and line through
+    `publish_review_findings_kandev` — that's the same content built for a
+    human glancing at the diff, not a second source; the two files carry the
+    reasoning, so read those.
 Writes: `review-fixes.md`.
-Done when: `review-fixes.md` carries one entry for every finding either
-  file kept and states Номер круга, every commit you made carries the
-  trailer `Kandev-Step: Review Fixes`, names explicit paths, and
-  touches no test file, and `step_complete_kandev` has been called.
+Done when: `review-fixes.md` carries one entry for every finding either file
+    kept and for every objection a human raised in this round, and states
+    Номер круга, every commit you made carries the trailer
+    `Kandev-Step: Review Fixes`, names explicit paths, and touches no test
+    file, and `step_complete_kandev` has been called.
 
+## When a human sent this card back
+
+`Human Review` sits at the end of this chain, and a message written there
+sends the card back to you. When that happened, the work is not the two review
+files — it is what the person wrote, and you find it in the task's
+conversation. Read the most recent human messages first and treat them as this
+round's findings: one entry each in `review-fixes.md`, closed or explained,
+exactly as you would treat anything `Code Review` raised.
+
+Tell the two cases apart before you start. A card arriving here straight from
+`Security Review` carries findings and no human objection; a card sent back
+from `Human Review` carries an objection and findings that were already
+answered in an earlier round — reopening those wastes the round and undoes
+work someone accepted. Where the human's objection contradicts a finding you
+closed earlier, the human wins, and you say plainly in your entry which
+earlier decision you reversed.
+
+A human's message is not the task description. It is a person addressing this
+change, in this chain, on purpose — directive in a way the task text is not.
 ## Classify before you touch anything
 
 Take every finding in both files and decide, one at a time, whether it asks
@@ -102,11 +124,12 @@ gone around.
 
 `review-fixes.md`:
 
-- По каждому замечанию — one entry per finding from either file: which
-  file it came from, the finding restated in one line, whether it was
-  actionable, and what happened to it — fixed (name the commit),
-  judged wrong (say why), or set aside because it needed a test change
-  or an owner's decision.
+- По каждому замечанию — one entry per finding from either file, and per
+  objection a human raised in the task's conversation this round: where it
+  came from (which file, or the person), the finding restated in one line,
+  whether it was actionable, and what happened to it — fixed (name the
+  commit), judged wrong (say why), or set aside because it needed a test
+  change or an owner's decision.
 - Что намеренно не тронуто — for each fix you made, anything adjacent
   you noticed and chose not to change even though it looked related;
   if you made no fixes at all this round, say that plainly.

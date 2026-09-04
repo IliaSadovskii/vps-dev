@@ -44,20 +44,25 @@
 привычке, а не по конвенциям этого репозитория. Роли, которые продолжают чужой
 контекст, его не перечитывают — он у них уже есть.
 
+По той же причине у всех ролей со сброшенным контекстом во входах стоит
+разговор задачи через `get_task_conversation_kandev`: сообщения человека живут
+только там, и сброс их обрывает. Роли с тёплым контекстом видят сообщения
+прямо в разговоре и инструмент не вызывают.
+
 | Роль | Контекст | Читает | Пишет |
 |---|---|---|---|
 | Discovery | продолжает | — | `README.md`, `discovery.md` |
 | Scoping | продолжает | `discovery.md` (если разведку делал не он) | `scoping.md` |
 | Research | продолжает | `scoping.md`, `discovery.md` | `research.md` |
-| Solution Synthesis | продолжает | `research.md`, `discovery.md` | `solution-synthesis.md` |
+| Solution Synthesis | продолжает | `research.md`, `discovery.md`, свой прошлый `solution-synthesis.md` при возврате | `solution-synthesis.md` |
 | Planning | продолжает | нативный Plan (обязательно до записи), `scoping.md`, `solution-synthesis.md` если есть | нативный Kandev Plan |
-| Plan Review | **сброшен** | нативный Plan, `discovery.md`, `scoping.md`, `solution-synthesis.md` если есть, свой прошлый `plan-review.md` | `plan-review.md`, при блокирующем вердикте — возврат на `Planning` |
-| Test Authoring | сброшен в Standard и Deep, продолжает в Quick | нативный Plan если есть, `scoping.md`, `discovery.md` | `test-authoring.md` |
+| Plan Review | **сброшен** | нативный Plan, `discovery.md`, `scoping.md`, `solution-synthesis.md` если есть, свой прошлый `plan-review.md`, разговор задачи | `plan-review.md`, при блокирующем вердикте — возврат на `Planning` |
+| Test Authoring | сброшен в Standard и Deep, продолжает в Quick | нативный Plan если есть, `scoping.md`, `discovery.md`, разговор задачи | `test-authoring.md` |
 | Implementation | продолжает | — (тот же контекст, что Test Authoring) | своего файла нет, см. ниже |
 | Verification | продолжает | — | `verification.md` |
-| Code Review | **сброшен** | `scoping.md`, `discovery.md`, `verification.md`, нативный Plan если есть | `code-review.md` + `publish_review_findings_kandev` |
-| Security Review | **сброшен** | `scoping.md`, `discovery.md`, `code-review.md` | `security-review.md` + `publish_review_findings_kandev` |
-| Review Fixes | **сброшен** | `code-review.md`, `security-review.md`, `discovery.md`, находки в Kandev, свой прошлый `review-fixes.md` | `review-fixes.md` |
+| Code Review | **сброшен** | `scoping.md`, `discovery.md`, `verification.md`, нативный Plan если есть, разговор задачи | `code-review.md` + `publish_review_findings_kandev` |
+| Security Review | **сброшен** | `scoping.md`, `discovery.md`, `code-review.md`, разговор задачи | `security-review.md` + `publish_review_findings_kandev` |
+| Review Fixes | **сброшен** | `code-review.md`, `security-review.md`, `discovery.md`, разговор задачи, находки в Kandev, свой прошлый `review-fixes.md` | `review-fixes.md` |
 | Final Verification | продолжает | `verification.md`, `review-fixes.md`, свой прошлый `final-verification.md` | `final-verification.md`, при провале — возврат на `Review Fixes` |
 | Documentation | продолжает | диф задачи, документация проекта | `documentation.md` + коммиты в документацию проекта |
 | Draft PR | продолжает | `scoping.md`, `final-verification.md`, `review-fixes.md`, `documentation.md` | `pull-request.md` |
@@ -73,6 +78,28 @@
 `verification.md` разделом «Отклонения от плана» — потому что именно
 `Verification` идёт следом в том же контексте и именно там это увидит
 `Code Review`.
+
+## Возврат назад по сообщению человека
+
+Сообщение, написанное на колонке-воротах, возвращает карточку назад — это
+`on_turn_start` в цепочке, родной механизм Kandev, которым пользуются все
+встроенные цепочки. Настроено на трёх воротах:
+
+| Ворота | Сообщение возвращает на | Почему туда |
+|---|---|---|
+| `Solution Approval` | `Solution Synthesis` | контекст не сброшен, возражение видно в том же разговоре |
+| `Plan Approval` | `Planning` | переписывать План имеет право только он; дальше карточка снова пройдёт `Plan Review` |
+| `Human Review` | `Review Fixes` | оттуда правка снова идёт через `Final Verification`, `Documentation` и `Draft PR` |
+
+`Done` возвращает туда же, куда `Human Review`: сообщение переоткрывает
+завершённую задачу.
+
+Возврат на `Review Fixes` пересекает сброс контекста, поэтому роль читает
+разговор задачи и обращается с возражением человека как с находкой: запись в
+`review-fixes.md`, закрыта или объяснена. Возврат на `Solution Synthesis` и
+`Planning` контекст не рвёт, но обе роли обязаны не затирать прошлый круг:
+`Solution Synthesis` читает свой прошлый артефакт и ведёт «Номер круга»,
+`Planning` дописывает существующий План.
 
 ## Возврат назад при блокирующем исходе
 
@@ -125,7 +152,7 @@
 Что осталось незадокументированным и почему.
 
 **`solution-synthesis.md`** — Решение · Обоснование · Отклонённые варианты с
-причиной · Что это меняет в границах задачи.
+причиной · Что это меняет в границах задачи · Номер круга.
 
 **`plan-review.md`** — Вердикт (одно из закрытого списка) · Блокирующие
 замечания · Незаблокирующие замечания · Номер круга.

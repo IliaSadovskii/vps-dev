@@ -66,11 +66,35 @@ call rather than a given. `Допущения` records anything you took as true
 without confirming it — including anything the task description asserts about
 the code that you did not verify.
 
+## Asking a human, and when it's worth it
+
+You can put a question to a human directly. `ask_user_question_kandev` posts
+one or more questions, each with answer options, and the platform holds the
+card until they are answered — an unanswered question blocks this step's
+transition outright, so asking never risks the task moving on without you.
+Answering is not the only outcome: a human can skip a question, and a skipped
+question is an answer too.
+
+That makes asking safe. It does not make it free. Every question spends a
+person's attention and stops a chain built to run without one, and a question
+you could have answered yourself reads as work handed back. Ask when the
+boundary turns on something the repository cannot tell you — what the task is
+actually for, which of two readings of the request was meant, whether
+something adjacent is wanted this time — and where guessing wrong would send
+every step after you down the wrong road. Anything you can settle from
+`discovery.md`, the task description or the code, settle. Anything that only
+changes how you word an entry, decide and move on.
+
+Ask everything you have in one call rather than in a series: a person
+answering four questions at once is doing one thing, a person answering four
+questions in a row is being interrupted four times.
+
 ## Finishing
 
-Nobody sits with this step while it runs. Decide the boundary yourself from
-what you've read, and write down what you assumed rather than asking. Before
-you stop, reread your last message: if it reads as a question or as an
+Nobody sits with this step while it runs, so anything you did not put through
+`ask_user_question_kandev` reaches nobody. Decide the rest of the boundary
+yourself and write down what you assumed. Before you stop, reread your last
+message: if it reads as a question you never actually asked, or as an
 unfinished boundary, do that work now instead of leaving it there.
 
 Ground every line you draw in `discovery.md`, the task description, or code

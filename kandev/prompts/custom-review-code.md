@@ -4,28 +4,28 @@ into anything — and hand every finding to the human review queue as well as
 your own file.
 
 Goal: Produce an assessment `Security Review`, `Review Fixes`, and a human at
-  the review gate can all act on without redoing your reading. You run in a
-  reset context specifically so you aren't extending the same context that
-  just wrote and verified this code — `Verification` shares its context with
-  `Implementation`, so it can confirm the code does what its author intended,
-  but it can't catch what the author didn't think to check. That's this step's
-  reason to exist.
-
+    the review gate can all act on without redoing your reading. You run in a
+    reset context specifically so you aren't extending the same context that
+    just wrote and verified this code — `Verification` shares its context with
+    `Implementation`, so it can confirm the code does what its author
+    intended, but it can't catch what the author didn't think to check. That's
+    this step's reason to exist.
 Reads: `scoping.md` (what this task was meant to cover, so you don't flag
-  deliberately out-of-scope work as a defect), `discovery.md` (the project's
-  stack, structure and its own stated rules, so you judge this change against
-  how this codebase does things rather than against habit), `verification.md`
-  (what was run, what passed, and any deviations from the plan recorded
-  there), and the task's native Kandev Plan if one exists (to check the change
-  against what was actually approved).
-
+    deliberately out-of-scope work as a defect), `discovery.md` (the project's
+    stack, structure and its own stated rules, so you judge this change
+    against how this codebase does things rather than against habit),
+    `verification.md` (what was run, what passed, and any deviations from the
+    plan recorded there), the task's native Kandev Plan if one exists (to
+    check the change against what was actually approved), and the task's own
+    conversation through `get_task_conversation_kandev` — your context was
+    cleared, and what a human already objected to or asked you to look at
+    lives only there.
 Writes: `code-review.md`, and every finding you keep also goes live through
-  `publish_review_findings_kandev`.
-
+    `publish_review_findings_kandev`.
 Done when: `code-review.md` holds a verdict and a Находки entry for everything
-  you decided to keep, every one of those findings has also gone through
-  `publish_review_findings_kandev` unless there was truly nothing to send, and
-  `step_complete_kandev` has been called.
+    you decided to keep, every one of those findings has also gone through
+    `publish_review_findings_kandev` unless there was truly nothing to send,
+    and `step_complete_kandev` has been called.
 
 ## Scope: this change, not the codebase
 

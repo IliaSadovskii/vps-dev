@@ -128,7 +128,11 @@ workflows:
       - name: Solution Approval
         position: 5
         color: bg-orange-500
-        events: {}
+        # Сообщение здесь возвращает карточку на Solution Synthesis: контекст
+        # там не сброшен, так что возражение агент видит в том же разговоре.
+        events:
+          on_turn_start:
+            - type: move_to_previous
         is_start_step: false
         show_in_command_panel: true
         allow_manual_move: true
@@ -180,7 +184,14 @@ workflows:
       - name: Plan Approval
         position: 8
         color: bg-orange-500
-        events: {}
+        # Сообщение возвращает на Planning, а не на предыдущую колонку:
+        # переписывать План имеет право только он, и с него карточка снова
+        # пройдёт Plan Review.
+        events:
+          on_turn_start:
+            - type: move_to_step
+              config:
+                step_position: 6
         is_start_step: false
         show_in_command_panel: true
         allow_manual_move: true
@@ -374,7 +385,14 @@ workflows:
       - name: Human Review
         position: 18
         color: bg-yellow-500
-        events: {}
+        # Сообщение здесь — это доработка: карточка уходит на Review Fixes,
+        # а оттуда снова через Final Verification, Documentation и Draft PR.
+        # Review Fixes читает разговор задачи, потому что его контекст сброшен.
+        events:
+          on_turn_start:
+            - type: move_to_step
+              config:
+                step_position: 14
         is_start_step: false
         show_in_command_panel: true
         allow_manual_move: true
@@ -384,7 +402,13 @@ workflows:
       - name: Done
         position: 19
         color: bg-green-500
-        events: {}
+        # Сообщение переоткрывает завершённую задачу тем же путём, что и
+        # доработка с Human Review.
+        events:
+          on_turn_start:
+            - type: move_to_step
+              config:
+                step_position: 14
         is_start_step: false
         show_in_command_panel: false
         allow_manual_move: true
