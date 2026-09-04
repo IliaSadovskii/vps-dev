@@ -15,6 +15,7 @@
 #
 # ВХОД — JSON на stdin:
 #   {"api": ".../api/v1", "workspace_id": "...",
+#    "profiles": [{"agent": "claude-acp", "name": "Opus", ...}],
 #    "prompts": {"custom-discovery": "<текст роли>", ...},
 #    "files": [{"name": "deep.yml", "doc": {<разобранный YAML>}}]}
 # Строки `@имя` в промптах колонок разворачиваются здесь в текст роли из
@@ -30,13 +31,19 @@
 # которое требует руки человека (задачи в удалённой колонке, профиль агента,
 # которого нет), и прогон из-за него не падает.
 #
-# ЧЕГО НЕ ДЕЛАЕТ. Не удаляет цепочки: файл пропал — цепочка остаётся.
-# Не трогает `stage_type` (в переносимом формате его нет) и профили агентов
-# (`agent_profile` ищется по имени в настройках машины; здесь его не
-# сопоставить, поэтому существующий профиль колонки сохраняется, а новый
-# из файла не ставится — с предупреждением).
+# ПРОФИЛИ. `profiles` из stdin (файл kandev/profiles.yml) заводятся или
+# обновляются у агентов по паре (агент, имя); агента нет на машине —
+# предупреждение. Колонка с `agent_profile` (тройка отображаемое имя
+# агента / модель / режим, как в переносимом формате Kandev) получает id
+# найденного профиля; не найден — предупреждение, профиль колонки не
+# трогается. Так цепочка с моделями уезжает на машину без этих подписок и
+# ничего не ломает.
+#
+# ЧЕГО НЕ ДЕЛАЕТ. Не удаляет цепочки и профили: файл пропал — на доске
+# остаётся. Не трогает `stage_type` (в переносимом формате его нет).
 
 import json
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -69,10 +76,27 @@ STEP_FIELDS = (
 class Api:
     def __init__(self, base):
         self.base = base.rstrip("/")
+        self._interlock = None
 
-    def call(self, method, path, body=None, content_type="application/json"):
+    def interlock(self):
+        """Токен для правки настроек агентов: Kandev требует его в заголовке
+        и отдаёт в HTML главной страницы (per-boot CSRF-замок)."""
+        if self._interlock is None:
+            root = self.base[: -len("/api/v1")] if self.base.endswith("/api/v1") else self.base
+            try:
+                with urllib.request.urlopen(root + "/", timeout=30) as r:
+                    html = r.read().decode(errors="replace")
+            except (urllib.error.URLError, urllib.error.HTTPError) as e:
+                raise SystemExit(f"GET {root}/: {e}")
+            m = re.search(r'interimSettingsInterlockToken":"([^"]+)"', html)
+            self._interlock = m.group(1) if m else ""
+        return self._interlock
+
+    def call(self, method, path, body=None, content_type="application/json", settings=False):
         data = None
         headers = {"Accept": "application/json"}
+        if settings:
+            headers["X-Kandev-Interim-Settings-Interlock"] = self.interlock()
         if body is not None:
             # JSON — подмножество YAML, поэтому импорт, ждущий YAML, читает
             # его как есть.
@@ -136,7 +160,11 @@ def normalize(value):
 
 def coerce(field, value):
     """Одна и та же форма поля для доски и для файла."""
-    if field in ("color", "prompt"):
+    if field == "prompt":
+        # Kandev хранит промпт без завершающего перевода строки, а Ansible
+        # lookup('file') его отбрасывает — сравниваем без хвостовых переводов.
+        return (value or "").rstrip("\n")
+    if field == "color":
         return value or ""
     if field in ("auto_archive_after_hours", "wip_limit"):
         return value
@@ -145,7 +173,8 @@ def coerce(field, value):
 
 def portable_of_live(step, id_to_pos):
     """Колонка с доски в переносимом виде, чтобы сравнить с файлом."""
-    p = {"name": step["name"], "position": step["position"]}
+    p = {"name": step["name"], "position": step["position"],
+         "profile_id": step.get("agent_profile_id") or ""}
     for f in STEP_FIELDS:
         p[f] = coerce(f, step.get(f))
     p["events"] = remap_events(
@@ -157,8 +186,12 @@ def portable_of_live(step, id_to_pos):
     return normalize(p)
 
 
-def portable_of_file(sp):
-    p = {"name": sp["name"], "position": sp["position"]}
+def portable_of_file(sp, live_profile_id=""):
+    # Профиль сравнивается по id, который resolve_profile положил в
+    # sp["_profile_id"]; не найден на машине — считаем, что как на доске.
+    pid = sp.get("_profile_id")
+    p = {"name": sp["name"], "position": sp["position"],
+         "profile_id": pid if pid is not None else live_profile_id}
     for f in STEP_FIELDS:
         p[f] = coerce(f, sp.get(f))
     p["events"] = sp.get("events") or {}
@@ -167,7 +200,7 @@ def portable_of_file(sp):
     return normalize(p)
 
 
-def reconcile(api, wf, desired, result):
+def reconcile(api, wf, desired, result, lookup):
     name = desired["name"]
     warnings = result["warnings"]
     if desired.get("agent_profile"):
@@ -197,8 +230,8 @@ def reconcile(api, wf, desired, result):
             return
         wanted[sp["name"]] = sp
         if sp.get("agent_profile"):
-            warnings.append(
-                f"{name}/{sp['name']}: профиль агента из файла не ставится"
+            sp["_profile_id"] = resolve_profile(
+                sp["agent_profile"], lookup, f"{name}/{sp['name']}", result
             )
 
     to_delete = []
@@ -221,11 +254,13 @@ def reconcile(api, wf, desired, result):
         (portable_of_live(st, id_to_pos) for st in live),
         key=lambda p: p["position"],
     ) == sorted(
-        (portable_of_file(sp) for sp in steps), key=lambda p: p["position"]
+        (portable_of_file(sp, (live_by_name.get(sp["name"]) or {}).get("agent_profile_id") or "")
+         for sp in steps),
+        key=lambda p: p["position"],
     )
     same_head = (wf.get("description") or "") == (
         desired.get("description") or ""
-    ) and (wf.get("prompt") or "") == (desired.get("prompt") or "")
+    ) and (wf.get("prompt") or "").rstrip("\n") == (desired.get("prompt") or "").rstrip("\n")
     if same_steps and same_head and not to_delete:
         result["unchanged"].append(name)
         return
@@ -267,6 +302,8 @@ def reconcile(api, wf, desired, result):
         pull = sp.get("pull_from_step_position")
         if pull is not None:
             body["pull_from_step_id"] = pos_to_id[pull]
+        if sp.get("_profile_id"):
+            body["agent_profile_id"] = sp["_profile_id"]
         api.call("PUT", f"/workflow/steps/{st['id']}", body)
 
     for st in to_delete:
@@ -282,6 +319,65 @@ def reconcile(api, wf, desired, result):
             },
         )
     result["updated"].append(name)
+
+
+def ensure_profiles(api, wanted, result):
+    """Завести или обновить профили агентов из profiles.yml.
+
+    Агент ищется по внутреннему имени; нет агента — профили пропускаются с
+    предупреждением. Возвращает словарь (отображаемое имя агента, модель,
+    режим) → id профиля для привязки колонок.
+    """
+    agents = api.call("GET", "/agents").get("agents", [])
+    by_name = {a["name"]: a for a in agents}
+    for w in wanted:
+        agent = by_name.get(w["agent"])
+        if agent is None:
+            result["warnings"].append(
+                f"профиль «{w['name']}»: агент {w['agent']} не установлен, пропущен"
+            )
+            continue
+        body = {
+            "name": w["name"],
+            "model": w.get("model") or "",
+            "mode": w.get("mode") or "default",
+            "auto_approve": bool(w.get("auto_approve", True)),
+            "auto_fallback": False,
+        }
+        if w.get("config_options"):
+            body["config_options"] = {k: str(v) for k, v in w["config_options"].items()}
+        have = next((p for p in agent.get("profiles", []) if p["name"] == w["name"]), None)
+        if have is None:
+            api.call("POST", f"/agents/{agent['id']}/profiles", body, settings=True)
+            result.setdefault("profiles_created", []).append(f"{w['agent']}/{w['name']}")
+        else:
+            same = (
+                have.get("model") == body["model"]
+                and (have.get("mode") or "default") == body["mode"]
+                and bool(have.get("auto_approve")) == body["auto_approve"]
+                and (have.get("config_options") or {}) == body.get("config_options", {})
+            )
+            if not same:
+                api.call("PATCH", f"/agent-profiles/{have['id']}", body, settings=True)
+                result.setdefault("profiles_updated", []).append(f"{w['agent']}/{w['name']}")
+    lookup = {}
+    for a in api.call("GET", "/agents").get("agents", []):
+        for p in a.get("profiles", []):
+            lookup[(p.get("agent_display_name"), p.get("model"), p.get("mode") or "default")] = p["id"]
+    return lookup
+
+
+def resolve_profile(spec, lookup, where, result):
+    """Тройка из YAML → id профиля; нет такого — предупреждение и None."""
+    if not spec:
+        return None
+    key = (spec.get("agent_name"), spec.get("model") or "", spec.get("mode") or "default")
+    pid = lookup.get(key)
+    if pid is None:
+        result["warnings"].append(
+            f"{where}: профиль {key} на этой машине не найден, колонка оставлена без профиля"
+        )
+    return pid
 
 
 def expand_refs(text, prompts, seen=()):
@@ -305,9 +401,9 @@ def expand_refs(text, prompts, seen=()):
 
 def expand_workflow(desired, prompts):
     desired = dict(desired)
-    desired["prompt"] = expand_refs(desired.get("prompt"), prompts)
+    desired["prompt"] = expand_refs(desired.get("prompt"), prompts).rstrip("\n")
     desired["steps"] = [
-        dict(sp, prompt=expand_refs(sp.get("prompt"), prompts))
+        dict(sp, prompt=expand_refs(sp.get("prompt"), prompts).rstrip("\n"))
         for sp in desired.get("steps") or []
     ]
     return desired
@@ -319,6 +415,7 @@ def main():
     ws = payload["workspace_id"]
     prompts = payload.get("prompts") or {}
     result = {"created": [], "updated": [], "unchanged": [], "warnings": []}
+    lookup = ensure_profiles(api, payload.get("profiles") or [], result)
 
     existing = api.call("GET", f"/workspaces/{ws}/workflows")
     by_name = {}
@@ -337,7 +434,13 @@ def main():
             desired = expand_workflow(desired, prompts)
             wf = by_name.get(desired["name"])
             if wf is None:
-                single = dict(doc, workflows=[desired])
+                # Импорт без профилей (Kandev сопоставил бы их сам, но не
+                # предупредил бы о несовпадении), затем сверка привязывает
+                # профили по нашему словарю.
+                bare = dict(desired, agent_profile=None,
+                            steps=[{k: v for k, v in sp.items() if k != "agent_profile"}
+                                   for sp in desired.get("steps") or []])
+                single = dict(doc, workflows=[bare])
                 api.call(
                     "POST",
                     f"/workspaces/{ws}/workflows/import",
@@ -345,6 +448,14 @@ def main():
                     content_type="application/x-yaml",
                 )
                 result["created"].append(desired["name"])
+                wf = next((w for w in api.call("GET", f"/workspaces/{ws}/workflows").get("workflows", [])
+                           if w["name"] == desired["name"]), None)
+                if wf is not None:
+                    reconcile(api, wf, desired, result, lookup)
+                    if desired["name"] in result["updated"]:
+                        result["updated"].remove(desired["name"])
+                    if desired["name"] in result["unchanged"]:
+                        result["unchanged"].remove(desired["name"])
                 continue
             if wf.get("source") not in (None, "", "manual"):
                 result["warnings"].append(
@@ -352,7 +463,7 @@ def main():
                     f"{wf['source']}, файлом не обновляется"
                 )
                 continue
-            reconcile(api, wf, desired, result)
+            reconcile(api, wf, desired, result, lookup)
 
     json.dump(result, sys.stdout, ensure_ascii=False)
     print()

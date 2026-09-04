@@ -60,6 +60,10 @@ workflows:
       - name: Backlog
         position: 0
         color: bg-neutral-400
+        agent_profile:
+          agent_name: Claude
+          model: haiku
+          mode: bypassPermissions
         # Промпт ворот: сообщение в карточке на Backlog не должно запускать
         # работу без роли.
         prompt: &gate |
@@ -83,6 +87,10 @@ workflows:
       - name: Discovery
         position: 1
         color: bg-purple-500
+        agent_profile:
+          agent_name: Claude
+          model: sonnet
+          mode: bypassPermissions
         prompt: |
           @custom-discovery
 
@@ -109,6 +117,10 @@ workflows:
       - name: Scoping
         position: 2
         color: bg-purple-500
+        agent_profile:
+          agent_name: Claude
+          model: sonnet
+          mode: bypassPermissions
         prompt: |
           @custom-scoping
 
@@ -139,6 +151,10 @@ workflows:
       - name: Research
         position: 3
         color: bg-purple-500
+        agent_profile:
+          agent_name: Claude
+          model: sonnet
+          mode: bypassPermissions
         prompt: |
           @custom-research
 
@@ -164,6 +180,10 @@ workflows:
       - name: Solution Synthesis
         position: 4
         color: bg-purple-500
+        agent_profile:
+          agent_name: Claude
+          model: opus[1m]
+          mode: bypassPermissions
         prompt: |
           @custom-solution-synthesis
 
@@ -188,6 +208,10 @@ workflows:
       - name: Solution Approval
         position: 5
         color: bg-orange-500
+        agent_profile:
+          agent_name: Claude
+          model: haiku
+          mode: bypassPermissions
         # Принять: перетащить вправо, на Planning. Возразить: написать
         # столько заметок, сколько нужно, и перетащить карточку на Solution
         # Synthesis, когда мысль закончена. Сообщение здесь агента не
@@ -205,6 +229,10 @@ workflows:
       - name: Planning
         position: 6
         color: bg-purple-500
+        agent_profile:
+          agent_name: Claude
+          model: opus[1m]
+          mode: bypassPermissions
         prompt: |
           @custom-planning
 
@@ -232,6 +260,10 @@ workflows:
       - name: Plan Review
         position: 7
         color: bg-yellow-500
+        agent_profile:
+          agent_name: Codex
+          model: gpt-5.6-sol
+          mode: default
         prompt: |
           @custom-plan-review
 
@@ -256,6 +288,10 @@ workflows:
       - name: Plan Approval
         position: 8
         color: bg-orange-500
+        agent_profile:
+          agent_name: Claude
+          model: haiku
+          mode: bypassPermissions
         # Принять: перетащить вправо, на Test Authoring. Возразить: написать
         # заметки и перетащить карточку на Planning — единственного владельца
         # нативного Plan; план снова пройдёт Plan Review.
@@ -272,6 +308,10 @@ workflows:
       - name: Test Authoring
         position: 9
         color: bg-blue-500
+        agent_profile:
+          agent_name: Claude
+          model: sonnet
+          mode: bypassPermissions
         prompt: |
           @custom-test-authoring
 
@@ -295,6 +335,10 @@ workflows:
       - name: Implementation
         position: 10
         color: bg-blue-500
+        agent_profile:
+          agent_name: Claude
+          model: sonnet
+          mode: bypassPermissions
         prompt: |
           @custom-implementation
 
@@ -321,6 +365,10 @@ workflows:
       - name: Verification
         position: 11
         color: bg-blue-500
+        agent_profile:
+          agent_name: Claude
+          model: sonnet
+          mode: bypassPermissions
         prompt: |
           @custom-verification
 
@@ -343,6 +391,10 @@ workflows:
       - name: Code Review
         position: 12
         color: bg-yellow-500
+        agent_profile:
+          agent_name: Claude
+          model: opus[1m]
+          mode: bypassPermissions
         prompt: |
           @custom-review-code
 
@@ -371,6 +423,10 @@ workflows:
       - name: Security Review
         position: 13
         color: bg-amber-500
+        agent_profile:
+          agent_name: Claude
+          model: opus[1m]
+          mode: bypassPermissions
         prompt: |
           @custom-security-review
 
@@ -397,6 +453,10 @@ workflows:
       - name: Review Fixes
         position: 14
         color: bg-blue-500
+        agent_profile:
+          agent_name: Claude
+          model: sonnet
+          mode: bypassPermissions
         prompt: |
           @custom-review-fixes
 
@@ -423,6 +483,10 @@ workflows:
       - name: Fix Review
         position: 15
         color: bg-yellow-500
+        agent_profile:
+          agent_name: Claude
+          model: opus[1m]
+          mode: bypassPermissions
         prompt: |
           @custom-fix-review
 
@@ -451,6 +515,10 @@ workflows:
       - name: Final Verification
         position: 16
         color: bg-blue-500
+        agent_profile:
+          agent_name: Claude
+          model: haiku
+          mode: bypassPermissions
         prompt: |
           @custom-final-verification
 
@@ -475,6 +543,10 @@ workflows:
       - name: Draft PR
         position: 17
         color: bg-indigo-500
+        agent_profile:
+          agent_name: Claude
+          model: haiku
+          mode: bypassPermissions
         prompt: |
           @custom-pull-request
 
@@ -498,6 +570,10 @@ workflows:
       - name: Human Review
         position: 18
         color: bg-orange-500
+        agent_profile:
+          agent_name: Claude
+          model: haiku
+          mode: bypassPermissions
         # Принять: дождаться CI, проверить итоговый diff и перетащить вправо,
         # в Done. Доработать: написать замечания и перетащить на Review
         # Fixes — хвост до PR пройдёт снова. Если менялся план или сама
@@ -514,6 +590,10 @@ workflows:
       - name: Done
         position: 19
         color: bg-green-500
+        agent_profile:
+          agent_name: Claude
+          model: haiku
+          mode: bypassPermissions
         # Переоткрыть: написать, что изменилось, и перетащить на Review
         # Fixes, тем же путём, что и с Human Review.
         prompt: *gate

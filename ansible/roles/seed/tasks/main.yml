@@ -170,6 +170,10 @@
         stdin: >-
           {{ {'api': seed_api,
               'workspace_id': seed_workspace_id,
+              'profiles': (lookup('file', seed_content_dir ~ '/profiles.yml',
+                                  errors='ignore') | default('', true)
+                           | from_yaml | default({}, true)).profiles
+                          | default([], true),
               'prompts': seed_prompt_texts | default({}),
               'files': seed_workflow_files | default([])} | to_json }}
       register: seed_workflows
@@ -188,6 +192,10 @@
       ansible.builtin.debug:
         msg: >-
           Доска наполнена: ролей в каталоге {{ seed_prompt_files | length }};
+          профилей создано
+          {{ (seed_workflows.stdout | from_json).profiles_created | default([], true) | join(', ') | default('—', true) }},
+          обновлено
+          {{ (seed_workflows.stdout | from_json).profiles_updated | default([], true) | join(', ') | default('—', true) }};
           цепочек создано
           {{ (seed_workflows.stdout | from_json).created | join(', ') | default('—', true) }},
           обновлено

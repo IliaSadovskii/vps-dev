@@ -1,0 +1,43 @@
+# Профили агентов, которые выкатка заводит в Kandev и на которые ссылаются
+# колонки цепочек (`agent_profile` в workflows/*.yml).
+#
+# Профиль — именованный набор: модель, режим разрешений, автоодобрение
+# команд, дополнительные настройки агента. `agent` — внутреннее имя агента в
+# Kandev (Settings → Agents). Если агент на машине не установлен, его
+# профили пропускаются с предупреждением, а колонки, которые на них
+# ссылаются, остаются без профиля и берут профиль задачи по умолчанию.
+# Ничего не ломается: так задумано для машин с другим набором подписок.
+#
+# Ключ профиля — пара (agent, name): существующий обновляется, новый
+# создаётся, лишние не удаляются.
+#
+# Колонки ссылаются на профиль тройкой (agent_name = отображаемое имя
+# агента, model, mode) — так устроен переносимый формат Kandev.
+version: 1
+profiles:
+  - agent: claude-acp
+    name: Opus
+    model: opus[1m]
+    mode: bypassPermissions
+    auto_approve: true
+    config_options:
+      effort: high
+  - agent: claude-acp
+    name: Sonnet
+    model: sonnet
+    mode: bypassPermissions
+    auto_approve: true
+    config_options:
+      effort: high
+  - agent: claude-acp
+    name: Haiku
+    model: haiku
+    mode: bypassPermissions
+    auto_approve: true
+    config_options:
+      effort: high
+  - agent: codex-acp
+    name: GPT-5.6 Sol
+    model: gpt-5.6-sol
+    mode: default
+    auto_approve: true
