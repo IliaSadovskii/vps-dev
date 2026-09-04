@@ -14,8 +14,7 @@
   README.md              индекс, владелец — Discovery, дополняют все
   discovery.md
   scoping.md
-  decision-mapping.md
-  targeted-research.md
+  research.md
   solution-synthesis.md
   plan-review.md
   test-authoring.md
@@ -24,6 +23,7 @@
   security-review.md
   review-fixes.md
   final-verification.md
+  documentation.md
   pull-request.md
 ```
 
@@ -48,9 +48,8 @@
 |---|---|---|---|
 | Discovery | продолжает | — | `README.md`, `discovery.md` |
 | Scoping | продолжает | `discovery.md` (если разведку делал не он) | `scoping.md` |
-| Decision Mapping | продолжает | `scoping.md`, `discovery.md` | `decision-mapping.md` |
-| Targeted Research | продолжает | `decision-mapping.md` | `targeted-research.md` |
-| Solution Synthesis | продолжает | `decision-mapping.md`, `targeted-research.md`, `discovery.md` | `solution-synthesis.md` |
+| Research | продолжает | `scoping.md`, `discovery.md` | `research.md` |
+| Solution Synthesis | продолжает | `research.md`, `discovery.md` | `solution-synthesis.md` |
 | Planning | продолжает | нативный Plan (обязательно до записи), `scoping.md`, `solution-synthesis.md` если есть | нативный Kandev Plan |
 | Plan Review | **сброшен** | нативный Plan, `discovery.md`, `scoping.md`, `solution-synthesis.md` если есть, свой прошлый `plan-review.md` | `plan-review.md`, при блокирующем вердикте — возврат на `Planning` |
 | Test Authoring | сброшен в Standard и Deep, продолжает в Quick | нативный Plan если есть, `scoping.md`, `discovery.md` | `test-authoring.md` |
@@ -60,7 +59,8 @@
 | Security Review | **сброшен** | `scoping.md`, `discovery.md`, `code-review.md` | `security-review.md` + `publish_review_findings_kandev` |
 | Review Fixes | **сброшен** | `code-review.md`, `security-review.md`, `discovery.md`, находки в Kandev, свой прошлый `review-fixes.md` | `review-fixes.md` |
 | Final Verification | продолжает | `verification.md`, `review-fixes.md`, свой прошлый `final-verification.md` | `final-verification.md`, при провале — возврат на `Review Fixes` |
-| Draft PR | продолжает | `scoping.md`, `final-verification.md`, `review-fixes.md` | `pull-request.md` |
+| Documentation | продолжает | диф задачи, документация проекта | `documentation.md` + коммиты в документацию проекта |
+| Draft PR | продолжает | `scoping.md`, `final-verification.md`, `review-fixes.md`, `documentation.md` | `pull-request.md` |
 
 ### Про Implementation
 
@@ -116,11 +116,13 @@
 
 **`scoping.md`** — Входит · Не входит · Допущения.
 
-**`decision-mapping.md`** — Развилки (по каждой: формулировка выбора, критерий
-решения, что уже задано проектом) · Мнимые развилки и почему отброшены.
+**`research.md`** — Развилки (по каждой: формулировка выбора, критерий
+решения, что уже задано проектом) · Мнимые развилки и почему отброшены ·
+Найденное по развилкам (источник со ссылкой и метка происхождения на каждом
+утверждении) · Что осталось невыясненным.
 
-**`targeted-research.md`** — По каждой развилке: найденное, источник со
-ссылкой, метка происхождения · Что осталось невыясненным.
+**`documentation.md`** — Что исправлено · Что проверено и осталось верным ·
+Что осталось незадокументированным и почему.
 
 **`solution-synthesis.md`** — Решение · Обоснование · Отклонённые варианты с
 причиной · Что это меняет в границах задачи.

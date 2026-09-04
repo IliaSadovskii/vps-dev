@@ -1,9 +1,9 @@
 # Deep — ещё не известно, что делать: сначала надо разобраться в вариантах.
 #
-# Это Standard плюс блок исследования: Decision Mapping оставляет только
-# реальные развилки, Targeted Research исследует именно их, а не тему
-# вообще, Solution Synthesis сводит найденное в один вариант, и человек
-# утверждает его до планирования.
+# Это Standard плюс блок исследования: Research отсеивает мнимые развилки
+# и ищет по оставшимся — именно по ним, а не по теме вообще, — Solution
+# Synthesis сводит найденное в один вариант, и человек утверждает его до
+# планирования.
 #
 # Прежняя цепочка Standard Development была фактически этим маршрутом.
 #
@@ -85,29 +85,14 @@ workflows:
         auto_advance_requires_signal: true
         cancel_triggers_turn_complete: false
 
-      - name: Decision Mapping
+      # Отсев мнимых развилок и поиск по оставшимся — один ход: обе
+      # половины и так шли в одном контексте, а порядок «сначала отбери,
+      # потом ищи» держится внутри промпта.
+      - name: Research
         position: 3
         color: bg-purple-500
         prompt: |
-          @custom-decision-mapping
-
-          {{task_prompt}}
-        events:
-          on_enter:
-            - type: auto_start_agent
-          on_turn_complete:
-            - type: move_to_next
-        is_start_step: false
-        show_in_command_panel: true
-        allow_manual_move: true
-        auto_advance_requires_signal: true
-        cancel_triggers_turn_complete: false
-
-      - name: Targeted Research
-        position: 4
-        color: bg-purple-500
-        prompt: |
-          @custom-targeted-research
+          @custom-research
 
           {{task_prompt}}
         events:
@@ -122,7 +107,7 @@ workflows:
         cancel_triggers_turn_complete: false
 
       - name: Solution Synthesis
-        position: 5
+        position: 4
         color: bg-purple-500
         prompt: |
           @custom-solution-synthesis
@@ -141,7 +126,7 @@ workflows:
 
       # Ворота человека: выбрать решение до того, как оно превратится в план.
       - name: Solution Approval
-        position: 6
+        position: 5
         color: bg-orange-500
         events: {}
         is_start_step: false
@@ -151,7 +136,7 @@ workflows:
         cancel_triggers_turn_complete: false
 
       - name: Planning
-        position: 7
+        position: 6
         color: bg-purple-500
         prompt: |
           @custom-planning
@@ -173,7 +158,7 @@ workflows:
 
       # Свежий контекст: автор плана не должен быть его единственным критиком.
       - name: Plan Review
-        position: 8
+        position: 7
         color: bg-yellow-500
         prompt: |
           @custom-plan-review
@@ -193,7 +178,7 @@ workflows:
 
       # Ворота человека: утвердить план до первой правки рабочего кода.
       - name: Plan Approval
-        position: 9
+        position: 8
         color: bg-orange-500
         events: {}
         is_start_step: false
@@ -205,7 +190,7 @@ workflows:
       # Начало контекста реализации. Шаг обязан оставить реально падающие
       # тесты: документ с их описанием ничем не обеспечивает test-first.
       - name: Test Authoring
-        position: 10
+        position: 9
         color: bg-blue-500
         prompt: |
           @custom-test-authoring
@@ -224,7 +209,7 @@ workflows:
         cancel_triggers_turn_complete: false
 
       - name: Implementation
-        position: 11
+        position: 10
         color: bg-blue-500
         prompt: |
           @custom-implementation
@@ -244,7 +229,7 @@ workflows:
       # Замыкает red-green цикл в том же контексте, что Test Authoring
       # и Implementation.
       - name: Verification
-        position: 12
+        position: 11
         color: bg-blue-500
         prompt: |
           @custom-verification
@@ -262,7 +247,7 @@ workflows:
         cancel_triggers_turn_complete: false
 
       - name: Code Review
-        position: 13
+        position: 12
         color: bg-yellow-500
         prompt: |
           @custom-review-code
@@ -284,7 +269,7 @@ workflows:
       # с размером задачи. Роль сначала делает дешёвую проверку
       # применимости и обычно сразу отвечает, что поверхность не затронута.
       - name: Security Review
-        position: 14
+        position: 13
         color: bg-amber-500
         prompt: |
           @custom-security-review
@@ -305,7 +290,7 @@ workflows:
       # Выполняется один раз и может быть пустым, если замечаний нет.
       # Дополнительный круг делается ручным возвратом на нужную колонку.
       - name: Review Fixes
-        position: 15
+        position: 14
         color: bg-blue-500
         prompt: |
           @custom-review-fixes
@@ -326,10 +311,31 @@ workflows:
       # Работает в контексте Review Fixes, а не реализации, и гоняет полный
       # прогон после правок — поэтому у неё свой промпт.
       - name: Final Verification
-        position: 16
+        position: 15
         color: bg-blue-500
         prompt: |
           @custom-final-verification
+
+          {{task_prompt}}
+        events:
+          on_enter:
+            - type: auto_start_agent
+          on_turn_complete:
+            - type: move_to_next
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        auto_advance_requires_signal: true
+        cancel_triggers_turn_complete: false
+
+      # Документация проекта после того, как правки по ревью улеглись и
+      # прогон снова зелёный. Работает в контексте Review Fixes, чинит
+      # разошедшееся с кодом и не трогает сам код.
+      - name: Documentation
+        position: 16
+        color: bg-teal-500
+        prompt: |
+          @custom-documentation
 
           {{task_prompt}}
         events:

@@ -1,22 +1,18 @@
 Write this task's one implementation plan into the native Kandev Plan,
 building on anything already there instead of replacing it.
 
-Goal: Produce an implementation plan concrete enough that `Plan
-    Review` and `Test Authoring` can act on it with a cleared context
-    and only this Plan in hand, and that `Implementation` can build
-    from afterward — turning what `Scoping` scoped, and what `Solution
-    Synthesis` chose when the Deep route ran it, into steps, risks and
-    checks tied to this project's actual code.
-Reads: The native Kandev Plan, before writing anything to it;
-    `scoping.md`; `solution-synthesis.md` when the Deep route produced
-    one.
-Writes: The native Kandev Plan, through `create_task_plan_kandev`
-    (first save) or `update_task_plan_kandev` (later saves) — not a
-    file.
-Done when: The saved Plan holds Границы, Риски, Этапы and Проверки,
-    each grounded in real paths, function names and types rather than
-    generic advice or placeholders, and you have called
-    `step_complete_kandev`.
+Goal: Produce an implementation plan concrete enough that `Plan Review` and
+    `Test Authoring` can act on it with a cleared context and only this Plan
+    in hand, and that `Implementation` can build from afterward — turning what
+    `Scoping` scoped, and what `Solution Synthesis` chose when the Deep route
+    ran it, into steps, risks and checks tied to this project's actual code.
+Reads: The native Kandev Plan, before writing anything to it; `scoping.md`;
+    `solution-synthesis.md` when the Deep route produced one.
+Writes: The native Kandev Plan, through `create_task_plan_kandev` (first save)
+    or `update_task_plan_kandev` (later saves) — not a file.
+Done when: The saved Plan holds Границы, Риски, Этапы and Проверки, each
+    grounded in real paths, function names and types rather than generic
+    advice or placeholders, and you have called `step_complete_kandev`.
 
 ## Reading what's here first
 
@@ -59,6 +55,27 @@ of any new public interface — function, class, endpoint, table — including i
 parameters, return type and the errors it can raise. `Test Authoring` writes
 its first failing test against that signature, not against a description of
 intent.
+
+## Checking the facts the plan rests on
+
+Naming a library call, a framework facility, a service's behaviour or what a
+version can do is asserting a fact you have to be right about, and this is the
+cheapest place to be wrong: `Test Authoring` writes its tests against the
+signature you wrote down, and `Implementation` builds to it. On the Deep route
+those facts were already established — `Research` looked them up and
+`solution-synthesis.md` carries them with their sources. On Standard nobody
+has looked anything up at all: the task came straight from `Scoping` to you,
+and what you know about a library is what you remember about it, which ages
+and which you cannot tell apart from what you verified.
+
+So look it up rather than plan from recall. Check the version this project
+actually has installed rather than the newest one documented online, read the
+official documentation of what you're about to name, and prefer what the
+framework or an already-installed dependency gives you over a stage that
+hand-rolls the same thing. Mark in the Plan which facts you verified and where
+— a `path:line` for something in this repository, a link for something outside
+it — and say plainly where you are planning on a recollection you could not
+confirm, so `Plan Review` knows which stage to press on.
 
 ## What the Plan must hold
 

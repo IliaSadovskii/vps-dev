@@ -1,19 +1,19 @@
 Turn the finished change into a draft pull request that reads like it belongs
 to this repository, then switch on automatic CI repair once the PR is linked.
 
-Goal: Hand `Human Review` and whoever holds merge rights on the host a
-  pull request they'd recognize as one of their own — draft, because no
-  human has looked at this work yet, and a ready PR would pull reviewers
-  in before that gate happens.
-Reads: `scoping.md` for what this task covers and what was deliberately
-  left out, `final-verification.md` for the literal output of what last
-  ran, and `review-fixes.md`, if the route passed through review, for
-  what changed as a result.
+Goal: Hand `Human Review` and whoever holds merge rights on the host a pull
+    request they'd recognize as one of their own — draft, because no human has
+    looked at this work yet, and a ready PR would pull reviewers in before
+    that gate happens.
+Reads: `scoping.md` for what this task covers and what was deliberately left
+    out, `final-verification.md` for the literal output of what last ran,
+    `review-fixes.md`, if the route passed through review, for what changed as
+    a result, and `documentation.md` for what the change left unexplained
+    anywhere in the repository.
 Writes: `pull-request.md`.
-Done when: the PR exists on the host and `pull-request.md` records its
-  URL and whether automatic CI repair is on, or — if creation failed —
-  records that outcome and why, and `step_complete_kandev` has been
-  called either way.
+Done when: the PR exists on the host and `pull-request.md` records its URL and
+    whether automatic CI repair is on, or — if creation failed — records that
+    outcome and why, and `step_complete_kandev` has been called either way.
 
 ## The repository's template outranks yours
 
@@ -41,15 +41,17 @@ importing one.
 
 Draw content from what already exists rather than re-deriving it: `scoping.md`
 for what this task covers and what was left out on purpose,
-`final-verification.md` for what actually ran, and `review-fixes.md` for what
-changed after review, if the route went through one. Nothing you didn't read
-or run belongs in the description — claim only the testing
-`final-verification.md` shows actually happened, and if the template has a
-validation or testing section, fill it with that record, not with a "tests
-passing" checkbox. Leave no template placeholder unfilled, and describe the
-work no more favorably than the work itself does — whoever reads this is
-deciding whether the change is worth their review time, not receiving a pitch
-for it.
+`final-verification.md` for what actually ran, `review-fixes.md` for what
+changed after review, if the route went through one, and `documentation.md`'s
+«Что осталось незадокументированным и почему» for the reasoning this change
+carries that had nowhere in the repository to live — this description is that
+reasoning's only home. Nothing you didn't read or run belongs in the
+description — claim only the testing `final-verification.md` shows actually
+happened, and if the template has a validation or testing section, fill it
+with that record, not with a "tests passing" checkbox. Leave no template
+placeholder unfilled, and describe the work no more favorably than the work
+itself does — whoever reads this is deciding whether the change is worth their
+review time, not receiving a pitch for it.
 
 Do not sign the description with a tool-attribution footer. Who wrote a change
 is what the commit trailers already record, and a repository that wants the

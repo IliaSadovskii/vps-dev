@@ -16,12 +16,12 @@ Done when: `scoping.md` carries all three required sections and you have
 ## What belongs, and what doesn't
 
 Deciding scope means saying which work belongs to this task, not how that work
-should get done — that split is why `Decision Mapping` and `Planning` exist
-further down the chain, and an approach you settle on here is a decision made
-in the wrong role, one nobody downstream signed up to inherit. Draw the line
-by consequence: something belongs if leaving it undone would leave the task's
-own stated outcome unmet. Anything a reader could plausibly imagine bundling
-in without being wrong is a candidate for "Не входит," not a reason to widen
+should get done — that split is why `Research` and `Planning` exist further
+down the chain, and an approach you settle on here is a decision made in the
+wrong role, one nobody downstream signed up to inherit. Draw the line by
+consequence: something belongs if leaving it undone would leave the task's own
+stated outcome unmet. Anything a reader could plausibly imagine bundling in
+without being wrong is a candidate for "Не входит," not a reason to widen
 "Входит."
 
 ## Writing exceptions where they can be seen

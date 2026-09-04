@@ -13,14 +13,13 @@
 ```text
 Quick     │ Backlog │ Discovery │ Scoping │ Test Authoring │ Implementation │
           │ Verification │ Code Review │ Security Review │ Review Fixes │
-          │ Final Verification │ Draft PR │ Human Review │ Done
+          │ Final Verification │ Documentation │ Draft PR │ Human Review │ Done
 
 Standard  │ Backlog │ Discovery │ Scoping │ Planning │ Plan Review │
           │ Plan Approval │ + весь хвост Quick от Test Authoring
 
-Deep      │ Backlog │ Discovery │ Scoping │ Decision Mapping │
-          │ Targeted Research │ Solution Synthesis │ Solution Approval │
-          │ + весь Standard от Planning
+Deep      │ Backlog │ Discovery │ Scoping │ Research │ Solution Synthesis │
+          │ Solution Approval │ + весь Standard от Planning
 ```
 
 Начало у всех трёх одинаково: `Backlog` — ручная очередь, где карточка ждёт,
@@ -35,12 +34,12 @@ Deep      │ Backlog │ Discovery │ Scoping │ Decision Mapping │
 | Роль | Питается тем, что… |
 |---|---|
 | Backlog, Discovery, Scoping | всегда есть |
-| Decision Mapping, Targeted Research, Solution Synthesis, Solution Approval | есть выбор между решениями |
+| Research, Solution Synthesis, Solution Approval | есть выбор между решениями |
 | Planning, Plan Review, Plan Approval | работа не помещается в один заход |
 | Test Authoring, Implementation, Verification | всегда есть |
 | Code Review, Security Review | есть диф |
 | Review Fixes, Final Verification | ревью что-то нашло |
-| Draft PR, Human Review | всегда есть |
+| Documentation, Draft PR, Human Review | всегда есть |
 
 Пустой вход бывает только у первых двух групп, поэтому убирать можно только их.
 **Режется обдумывание, а не контроль качества**: хвост от Code Review до
@@ -98,8 +97,10 @@ Plan Review, тащить их в реализацию дороже, чем пе
   репозитории. Его артефакт читают все роли со сброшенным контекстом.
 - `Scoping` определяет границы задачи после знакомства с проектом: что входит,
   что намеренно нет и почему, что принято на веру. Маршрут он не выбирает.
-- `Decision Mapping` оставляет только реальные развилки, `Targeted Research`
-  исследует именно их. Поиск не превращается в общий дорогой обзор.
+- `Research` сначала отсеивает мнимые развилки, потом ищет по оставшимся —
+  именно по их критериям, а не по теме вообще. Отбор идёт до поиска: поиск,
+  запущенный раньше списка, расползается в общий дорогой обзор, а развилка,
+  записанная после поиска, подгоняется под найденное.
 - `Solution Synthesis` сводит локальный контекст и внешние данные в один вариант.
 - `Planning` создаёт план, `Plan Review` проверяет его свежим взглядом до
   человеческого `Plan Approval`.
@@ -114,7 +115,12 @@ Plan Review, тащить их в реализацию дороже, чем пе
 - Первая `Verification` и `Final Verification` — разные работы и потому имеют
   разные промпты. Первая замыкает red-green в контексте реализации, вторая
   работает в контексте `Review Fixes` и гоняет полный прогон после правок.
-- После `Final Verification` создаётся draft PR. Нативный PR/MR auto-fix не
+- `Documentation` идёт после `Final Verification`, в её же контексте: правки
+  по ревью уже улеглись, прогон зелёный, и документацию имеет смысл править
+  по итоговому коду, а не по промежуточному. Её работа — прежде всего чинить
+  разошедшееся с кодом; писать новое она имеет право только там, где проект
+  и так документирует такие вещи.
+- После `Documentation` создаётся draft PR. Нативный PR/MR auto-fix не
   является шагом цепочки: это переключатель на самой задаче, и включить его
   должна роль `Draft PR` через `update_task_pr_automation_kandev`.
 
@@ -152,8 +158,7 @@ Workflow-level prompt `@custom-artifact-protocol` будет общим конт
   README.md
   discovery.md
   scoping.md
-  decision-mapping.md
-  targeted-research.md
+  research.md
   solution-synthesis.md
   plan-review.md
   test-authoring.md
@@ -162,6 +167,7 @@ Workflow-level prompt `@custom-artifact-protocol` будет общим конт
   security-review.md
   review-fixes.md
   final-verification.md
+  documentation.md
   pull-request.md
 ```
 

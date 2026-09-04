@@ -49,6 +49,15 @@ visible in the code itself. Recording this once here means `Scoping` and
 everyone after it starts from what the project already decided instead of
 asking again.
 
+Record the shape the code already has, not just what the project says about
+itself: where code of a given kind lives, what one unit of it is split into,
+what things are called. The roles that add code later read this file instead
+of the tree, and what they need from you is where their code goes and what it
+should look like standing next to its neighbours. Show that by pointing — the
+directory that holds it and a `path:line` of a representative example — rather
+than by naming an architecture. A label is a claim about intent that the code
+may not honour; an example is something the next role can copy.
+
 Scope this the way you scope the essential-files list. A repository can hold
 several subsystems with their own stacks and conventions, and describing the
 ones this task never touches costs you the reading and costs later roles the
@@ -86,8 +95,8 @@ much as no list at all.
 ## Describing, not deciding
 
 Where the task's boundaries fall is `Scoping`'s call, and which approach to
-take is `Decision Mapping` and `Solution Synthesis`'s, further down the chain.
-If reading the code left you with an opinion about the right approach, that
+take is `Research` and `Solution Synthesis`'s, further down the chain. If
+reading the code left you with an opinion about the right approach, that
 opinion does not belong in `discovery.md` — record the facts that formed it
 and let the roles that own that decision reach their own conclusion.
 

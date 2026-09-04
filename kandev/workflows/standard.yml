@@ -278,11 +278,32 @@ workflows:
         auto_advance_requires_signal: true
         cancel_triggers_turn_complete: false
 
+      # Документация проекта после того, как правки по ревью улеглись и
+      # прогон снова зелёный. Работает в контексте Review Fixes, чинит
+      # разошедшееся с кодом и не трогает сам код.
+      - name: Documentation
+        position: 13
+        color: bg-teal-500
+        prompt: |
+          @custom-documentation
+
+          {{task_prompt}}
+        events:
+          on_enter:
+            - type: auto_start_agent
+          on_turn_complete:
+            - type: move_to_next
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        auto_advance_requires_signal: true
+        cancel_triggers_turn_complete: false
+
       # Нативный CI auto-fix — переключатель на самой задаче, а не шаг
       # цепочки. Если он нужен, @custom-pull-request включает его через
       # `update_task_pr_automation_kandev` после связывания PR.
       - name: Draft PR
-        position: 13
+        position: 14
         color: bg-indigo-500
         prompt: |
           @custom-pull-request
@@ -301,7 +322,7 @@ workflows:
 
       # Последние ворота человека. Назад — за правками, вперёд — в Done.
       - name: Human Review
-        position: 14
+        position: 15
         color: bg-yellow-500
         events: {}
         is_start_step: false
@@ -311,7 +332,7 @@ workflows:
         cancel_triggers_turn_complete: false
 
       - name: Done
-        position: 15
+        position: 16
         color: bg-green-500
         events: {}
         is_start_step: false
