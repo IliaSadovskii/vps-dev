@@ -47,14 +47,14 @@
 | Targeted Research | продолжает | `decision-mapping.md` | `targeted-research.md` |
 | Solution Synthesis | продолжает | `decision-mapping.md`, `targeted-research.md`, `discovery.md` | `solution-synthesis.md` |
 | Planning | продолжает | `scoping.md`, `solution-synthesis.md` если есть | нативный Kandev Plan |
-| Plan Review | **сброшен** | нативный Plan, `scoping.md`, `solution-synthesis.md` если есть | `plan-review.md` |
+| Plan Review | **сброшен** | нативный Plan, `scoping.md`, `solution-synthesis.md` если есть, свой прошлый `plan-review.md` | `plan-review.md`, при блокирующем вердикте — возврат на `Planning` |
 | Test Authoring | сброшен в Standard и Deep, продолжает в Quick | нативный Plan если есть, `scoping.md` | `test-authoring.md` |
 | Implementation | продолжает | — (тот же контекст, что Test Authoring) | своего файла нет, см. ниже |
 | Verification | продолжает | — | `verification.md` |
 | Code Review | **сброшен** | `scoping.md`, `verification.md`, нативный Plan если есть | `code-review.md` + `publish_review_findings_kandev` |
 | Security Review | **сброшен** | `scoping.md`, `code-review.md` | `security-review.md` + `publish_review_findings_kandev` |
 | Review Fixes | **сброшен** | `code-review.md`, `security-review.md`, находки в Kandev | `review-fixes.md` |
-| Final Verification | продолжает | `review-fixes.md` | `final-verification.md` |
+| Final Verification | продолжает | `review-fixes.md`, свой прошлый `final-verification.md` | `final-verification.md`, при провале — возврат на `Review Fixes` |
 | Draft PR | продолжает | `scoping.md`, `final-verification.md`, `review-fixes.md` | `pull-request.md` |
 
 ### Про Implementation
@@ -68,6 +68,33 @@
 `verification.md` разделом «Отклонения от плана» — потому что именно
 `Verification` идёт следом в том же контексте и именно там это увидит
 `Code Review`.
+
+## Возврат назад при блокирующем исходе
+
+Решение 8: роль-критик при блокирующем вердикте сама возвращает карточку
+назад через `move_task_kandev`, не больше двух раз подряд, после чего обязана
+остановиться и оставить решение человеку. Механизм проверен: агентский переход
+вытесняет штатный `on_turn_complete`, а пропущенные колонки не запускают
+агентов вовсе.
+
+Это касается **ровно двух ролей**, и важно понимать, почему не всех:
+
+| Роль | Возврат куда | Когда |
+|---|---|---|
+| `Plan Review` | `Planning` | вердикт «заблокировано» |
+| `Final Verification` | `Review Fixes` | проверка упала |
+
+`Code Review` и `Security Review` возврата **не делают**: у их находок уже есть
+штатный получатель — `Review Fixes` идёт следующим шагом вперёд. Возврат оттуда
+означал бы прыжок через роль, созданную ровно для этой работы.
+
+Счётчик кругов роль хранит в своём артефакте разделом «Номер круга»: читает
+свой прошлый файл, если он есть, и увеличивает. Формулировать его надо как
+порядковый номер, а не как остаток ресурса — счётчики оставшегося провоцируют
+преждевременное сворачивание работы.
+
+На втором круге роль возврата не делает: пишет вердикт, называет, что осталось
+нерешённым, и передаёт вперёд, к человеческим воротам.
 
 ## Обязательные разделы артефактов
 
@@ -112,7 +139,7 @@
 требуется · Что намеренно не тронуто · Номер круга.
 
 **`final-verification.md`** — Что запущено, дословный вывод · Результат ·
-Расхождения с `verification.md`, если есть.
+Расхождения с `verification.md`, если есть · Номер круга.
 
 **`pull-request.md`** — Ссылка на PR · Что вошло в описание · Включена ли
 автоматическая починка CI.
