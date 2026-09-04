@@ -72,9 +72,13 @@ Confirm the branch is pushed before anything else here — nothing earlier in
 this chain has guaranteed that, and a PR can't open against a branch the
 remote doesn't have. Check whether a PR already exists for this branch
 (`gh pr list --head <branch>`, or the equivalent on GitLab) before creating
-one: this step can run again if `Final Verification` sends work back through
-`Review Fixes`, and a second draft would leave the review gate looking at two
-open requests instead of one. Otherwise create it with this host's CLI —
+one. This step runs again on every rework lap — a message written at
+`Human Review` sends the card back to `Review Fixes`, and the chain returns
+here — so a repeat visit is the ordinary case, not an anomaly. When a PR is
+already open for this branch, do not create a second one: bring its title and
+description up to date with what changed since, leave it a draft, and record
+that URL. Two open requests would leave the review gate reading whichever one
+it happened to open. Otherwise create it with this host's CLI —
 `gh pr create --draft` on GitHub, `glab mr create --draft` on GitLab, matching
 whichever this repository's remote actually is — and pass the draft flag
 explicitly rather than relying on whatever the CLI defaults to today.

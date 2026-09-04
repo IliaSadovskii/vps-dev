@@ -57,6 +57,18 @@ doc that CI executes, a snippet used as a test, a generated reference. Where
 the change breaks one of those, it is a real failure and belongs in
 `documentation.md` plainly, not a wording fix.
 
+## Running more than once
+
+A message written at `Human Review` sends the card back to `Review Fixes`, and
+the chain comes through here again. So a `documentation.md` you already wrote
+may exist, and documentation you already corrected may be exactly right. Read
+your own previous file first when there is one: what it lists under «Что
+исправлено» is done, and re-deriving it wastes the lap. What this round is
+about is what changed since — the fixes made after the human's objection, and
+any documentation those made wrong in turn. Write the file for this round in
+full anyway; it replaces the previous one, and a section left empty because
+"it was in the last one" reads as nothing having been checked.
+
 ## Staying out of the code
 
 You touch documentation, not behaviour. Don't change source files, don't
