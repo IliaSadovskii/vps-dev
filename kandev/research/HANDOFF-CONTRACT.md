@@ -68,7 +68,7 @@
 | Discovery | первый шаг | — | `README.md`, `discovery.md` |
 | Scoping | продолжает | `discovery.md`; при возврате — свой прошлый `scoping.md` и разговор задачи | `scoping.md`; если владелец согласился разбить задачу — по карточке на каждую остальную часть в `Backlog` через `create_task_kandev` (`start_agent: false`, `source_task_id` = эта задача) |
 | Research | **сброшен** | `scoping.md`, `discovery.md` | `research.md` |
-| Solution Synthesis | продолжает; при возврате с `Solution Approval` — тот же контекст, заметки человека в разговоре | `research.md`, `scoping.md`, `discovery.md`, свой прошлый `solution-synthesis.md` при возврате | `solution-synthesis.md` |
+| Solution Synthesis | **сброшен**; заметки человека — через разговор задачи | `research.md`, `scoping.md`, `discovery.md`, свой прошлый `solution-synthesis.md` при возврате | `solution-synthesis.md` |
 | Planning | **сброшен**; заметки человека — через разговор задачи | нативный Plan (обязательно до записи), `scoping.md`, `solution-synthesis.md` и `research.md` если есть, `discovery.md`, `plan-review.md` если есть | нативный Kandev Plan, строка в `README.md` |
 | Plan Review | **сброшен** | нативный Plan, `discovery.md`, `scoping.md`, `solution-synthesis.md` и `research.md` если есть, свой прошлый `plan-review.md`, разговор задачи | `plan-review.md`; блокирующий вердикт на попытке 1 — возврат на `Planning` |
 | Test Authoring | **сброшен** | нативный Plan если есть, `plan-review.md` если есть («Незаблокирующие замечания» — названные там сценарии тестов), `scoping.md`, `discovery.md` («Тесты и проверки»), `research.md` если есть, свой прошлый `test-authoring.md`, разговор задачи | `test-authoring.md`, коммит тестов с трейлером `Kandev-Step: Test Authoring` |

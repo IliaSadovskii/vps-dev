@@ -159,6 +159,8 @@ workflows:
         auto_advance_requires_signal: true
         cancel_triggers_turn_complete: false
 
+      # Память сброшена: все входы — файлы, а профиль модели здесь может
+      # отличаться от Research (решение 58), смена модели память и так рвёт.
       - name: Solution Synthesis
         position: 4
         color: bg-purple-500
@@ -172,6 +174,7 @@ workflows:
           {{task_prompt}}
         events:
           on_enter:
+            - type: reset_agent_context
             - type: auto_start_agent
           on_turn_complete:
             - type: move_to_next

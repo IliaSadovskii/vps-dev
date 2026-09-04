@@ -79,10 +79,10 @@ rewriting the boundary it drew is not.
 card on, and `Planning` takes the option you recommended. Disagreeing means
 the human writes one or more notes at the gate — possibly minutes apart,
 each answered there with a bare acknowledgement — and drags the card back
-here when they are done. Your context is not cleared on that return, so
-the notes and the earlier reasoning are both in this conversation; read
-every human message since your previous file, not only the last one, and
-treat them together as one change request. `solution-synthesis.md` is not
+here when they are done. Your context is cleared on entry, so call
+`get_task_conversation_kandev` and read every human message since your
+previous file, not only the last one, and treat them together as one
+change request. `solution-synthesis.md` is not
 in your context: you are about to overwrite the file that recorded what
 you chose last round.
 

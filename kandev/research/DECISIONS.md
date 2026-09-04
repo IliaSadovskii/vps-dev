@@ -523,3 +523,16 @@ API он не трогает, так что прыжки и возвраты р�
 не нужный. `show_in_command_panel` выключен только у Backlog и Done,
 `cancel_triggers_turn_complete` false везде, `wip_limit` не задан. Смысл
 каждого флага записан в шапке `deep.yml`.
+
+**58. Профили моделей раздаются в интерфейсе, не в файлах; перед Solution
+Synthesis — сброс памяти.** Владелец хочет отдать сервер друзьям с другими
+подписками, поэтому привязка колонок к моделям в репозитории не хранится:
+выкатка профили не трогает, что поставлено в интерфейсе, переживает
+обновления. Раскладка сегодня: Opus (усилие high) — Solution Synthesis,
+Planning, Code Review, Security Review, Fix Review; Codex GPT-5.6 Sol —
+Plan Review; Haiku — Final Verification, Draft PR, все ворота, Backlog,
+Done; Sonnet (high) — остальное. Смена модели рвёт общую память, поэтому
+раздача идёт по отрезкам; отрезок Research → Solution Synthesis разорван
+сбросом, чтобы поиск шёл на Sonnet, а выбор решения на Opus: Synthesis
+читает всё из файлов, сброс почти бесплатен. Основание — замеры Anthropic
+и Cognition: сильная модель на плане и суждении, дешёвая на исполнении.
