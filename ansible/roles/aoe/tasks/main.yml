@@ -131,6 +131,20 @@
     group: "{{ base_deploy_user }}"
     mode: '0644'
 
+# YOLO — обход вопросов разрешений, как bypass у Claude и Codex: машина
+# закрыта Tailscale, человек в сессии не сидит и на вопросы не отвечает.
+# На одну сессию отключается флагом создания сессии (галка YOLO в диалоге),
+# поэтому по умолчанию для новых сессий — включено.
+- name: YOLO-режим для новых сессий включён
+  ansible.builtin.lineinfile:
+    path: "/home/{{ base_deploy_user }}/.config/agent-of-empires/config.toml"
+    regexp: '^yolo_mode_default\s*='
+    line: 'yolo_mode_default = true'
+    insertafter: '^\[session\]\s*$'
+    owner: "{{ base_deploy_user }}"
+    group: "{{ base_deploy_user }}"
+    mode: '0644'
+
 - name: Веб-панель
   when: aoe_web_enabled
   block:
