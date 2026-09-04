@@ -54,7 +54,7 @@
 | Code Review | **сброшен** | `scoping.md`, `verification.md`, нативный Plan если есть | `code-review.md` + `publish_review_findings_kandev` |
 | Security Review | **сброшен** | `scoping.md`, `code-review.md` | `security-review.md` + `publish_review_findings_kandev` |
 | Review Fixes | **сброшен** | `code-review.md`, `security-review.md`, находки в Kandev | `review-fixes.md` |
-| Final Verification | продолжает | `review-fixes.md`, свой прошлый `final-verification.md` | `final-verification.md`, при провале — возврат на `Review Fixes` |
+| Final Verification | продолжает | `verification.md`, `review-fixes.md`, свой прошлый `final-verification.md` | `final-verification.md`, при провале — возврат на `Review Fixes` |
 | Draft PR | продолжает | `scoping.md`, `final-verification.md`, `review-fixes.md` | `pull-request.md` |
 
 ### Про Implementation
