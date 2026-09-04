@@ -95,12 +95,14 @@ file's. Record the number and the reason in «Попытка».
 Green on every run, including the ownership script: call
 `step_complete_kandev`.
 
-Red on attempt 1: call `list_workflow_steps_kandev`, find the exact
-`Implementation` step ID in the current workflow, and call
-`move_task_kandev` with only the current `task_id`, that
-`workflow_step_id`, and a short prompt pointing at `verification.md`.
-Do not call `step_complete_kandev` in that turn: the platform keeps a
-pending signal and would fire it on the next entry to this column.
+Red on attempt 1: move the card to `Implementation` as the protocol
+describes — workflow ID and step ID from the lookup, then
+`move_task_kandev` with `task_id`, `workflow_id`, `workflow_step_id`
+and a short `prompt` pointing at `verification.md`. Do not call
+`step_complete_kandev` in that turn: the platform keeps a pending
+signal and would fire it on the next entry to this column. If the move
+fails, call `step_complete_kandev` instead and begin your closing
+message with `Не решено:` naming the failed move.
 
 Red on attempt 2: do not loop again. Call `step_complete_kandev` and
 end your turn with a message whose first line starts with `Не решено:`

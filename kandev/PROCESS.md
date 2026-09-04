@@ -23,12 +23,17 @@
  Выбрать       Research → Solution Synthesis → [Solution Approval]
  Спланировать  Planning ⇄ Plan Review → [Plan Approval]
  Сделать       Test Authoring → Implementation ⇄ Verification
- Проверить     Code Review → Security Review → Review Fixes ⇄ Fix Review
-               ⇄ Final Verification → Documentation → Draft PR
+ Проверить     Code Review → Security Review → Review Fixes → Fix Review
+               → Final Verification → Documentation → Draft PR
  Принять       [Human Review] → Done
 ```
 
 `[ ]` — ворота, карточка ждёт вас. `⇄` — агент может один раз вернуть.
+Ещё два возврата: Fix Review и Final Verification возвращают на Review
+Fixes, один раз на заход вместе. И два прыжка вперёд, когда вход пуст:
+Research без развилок едет сразу на Planning (Solution Approval вы не
+увидите), Security Review без находок у обоих ревью едет сразу на Final
+Verification.
 
 ## Ваши действия
 
@@ -62,12 +67,19 @@
 
 Агент не работает, карточка не едет.
 
-1. Прочитать последнее сообщение агента.
-2. Написать «продолжай»: агент продолжит с той же памятью.
-3. Нужен чистый перезапуск — перетащить в Backlog и обратно. В соседнюю
-   колонку нельзя: стартует её агент.
+1. Посмотреть, не ждёт ли агент вас: висящий вопрос или запрос разрешения
+   на команду. Ответить. Если запросы разрешений повторяются, у профиля
+   агента выключено автоодобрение — включить в настройках Kandev до
+   запуска, иначе каждая команда будет ждать вас.
+2. Прочитать последнее сообщение агента.
+3. Написать «продолжай»: агент продолжит с той же памятью.
+4. Нужен перезапуск — нажать Stop, перетащить в Backlog и обратно. Память
+   очистится только на колонках со сбросом (Research, Planning, Plan
+   Review, Test Authoring, Code Review, Security Review, Review Fixes, Fix
+   Review, Final Verification); остальные продолжат с прежней памятью.
+   В соседнюю колонку тащить нельзя: стартует её агент.
 
 ## Что за этим стоит
 
-Решения 24–38 в `research/DECISIONS.md`, найденные дыры в
+Решения 24–50 в `research/DECISIONS.md`, найденные дыры в
 `PROMPT-AUDIT.md`. Quick и Standard — после первой полной задачи на Deep.

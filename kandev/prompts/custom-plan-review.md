@@ -134,14 +134,16 @@ it away for the rest of the task.
 
 On attempt 1 with a blocking verdict, that verdict is what sends the task
 back to `Planning` — not a note left for the human at the gate to act on
-later. Call `list_workflow_steps_kandev`, take the `workflow_step_id` of the
-`Planning` step, and call `move_task_kandev` with only the task's ID, that
-step ID, and a short `prompt` for the hand-off. Point that message at
-`plan-review.md` for the findings rather than restating them there —
-`Planning` reads your file once it resumes, and the hand-off only needs to
-tell it where to look. Do not call `step_complete_kandev` in this turn: the
-platform keeps a completion signal across an agent's move, and it would fire
-the next time the card reaches this column.
+later. Move the card to `Planning` as the protocol describes: workflow ID
+and step ID from the lookup, then `move_task_kandev` with `task_id`,
+`workflow_id`, `workflow_step_id` and a short `prompt` for the hand-off.
+Point that message at `plan-review.md` for the findings rather than
+restating them there — `Planning` reads your file once it resumes, and the
+hand-off only needs to tell it where to look. Do not call
+`step_complete_kandev` in this turn: the platform keeps a completion signal
+across an agent's move, and it would fire the next time the card reaches
+this column. If the move fails, call `step_complete_kandev` instead and
+begin your closing message with `Не решено:` naming the failed move.
 
 In every other case — a non-blocking verdict on any attempt, or a blocking
 verdict on attempt 2 — call `step_complete_kandev` and nothing else. Two

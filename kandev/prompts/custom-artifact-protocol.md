@@ -60,9 +60,27 @@ A turn ends with one of two calls, never both: `step_complete_kandev` to
 move forward, or `move_task_kandev` to send the card back. The platform does
 not clear a completion signal when an agent moves the card; a signal given
 alongside a return survives and fires the next time the card reaches your
-column, whether or not you meant it to. `move_task_kandev` takes only
-`task_id`, `workflow_step_id` and `prompt`; the step ID comes from
-`list_workflow_steps_kandev`.
+column, whether or not you meant it to.
+
+### Finding your workflow and its steps
+
+`move_task_kandev` and `create_task_kandev` both need a workflow ID and a
+step ID, and the environment gives neither: only `KANDEV_TASK_ID` and
+`KANDEV_WORKSPACE_ID` are set. Before either call, look them up. Call
+`list_workflows_kandev` with `KANDEV_WORKSPACE_ID`; for each workflow it
+returns, call `list_tasks_kandev` with that workflow's ID and keep the
+workflow whose task list contains `KANDEV_TASK_ID`; then call
+`list_workflow_steps_kandev` with that workflow ID and pick the target step
+by its exact name. A move is then `move_task_kandev` with `task_id`,
+`workflow_id`, `workflow_step_id` and a short `prompt` in Russian. The
+schema is strict: `workflow_id` is required, and an argument the tool does
+not list is rejected.
+
+If the move call fails, do not leave the turn without a transition: call
+`step_complete_kandev` instead and begin your closing message with
+`Не решено:` naming the move that failed and where the card should have
+gone, so the next step and the human see that the chain went forward by
+fallback rather than by verdict.
 
 ## Reading
 

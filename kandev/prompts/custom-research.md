@@ -222,12 +222,13 @@ run on an empty input. When `## Развилки` is empty after a genuine
 screening — every candidate landed under «Мнимые развилки» with the file,
 convention or reasoning that decided it — write `research.md` with all four
 sections anyway (an empty «Развилки» is the claim), then skip the two steps
-yourself: call `list_workflow_steps_kandev`, take the exact `Planning` step
-ID in this workflow, and call `move_task_kandev` with this task's ID, that
-`workflow_step_id`, and a one-line Russian prompt saying that no fork was
-found and pointing at `research.md`. Do not call `step_complete_kandev` in
-that case — one transition per turn. If the move fails, fall back to
-`step_complete_kandev` and say in your closing message that the two steps
+yourself: move the card to `Planning` as the protocol describes — workflow
+ID and step ID from the lookup, then `move_task_kandev` with `task_id`,
+`workflow_id`, `workflow_step_id` and a one-line Russian `prompt` saying
+that no fork was found and pointing at `research.md`. Do not call
+`step_complete_kandev` in that case — one transition per turn. If the move
+fails, call `step_complete_kandev` instead and begin your closing message
+with `Не решено:` naming the failed move and saying that the two steps
 will run on an empty input. The premise for skipping is the empty section,
 not your feeling about the task's size: one real fork, however small, goes
 the normal way.

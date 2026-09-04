@@ -91,12 +91,14 @@ were clean — means no automatic return has happened yet in this lap;
 A clean run with no regression and a clean ownership verdict ends the step
 normally with `step_complete_kandev`. A run that fails, turns up a
 regression, or fails ownership, while the return is available, sends the
-card back: call `list_workflow_steps_kandev`, find the exact `Review Fixes`
-step ID, and call `move_task_kandev` with only this task's ID, that
-`workflow_step_id`, and a `prompt` pointing at `final-verification.md`
-rather than restating the failures — the step reads your file directly once
-it resumes, so the hand-off only has to say where to look. Do not call
-`step_complete_kandev` in that outcome.
+card back: move it to `Review Fixes` as the protocol describes — workflow
+ID and step ID from the lookup, then `move_task_kandev` with `task_id`,
+`workflow_id`, `workflow_step_id` and a `prompt` pointing at
+`final-verification.md` rather than restating the failures — the step reads
+your file directly once it resumes, so the hand-off only has to say where
+to look. Do not call `step_complete_kandev` in that outcome. If the move
+fails, call `step_complete_kandev` instead and begin your closing message
+with `Не решено:` naming the failed move.
 
 When the return is already spent, do not return the card again: write the
 verdict honestly, call `step_complete_kandev`, and make your closing message

@@ -36,6 +36,10 @@ workflows:
       - name: Backlog
         position: 0
         color: bg-neutral-400
+        # Промпт ворот: сообщение в карточке на Backlog не должно запускать
+        # работу без роли.
+        prompt: |
+          @custom-gate
         events: {}
         is_start_step: true
         show_in_command_panel: false
@@ -157,15 +161,15 @@ workflows:
           @custom-planning
 
           {{task_prompt}}
+        # Без enable_plan_mode: он подмешивает баннер платформы «сохрани
+        # план и остановись, жди ревью», который спорит с сигналом
+        # завершения. План и так пишется только в нативный Plan.
         events:
           on_enter:
             - type: reset_agent_context
-            - type: enable_plan_mode
             - type: auto_start_agent
           on_turn_complete:
             - type: move_to_next
-          on_exit:
-            - type: disable_plan_mode
         is_start_step: false
         show_in_command_panel: true
         allow_manual_move: true

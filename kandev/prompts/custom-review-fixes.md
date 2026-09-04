@@ -30,33 +30,42 @@ Done when: `review-fixes.md` carries one entry for every item this entry's
 
 Four different callers land a card on this step, and the first thing to do is
 tell which one it was, because each makes a different set of items this
-turn's work and the artifact records the answer under Заход.
+turn's work and the artifact records the answer under Заход. Tell them apart
+by three checks, in this order, stopping at the first that holds: the turn
+opened with a hand-off pointing at `fix-review.md` or
+`final-verification.md` — the step that wrote that file sent the card;
+otherwise your own previous `review-fixes.md` exists on this task, or
+`pull-request.md` does (the chain reached the PR without you, because both
+reviews were clean) — a human dragged the card back; otherwise — the
+review steps.
 
-The review steps. The card arrived from `Security Review` after `Code Review`,
-your context is fresh, and the work is every finding in `code-review.md` and
-`security-review.md`. Record `Вызван: ревью`.
+The review steps. No hand-off opened the turn and neither
+`review-fixes.md` nor `pull-request.md` exists yet: the card arrived from `Security Review` after
+`Code Review`, your context is fresh, and the work is every finding in
+`code-review.md` and `security-review.md`. Record `Вызван: ревью`.
 
-A human. Someone at `Human Review` or `Done` wrote one or more notes there
+A human. No hand-off opened the turn, but your previous `review-fixes.md`
+exists: someone at `Human Review` or `Done` wrote one or more notes there
 — possibly minutes apart, each answered at the gate with a bare
 acknowledgement — and dragged the card back here when they were done. Your
 context was cleared on entry, so call `get_task_conversation_kandev` and
-read every human message since your previous `review-fixes.md` (or since
-`Draft PR` ran, if this is the first human return); treat them together as
-one request. The work is what the person wrote, and nothing else: the two
-review files were answered in an earlier entry, and reopening them wastes
-the lap and undoes work someone accepted. Where a note contradicts a
-finding you closed earlier, the human wins, and you say plainly in your
-entry which earlier decision you reversed. Record `Вызван: человек`.
+read every human message since your previous `review-fixes.md`; treat them
+together as one request. The work is what the person wrote, and nothing
+else: the two review files were answered in an earlier entry, and reopening
+them wastes the lap and undoes work someone accepted. Where a note
+contradicts a finding you closed earlier, the human wins, and you say
+plainly in your entry which earlier decision you reversed. Record
+`Вызван: человек`.
 
-`Fix Review`. It read your previous entry's diff and found it wanting, and it
-sent the card back with a prompt pointing at `fix-review.md`. Your context is
-fresh again. The work is only what that file names — its Вердикт and its
-Новые находки — not the original review findings, which it already checked.
-Record `Вызван: Fix Review`.
+`Fix Review`. The turn opened with a hand-off pointing at `fix-review.md`:
+it read your previous entry's diff and found it wanting, and it sent the
+card back. Your context is fresh again. The work is only what that file
+names — its Вердикт and its Новые находки — not the original review
+findings, which it already checked. Record `Вызван: Fix Review`.
 
-`Final Verification`. The full suite failed after your fixes, and the card
-came back with a prompt pointing at `final-verification.md`. The work is only
-the failures and regressions that file names. Record
+`Final Verification`. The turn opened with a hand-off pointing at
+`final-verification.md`: the full suite failed after your fixes. The work
+is only the failures and regressions that file names. Record
 `Вызван: Final Verification`.
 
 A human's message is not the task description. It is a person addressing this

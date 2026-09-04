@@ -101,14 +101,17 @@ there is one, the path in the code.
 A deferred item that lives only in a PR description dies with the PR. When
 `Отложено` is non-empty, create one card in this workflow's `Backlog`
 through `create_task_kandev`: title «Долг по PR <number>», with the number
-the host assigned, a description listing the same items with their file
-pointers, `workflow_step_id` the `Backlog` step from
-`list_workflow_steps_kandev`, `source_task_id` this task, and
-`start_agent: false`, so it waits for the owner instead of starting a
-chain. On a repeat lap your previous `pull-request.md` says whether such a
-card exists: if it records one, rewrite that card's description with
-`update_task_kandev` (its `task_id` and the new `description`) rather
-than creating a second; if it records none, create one. Either way,
+the host assigned, `prompt` listing the same items with their file
+pointers, `workspace_id` from `KANDEV_WORKSPACE_ID`, `workflow_id` and
+`workflow_step_id` this workflow and its `Backlog` step from the lookup
+the protocol describes, and `start_agent: false`, so it waits for the
+owner instead of starting a chain. The repository is inherited from this
+task where the platform allows; otherwise pass this task's `repository_id`
+if the conversation names it, and omit it if not. On a repeat lap your
+previous `pull-request.md` says whether such a card exists: if it records
+one, rewrite that card's text with `update_task_kandev` (its `task_id` and
+the new text) rather than creating a second; if it records none, create
+one. Either way,
 `pull-request.md` records the card — its ID and title — or that none was
 needed.
 

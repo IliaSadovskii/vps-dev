@@ -69,13 +69,16 @@ Where nothing splits, say nothing about it.
 
 If the owner says yes, this card keeps the first part. For every other
 part, create a card in this workflow's `Backlog` through
-`create_task_kandev`: `workflow_step_id` is the `Backlog` step from
-`list_workflow_steps_kandev`, `source_task_id` is this task — the new card
-inherits its repositories — and `start_agent` is `false`, so the card waits
-there instead of starting a chain the owner has not looked at. Give each
-card a title and a description that stand on their own: the agent that
-later opens it sees that description and nothing else — not this task, not
-your file, not the conversation the split came from. Then narrow `Входит`
+`create_task_kandev`: `workspace_id` is `KANDEV_WORKSPACE_ID`,
+`workflow_id` and `workflow_step_id` are this workflow and its `Backlog`
+step from the lookup the protocol describes, `prompt` is the card's text,
+and `start_agent` is `false`, so the card waits there instead of starting
+a chain the owner has not looked at. The repository is inherited from this
+task where the platform allows; otherwise pass this task's `repository_id`
+if the conversation names it, and omit it if not. Give each card a title
+and a `prompt` that stand on their own: the agent that later opens it sees
+that text and nothing else — not this task, not your file, not the
+conversation the split came from. Then narrow `Входит`
 to the first part and record the cards you created under `Не входит`, each
 with its title, so later steps see the boundary and know where the rest
 went.

@@ -173,10 +173,11 @@ none — your own «Находки» is empty and `code-review.md`'s «Нахо�
 empty too, on this lap — both steps would run on nothing. Check the
 premise literally: an empty section in both files, not a verdict you read
 as mild. `Готов с оговорками` with even a `nit` listed is not empty. When it
-holds, skip them yourself: call `list_workflow_steps_kandev`, take the
-exact `Final Verification` step ID in this workflow, and call
-`move_task_kandev` with this task's ID, that `workflow_step_id`, and a
-one-line Russian prompt saying both reviews were clean. Do not call
+holds, skip them yourself: move the card to `Final Verification` as the
+protocol describes — workflow ID and step ID from the lookup, then
+`move_task_kandev` with `task_id`, `workflow_id`, `workflow_step_id` and a
+one-line Russian `prompt` saying both reviews were clean. Do not call
 `step_complete_kandev` in that case — one transition per turn. If the move
-fails, fall back to `step_complete_kandev`. On any finding in either file,
+fails, call `step_complete_kandev` instead and begin your closing message
+with `Не решено:` naming the failed move. On any finding in either file,
 `step_complete_kandev` sends the card to `Review Fixes` as usual.

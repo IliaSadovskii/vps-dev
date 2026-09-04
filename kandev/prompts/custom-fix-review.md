@@ -78,10 +78,13 @@ in the latest `review-fixes.md`, under Заход: `Вызван: ревью` or
 `Вызван: человек` means no automatic return has happened yet in this lap;
 `Вызван: Fix Review` or `Вызван: Final Verification` means it has been spent.
 
-Blocking verdict, return available: call `list_workflow_steps_kandev`, find
-the exact `Review Fixes` step ID, and call `move_task_kandev` with only the
-current `task_id`, that `workflow_step_id`, and a short prompt pointing to
-`fix-review.md`. Do not call `step_complete_kandev` in that outcome.
+Blocking verdict, return available: move the card to `Review Fixes` as the
+protocol describes — workflow ID and step ID from the lookup, then
+`move_task_kandev` with `task_id`, `workflow_id`, `workflow_step_id` and a
+short `prompt` pointing to `fix-review.md`. Do not call
+`step_complete_kandev` in that outcome. If the move fails, call
+`step_complete_kandev` instead and begin your closing message with
+`Не решено:` naming the failed move.
 
 Blocking verdict, return spent: do not loop again. Call
 `step_complete_kandev`, and make your closing message begin with the line
