@@ -62,6 +62,10 @@ workflows:
         prompt: |
           @custom-discovery
 
+          Колонка сейчас: Discovery. Если в этой сессии ты уже работал, карточку
+          вернули сюда: прочитай все заметки человека с прошлого раза и
+          действуй по ним.
+
           {{task_prompt}}
         events:
           on_enter:
@@ -83,6 +87,10 @@ workflows:
         color: bg-purple-500
         prompt: |
           @custom-scoping
+
+          Колонка сейчас: Scoping. Если в этой сессии ты уже работал, карточку
+          вернули сюда: прочитай все заметки человека с прошлого раза и
+          действуй по ним.
 
           {{task_prompt}}
         events:
@@ -110,6 +118,10 @@ workflows:
         prompt: |
           @custom-research
 
+          Колонка сейчас: Research. Если в этой сессии ты уже работал, карточку
+          вернули сюда: прочитай все заметки человека с прошлого раза и
+          действуй по ним.
+
           {{task_prompt}}
         events:
           on_enter:
@@ -128,6 +140,10 @@ workflows:
         color: bg-purple-500
         prompt: |
           @custom-solution-synthesis
+
+          Колонка сейчас: Solution Synthesis. Если в этой сессии ты уже работал, карточку
+          вернули сюда: прочитай все заметки человека с прошлого раза и
+          действуй по ним.
 
           {{task_prompt}}
         events:
@@ -165,6 +181,10 @@ workflows:
         prompt: |
           @custom-planning
 
+          Колонка сейчас: Planning. Если в этой сессии ты уже работал, карточку
+          вернули сюда: прочитай все заметки человека с прошлого раза и
+          действуй по ним.
+
           {{task_prompt}}
         # Без enable_plan_mode: он подмешивает баннер платформы «сохрани
         # план и остановись, жди ревью», который спорит с сигналом
@@ -187,6 +207,10 @@ workflows:
         color: bg-yellow-500
         prompt: |
           @custom-plan-review
+
+          Колонка сейчас: Plan Review. Если в этой сессии ты уже работал, карточку
+          вернули сюда: прочитай все заметки человека с прошлого раза и
+          действуй по ним.
 
           {{task_prompt}}
         events:
@@ -224,6 +248,10 @@ workflows:
         prompt: |
           @custom-test-authoring
 
+          Колонка сейчас: Test Authoring. Если в этой сессии ты уже работал, карточку
+          вернули сюда: прочитай все заметки человека с прошлого раза и
+          действуй по ним.
+
           {{task_prompt}}
         events:
           on_enter:
@@ -242,6 +270,10 @@ workflows:
         color: bg-blue-500
         prompt: |
           @custom-implementation
+
+          Колонка сейчас: Implementation. Если в этой сессии ты уже работал, карточку
+          вернули сюда: прочитай все заметки человека с прошлого раза и
+          действуй по ним.
 
           {{task_prompt}}
         events:
@@ -265,6 +297,10 @@ workflows:
         prompt: |
           @custom-verification
 
+          Колонка сейчас: Verification. Если в этой сессии ты уже работал, карточку
+          вернули сюда: прочитай все заметки человека с прошлого раза и
+          действуй по ним.
+
           {{task_prompt}}
         events:
           on_enter:
@@ -282,6 +318,10 @@ workflows:
         color: bg-yellow-500
         prompt: |
           @custom-review-code
+
+          Колонка сейчас: Code Review. Если в этой сессии ты уже работал, карточку
+          вернули сюда: прочитай все заметки человека с прошлого раза и
+          действуй по ним.
 
           {{task_prompt}}
         events:
@@ -307,6 +347,10 @@ workflows:
         prompt: |
           @custom-security-review
 
+          Колонка сейчас: Security Review. Если в этой сессии ты уже работал, карточку
+          вернули сюда: прочитай все заметки человека с прошлого раза и
+          действуй по ним.
+
           {{task_prompt}}
         events:
           on_enter:
@@ -329,6 +373,10 @@ workflows:
         prompt: |
           @custom-review-fixes
 
+          Колонка сейчас: Review Fixes. Если в этой сессии ты уже работал, карточку
+          вернули сюда: прочитай все заметки человека с прошлого раза и
+          действуй по ним.
+
           {{task_prompt}}
         events:
           on_enter:
@@ -350,6 +398,10 @@ workflows:
         color: bg-yellow-500
         prompt: |
           @custom-fix-review
+
+          Колонка сейчас: Fix Review. Если в этой сессии ты уже работал, карточку
+          вернули сюда: прочитай все заметки человека с прошлого раза и
+          действуй по ним.
 
           {{task_prompt}}
         events:
@@ -375,6 +427,10 @@ workflows:
         prompt: |
           @custom-final-verification
 
+          Колонка сейчас: Final Verification. Если в этой сессии ты уже работал, карточку
+          вернули сюда: прочитай все заметки человека с прошлого раза и
+          действуй по ним.
+
           {{task_prompt}}
         events:
           on_enter:
@@ -396,6 +452,10 @@ workflows:
         color: bg-teal-500
         prompt: |
           @custom-documentation
+
+          Колонка сейчас: Documentation. Если в этой сессии ты уже работал, карточку
+          вернули сюда: прочитай все заметки человека с прошлого раза и
+          действуй по ним.
 
           {{task_prompt}}
         events:
@@ -419,6 +479,10 @@ workflows:
         color: bg-indigo-500
         prompt: |
           @custom-pull-request
+
+          Колонка сейчас: Draft PR. Если в этой сессии ты уже работал, карточку
+          вернули сюда: прочитай все заметки человека с прошлого раза и
+          действуй по ним.
 
           {{task_prompt}}
         events:

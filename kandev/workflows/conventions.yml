@@ -40,6 +40,10 @@ workflows:
         prompt: |
           @custom-conventions
 
+          Колонка сейчас: Conventions. Если в этой сессии ты уже работал, карточку
+          вернули сюда: прочитай все заметки человека с прошлого раза и
+          действуй по ним.
+
           {{task_prompt}}
         events:
           on_enter:
