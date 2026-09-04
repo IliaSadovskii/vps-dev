@@ -155,10 +155,13 @@ blocking verdict, end your turn with a message that begins with the line
 
 `plan-review.md` opens directly on its verdict — no title, no lead-in
 paragraph above it, so whoever opens the file reads it before anything
-else:
+else. The first block, Вердикт, is at most ten lines: the human at
+`Plan Approval` reads it to decide whether to read on. Full entries live
+under the two headings below it, none dropped:
 
 - Вердикт — one of `Готов к реализации`, `Готов с оговорками`,
-  `Заблокирован`, with the deciding finding named when it's blocked.
+  `Заблокирован`, each blocking finding named in one line, and what the
+  human has to decide.
 - Блокирующие замечания — one entry per finding that would make the
   plan fail or build the wrong thing if followed as written: which
   section of the plan, what's wrong, why it matters, what you'd change,

@@ -126,6 +126,13 @@ call about intended behaviour — also stays unfixed: change nothing, and say
 plainly in the entry what decision is needed and who it belongs to, rather
 than guessing at it.
 
+A third kind needs a person's hands rather than a decision: a fix that
+only works once a secret exists, an environment variable is set on the
+host, a migration is run in production, a DNS record or a third-party
+account is created. Do the code side, and put the rest into the item's
+entry as a line beginning `Нужны руки человека:` with the exact command or
+step. `Draft PR` collects those lines by their marker for the reviewer.
+
 ## Confirming a fix without running the whole suite
 
 Before you record a fix as done, run the narrowest check that actually

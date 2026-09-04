@@ -91,6 +91,15 @@ job of telling which part applies to them. Repository-wide rules — how tests
 run, how contributions are made — belong here whatever the task; a subsystem's
 stack belongs here only when the task reaches into it.
 
+Versions come from lock files, not from manifest ranges:
+`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `go.sum`,
+`poetry.lock`, `Cargo.lock`, `composer.lock` and their kin record what is
+actually installed, where a manifest records what was allowed. Cite the
+lock file's `path:line` beside each version. Where no lock file exists,
+quote the range from the manifest and say it is a range: `Research` and
+`Planning` look up documentation by version, and a range sends them to the
+wrong page.
+
 ## How tests are laid out and how checks run
 
 «Тесты и проверки» is read by roles that never open the tree: `Verification`

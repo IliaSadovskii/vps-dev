@@ -67,7 +67,7 @@
 | Роль | Контекст | Читает | Пишет |
 |---|---|---|---|
 | Discovery | первый шаг | — | `README.md`, `discovery.md` |
-| Scoping | продолжает | `discovery.md` | `scoping.md` |
+| Scoping | продолжает | `discovery.md`; при возврате — свой прошлый `scoping.md` и разговор задачи | `scoping.md`; если владелец согласился разбить задачу — по карточке на каждую остальную часть в `Backlog` через `create_task_kandev` (`start_agent: false`, `source_task_id` = эта задача) |
 | Research | **сброшен** | `scoping.md`, `discovery.md` | `research.md` |
 | Solution Synthesis | продолжает; при возврате с `Solution Approval` — тот же контекст, заметки человека в разговоре | `research.md`, `scoping.md`, `discovery.md`, свой прошлый `solution-synthesis.md` при возврате | `solution-synthesis.md` |
 | Planning | **сброшен**; заметки человека — через разговор задачи | нативный Plan (обязательно до записи), `scoping.md`, `solution-synthesis.md` и `research.md` если есть, `discovery.md`, `plan-review.md` если есть | нативный Kandev Plan, строка в `README.md` |
@@ -81,7 +81,7 @@
 | Fix Review | **сброшен** | `README.md`, `discovery.md`, `scoping.md`, `code-review.md`, `security-review.md`, `review-fixes.md`, `final-verification.md` если она вернула карточку, свой прошлый `fix-review.md`, разговор задачи | `fix-review.md` + `publish_review_findings_kandev` (только новые дефекты); блокирующий вердикт при доступном автовозврате — возврат на `Review Fixes` |
 | Final Verification | **сброшен** | `review-fixes.md`, `fix-review.md`, `verification.md`, `README.md`, `discovery.md`, свой прошлый `final-verification.md` | `final-verification.md`; провал при доступном автовозврате — возврат на `Review Fixes` |
 | Documentation | продолжает Final Verification | `review-fixes.md`, `final-verification.md`, `README.md` (стартовый коммит), диф задачи и документация проекта, свой прошлый `documentation.md`, `discovery.md` (строки `Расхождение с AGENTS.md:`) | `documentation.md`, коммиты в документацию с трейлером `Kandev-Step: Documentation` |
-| Draft PR | продолжает Final Verification | `scoping.md`, `plan-review.md`, `fix-review.md`, `final-verification.md`, `review-fixes.md`, `documentation.md`, свой прошлый `pull-request.md` | `pull-request.md`, draft PR на хосте (обновляется, не дублируется) |
+| Draft PR | продолжает Final Verification | `scoping.md`, `plan-review.md`, `fix-review.md`, `final-verification.md`, `test-authoring.md` («Допущения», строки `Нужны руки человека:`), `verification.md` («Отклонения от плана», те же строки), `review-fixes.md`, нативный Plan («Проверки») если есть, `documentation.md`, свой прошлый `pull-request.md` | `pull-request.md`, draft PR на хосте (обновляется, не дублируется); при непустом «Отложено» — карточка «Долг по PR N» в `Backlog` через `create_task_kandev` (`start_agent: false`, `source_task_id` = эта задача; на повторном заходе обновляется та, что записана в прошлом `pull-request.md`) |
 
 ### Про Implementation
 
@@ -181,7 +181,8 @@
 Попытка.
 
 **`test-authoring.md`** — Какое поведение покрыто · Файлы тестов · Вывод
-прогона, показывающий, что тесты падают по нужной причине · Заход.
+прогона, показывающий, что тесты падают по нужной причине · Допущения ·
+Заход.
 
 **`verification.md`** — Что запущено, дословный вывод (включая скрипт
 владения тестами) · Результат · Отклонения от плана · Попытка.
@@ -209,8 +210,9 @@
 **`documentation.md`** — Что исправлено · Что проверено и осталось верным ·
 Что осталось незадокументированным и почему · Заход.
 
-**`pull-request.md`** — Ссылка на PR · Что вошло в описание · Заход.
-Автоматическая починка CI не включается (решение 32).
+**`pull-request.md`** — Ссылка на PR · Что вошло в описание (в том числе
+карточка долга или её отсутствие) · Заход. Автоматическая починка CI не
+включается (решение 32).
 
 ## Правила, общие для всех
 

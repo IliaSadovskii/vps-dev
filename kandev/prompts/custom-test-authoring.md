@@ -48,8 +48,13 @@ documentation and the practices already settled for this task; a test that
 exercises the framework the way its documentation shows is one
 `Implementation` can satisfy the way this stack intends. Where no source
 settles a detail the test needs, decide it yourself and record the assumption
-in the artifact rather than leaving the test looser than the behaviour it's
-meant to pin down.
+under «Допущения» rather than leaving the test looser than the behaviour
+it's meant to pin down — `Draft PR` reads that section to show the
+reviewer what was decided without them. Anything a test needs that only a
+person with access can provide — a credential, a service account, a
+variable on the host — goes there too, as a line beginning
+`Нужны руки человека:` with the exact command or step; `Draft PR` collects
+those lines by their marker.
 
 ## A repeat lap
 
@@ -134,15 +139,18 @@ is worse than an honest gap: it reads downstream as coverage that isn't there.
 
 ## Artifact shape
 
-`test-authoring.md` carries four sections, kept even when short:
-`Какое поведение покрыто`, `Файлы тестов`, `Вывод прогона`, `Заход`.
+`test-authoring.md` carries five sections, kept even when short:
+`Какое поведение покрыто`, `Файлы тестов`, `Вывод прогона`, `Допущения`,
+`Заход`.
 `Какое поведение покрыто` names each behaviour a test targets, tied to the
 Plan or `scoping.md` if either named it. `Файлы тестов` lists the paths you
 wrote or changed. `Вывод прогона` carries the actual terminal output of the
 failing run for each test — not a description of it — so a reader can see the
 failure reason for themselves instead of taking your word for its meaning.
-`Заход` carries the lap number and, past the first lap, what sent the card
-back here.
+`Допущения` holds what you decided where neither the Plan nor `scoping.md`
+settled it, and the `Нужны руки человека:` lines, or says plainly that
+there were none. `Заход` carries the lap number and, past the first lap,
+what sent the card back here.
 
 ## Finishing
 
@@ -161,6 +169,6 @@ like coverage.
 
 Call `step_complete_kandev` once every test you wrote has a captured run
 showing it failing for the right reason, your commit carries the
-`Kandev-Step: Test Authoring` trailer, and `test-authoring.md` holds all four
+`Kandev-Step: Test Authoring` trailer, and `test-authoring.md` holds all five
 sections — or, where no test could be written at all, an honest record of why
 not.

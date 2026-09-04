@@ -111,10 +111,12 @@ Five sections, headed exactly `## Рекомендация`, `## Вариант�
 a claim that there was nothing to say, and that is a different claim from not
 having checked.
 
-`Рекомендация`: the option you recommend, named as in `Варианты`, in a
-sentence or two of why it wins over the others; then each fork from
+`Рекомендация`: opens with a block of at most ten lines — the option you
+recommend, named as in `Варианты`, why it wins over the others, and what
+the human at `Solution Approval` has to decide, including any fork left
+open; when the human chose it, say so. Below that, each fork from
 `research.md` by name with what this option decides for it, or "open" and
-why. When the human chose it, say so.
+why.
 
 `Варианты`: two or three viable options, each with a short name, what it
 wins, what it costs, and how it answers each fork where that differs from

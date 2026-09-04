@@ -120,6 +120,16 @@ passing for a different reason than the plan expected, for instance.
 Leave the section genuinely empty, and say so, when neither turned up
 anything; that is a real finding, not a gap you forgot to fill.
 
+The same applies to what only a person with access can do. Every
+line `Implementation` closed with that begins `Нужны руки человека:`
+— a secret, an environment variable on the host, a migration run in
+production, a DNS record, a third-party account — goes into
+«Результат» as its own line under the same marker, with the exact
+command or step, and so does anything this pass turned up itself: a
+run that could not complete for want of such access. `Draft PR`
+collects these lines by their marker for the reviewer under «Нужны
+ваши руки».
+
 ## A test Implementation already contested
 
 If one of those recorded deviations is a test `Implementation` left

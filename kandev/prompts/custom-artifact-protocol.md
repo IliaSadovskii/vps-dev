@@ -98,6 +98,24 @@ those.
 
 Write artifacts and any message a human will read in Russian.
 
+## Open with what the reader decides
+
+Some artifacts are read by a human at a gate before anything else happens:
+`plan-review.md` at `Plan Approval`, `solution-synthesis.md` at
+`Solution Approval`, `fix-review.md` at `Human Review`. In those, the first
+block is at most ten lines: the verdict, what blocks, and what the human
+has to decide. Everything else goes below it. This orders the file, it does
+not shorten it — every list keeps every entry, and only comes after the ten
+lines a person reads before deciding whether to read on.
+
+## Asking a human
+
+When a role puts questions through `ask_user_question_kandev`, the option
+it recommends comes first and is marked «(рекомендую)», so a person who
+trusts the recommendation can answer without weighing the rest. A question
+whose every answer leads to the same work is not a question: decide it,
+record the assumption in your artifact, and do not ask.
+
 ## Secrets
 
 If evidence for something you are recording includes a credential, token,

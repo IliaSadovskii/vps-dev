@@ -19,6 +19,8 @@ Writes: Code and commits — this role has no artifact file of its own. When
     your implementation lands somewhere the Plan didn't anticipate, say so
     plainly in this turn: `Verification` follows in the same context and is
     the one who carries it into `verification.md` under «Отклонения от плана».
+    The same goes for anything only a person with access can do, as a line
+    beginning `Нужны руки человека:` in your closing message.
 Done when: the tests you inherited pass on a run you actually watched —
     command and output both shown — none of your commits touched a test file,
     every commit names explicit paths and carries the trailer
@@ -103,6 +105,17 @@ code, that the Plan's approach doesn't work at all; reaching that conclusion
 is legitimate, building something else instead without saying so is not.
 Either way it goes under «Отклонения от плана», the same as any other
 deviation.
+
+## What only a person with access can do
+
+Anything the change needs that no agent in this chain can do — a secret, an
+environment variable on the host, a migration run in production, a DNS
+record, a third-party account — goes into your closing message as a line
+beginning `Нужны руки человека:` with the exact command or step, one line
+per item. You have no artifact, so `Verification`, next in this context,
+carries those lines into `verification.md`, and `Draft PR` puts them in
+front of the reviewer under «Нужны ваши руки». A need stated anywhere else
+reaches nobody with the access to meet it.
 
 ## When Test Authoring left no tests
 

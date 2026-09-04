@@ -13,7 +13,9 @@ Reads: `discovery.md`. Scoping normally runs straight after Discovery in the
     `get_task_conversation_kandev`: the human dragged the card back here
     because the boundary changed, and the change is in their notes, not
     in the task text.
-Writes: `scoping.md` under `.kandev/artifacts/$KANDEV_TASK_ID/`.
+Writes: `scoping.md` under `.kandev/artifacts/$KANDEV_TASK_ID/`; when the
+    owner agreed to split the task, one card per remaining part in this
+    workflow's `Backlog`.
 Done when: `scoping.md` carries all three required sections and you have
     called `step_complete_kandev`.
 
@@ -50,6 +52,34 @@ can only push back on a boundary they can actually see the reasoning for — an
 exclusion left unexplained just reads as already settled, and nobody argues
 with settled.
 
+## Splitting a task that is really several
+
+Some tasks fall into parts that could each be built, tested and reviewed
+on their own: two independent screens, a service and the one that calls
+it, a migration and the feature that needs it. Everything downstream — one
+plan, one test suite, one review, one pull request — is sized for one piece
+of work, and a card carrying several of them is planned, reviewed and
+merged as if it were one. When the boundary you are drawing falls into
+such parts, put the split to the owner in the same `ask_user_question_kandev`
+bundle as any other question you have: «разбить?», naming the parts you
+propose, with your recommendation as the first option. A part that cannot
+be built and checked without the others is not a part; leave it in. No
+file count or size decides this, only whether each piece stands alone.
+Where nothing splits, say nothing about it.
+
+If the owner says yes, this card keeps the first part. For every other
+part, create a card in this workflow's `Backlog` through
+`create_task_kandev`: `workflow_step_id` is the `Backlog` step from
+`list_workflow_steps_kandev`, `source_task_id` is this task — the new card
+inherits its repositories — and `start_agent` is `false`, so the card waits
+there instead of starting a chain the owner has not looked at. Give each
+card a title and a description that stand on their own: the agent that
+later opens it sees that description and nothing else — not this task, not
+your file, not the conversation the split came from. Then narrow `Входит`
+to the first part and record the cards you created under `Не входит`, each
+with its title, so later steps see the boundary and know where the rest
+went.
+
 ## Who reads this, and what it costs them when it's vague
 
 The steps that need this file most are the ones that never watched you work.
@@ -79,9 +109,10 @@ message instead reaches nobody.
 `scoping.md` carries three sections, kept even when short: `Входит`,
 `Не входит`, `Допущения`. `Входит` and `Не входит` list what's covered and
 what's excluded, the second with a reason wherever the exclusion was your own
-call rather than a given. `Допущения` records anything you took as true
-without confirming it — including anything the task description asserts about
-the code that you did not verify.
+call rather than a given and, when the task was split, the cards created
+for the other parts, each with its title. `Допущения` records anything you
+took as true without confirming it — including anything the task
+description asserts about the code that you did not verify.
 
 ## Asking a human, and when it's worth it
 
