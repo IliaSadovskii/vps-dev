@@ -105,6 +105,18 @@ one line saying so. Do not repeat as findings what the run already lists,
 and do not skip the run on the grounds that something else will do it: this
 is the first place after `Implementation` where anyone would.
 
+## Run to reproduce, not to re-verify
+
+Running the code to reproduce a defect you suspect — the input that should
+break it, the call that should return the wrong thing — is worth its cost:
+it turns a guess into a finding with evidence. Running it to confirm what an
+earlier step already confirmed is not. Do not re-run the whole test suite:
+`verification.md` already holds that run, red included, and citing it is the
+same evidence for none of the minutes. On a repeat lap, do not re-execute
+the fixes to prove they work when `fix-review.md` has already established
+it — cite that file's «Проверка исправлений» instead, and spend the reading
+on what it could not see: the commits made since.
+
 ## What Verification left red
 
 `verification.md` records what still failed, what the ownership script

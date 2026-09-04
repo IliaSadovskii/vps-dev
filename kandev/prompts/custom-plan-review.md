@@ -51,6 +51,17 @@ describes is actually possible given what's already there — a plan can read
 cleanly and still not survive contact with the real code once someone
 starts on it.
 
+Verifying the plan means reading: the files, functions and types it names,
+opened and compared with what it says about them. Writing or executing
+throwaway code to prove a step — a scratch script, a REPL session, a build
+kicked off to see whether it passes — is not the default method here. It is
+allowed for one specific step you have a concrete reason to doubt, a few
+commands at most across the whole review, and the finding says what you
+ran. The plan meets real code minutes after this step, when `Test Authoring`
+writes against it and `Verification` runs it; what an experiment here would
+prove, those steps prove anyway, on the actual change rather than on a
+sketch of it.
+
 Check completeness against `scoping.md`: every item under its Входит should
 have a step in the plan that covers it, and nothing in the plan should reach
 into what its Не входит ruled out — a plan that quietly grows past its own

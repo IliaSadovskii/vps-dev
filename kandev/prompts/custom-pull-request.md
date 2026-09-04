@@ -144,23 +144,33 @@ assume — even though `pull-request.md` itself is Russian like every other
 artifact this chain produces. The description belongs to the project, not to
 this workflow.
 
+## A repeat lap
+
+This step runs again on every rework lap — a human unhappy at `Human Review`
+sends the card back to `Review Fixes`, and the chain returns here — so a
+repeat visit is the ordinary case, not an anomaly. Your own previous
+`pull-request.md` existing means this is one, and the description is not
+rebuilt from scratch. Read that file first: it holds the URL, what each
+section was built from, and the lap it was written on. Then open only the
+artifacts that changed since it was written — compare their modification
+times against it, or the «Заход» each artifact records against the one
+your previous file names — and edit only the sections those changes reach.
+A section none of this lap's changes touch is carried over verbatim from the
+description as it stands; an artifact that did not change is not reopened,
+because what it says is already in the description. Say in
+`pull-request.md` which sections this lap changed and which it carried over.
+
 ## Draft, and checking before you open one
 
 Confirm the branch is pushed before anything else here — nothing earlier in
 this chain has guaranteed that, and a PR can't open against a branch the
 remote doesn't have. Check whether a PR already exists for this branch
 (`gh pr list --head <branch>`, or the equivalent on GitLab) before creating
-one. This step runs again on every rework lap — a human unhappy at
-`Human Review` sends the card back to `Review Fixes`, and the chain returns
-here — so a repeat visit is the ordinary case, not an anomaly. Read your own
-previous `pull-request.md` first when there is one: it holds the URL and what
-the description was built from last time, and this lap's work is what changed
-since. When a PR is already open for this branch, do not create a second one:
-bring its title and description up to date with what changed since — the
-four opening sections included, rebuilt from the current files — leave it
-a draft, and
-record that URL. Two open requests would leave the review gate reading
-whichever one it happened to open. Otherwise create it with this host's CLI —
+one. When a PR is already open for this branch, do not create a second one:
+bring its title and description up to date the way the repeat-lap section
+above describes, leave it a draft, and record that URL. Two open requests
+would leave the review gate reading whichever one it happened to open.
+Otherwise create it with this host's CLI —
 `gh pr create --draft` on GitHub, `glab mr create --draft` on GitLab, matching
 whichever this repository's remote actually is — and pass the draft flag
 explicitly rather than relying on whatever the CLI defaults to today.
@@ -177,7 +187,9 @@ check is for the human at the gate to see, not for a fixer to paper over.
   content came from: the repository's template section names, or the
   fallback shape if there was no template, what «Не решено», «Решено без
   вас», «Нужны ваши руки» and «Отложено» contain, and the debt card —
-  its ID and title, created or updated this lap — or that none was needed.
+  its ID and title, created or updated this lap — or that none was needed;
+  on a repeat lap, which sections this lap changed and which it carried
+  over unchanged.
 - Заход — this step's ordinal count on this task: 1 the first time, one
   more than your own prior `pull-request.md` shows on any later lap, and
   whether this lap created the PR or updated an existing one.

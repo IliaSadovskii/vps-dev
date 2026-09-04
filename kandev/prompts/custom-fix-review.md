@@ -56,6 +56,16 @@ this by eye alone: run the ownership script from the workflow-level
 commit from `README.md` and the test-file patterns from `discovery.md`, and
 paste its verdict into the artifact.
 
+## Reproduce, don't re-verify
+
+Do not run the project's test suite or its lint here. `Final Verification`
+runs the full suite right after this step, and its output is what reaches
+the PR; a second run here costs the same minutes and adds nothing anyone
+will see. What you may run is a single command that reproduces a specific
+defect you suspect a fix introduced — the triggering case for one finding,
+not the suite around it. The ownership script above is not a test run and
+stays.
+
 ## Publishing new defects
 
 Publish only defects introduced or left unresolved by the fixes; do not

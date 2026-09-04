@@ -101,6 +101,11 @@ Read what your role names as its inputs. Reading more costs tokens and fills
 your context with material you did not need — the list in your role is a
 budget, not a suggestion.
 
+Read each file once per turn and work from what you read. Re-read only the
+part you are about to edit, or a part your own edit has just changed. An
+artifact you already have in front of you in this turn does not change
+between reads; reading it again is a tool call spent for nothing.
+
 When you refer to something a previous step established, give the path to its
 file rather than restating its contents. A path stays true when the file
 changes; a retelling drifts from it silently, and each retelling of a
