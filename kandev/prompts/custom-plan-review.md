@@ -59,6 +59,17 @@ mid-build. Where the route produced `solution-synthesis.md`, check that the
 plan builds the option it recommends — or the one it records the human as
 having chosen — not a variant that drifted.
 
+Check «Проверки» for coverage, not only for presence. The plan is supposed
+to name which kinds of test this change needs and why, and which of them
+the project already runs. Ask whether the kinds it chose can reach what the
+change touches: a change to a screen, a form or a rendered page with only
+backend tests named is a blocking finding, as is a change across a
+database, queue or external service with only unit tests, or a changed
+public API with nothing that exercises it as a consumer would. A kind the
+plan left out is fine when the plan says so and why; a kind it never
+considered is the finding. Where a kind needs a tool the project lacks,
+confirm the plan records the owner's answer rather than assuming one.
+
 Check the plan against the project's own conventions as `discovery.md`
 records them — layout, naming, test shape, the rules in `AGENTS.md` or
 `CLAUDE.md`. A stage that departs from one without saying why is a finding;

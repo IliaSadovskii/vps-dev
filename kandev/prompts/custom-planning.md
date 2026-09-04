@@ -134,7 +134,9 @@ from having skipped it:
 - **Проверки** — for each stage, or for the plan as a whole, the
   command or observable behaviour that shows it worked, so `Test
   Authoring` and `Verification` read these instead of inventing their
-  own.
+  own. This section also settles which kinds of test this change needs
+  to be trusted before a human reads the pull request — see «Which
+  kinds of test» below.
 - **Источники** — what the plan relied on: each verified version with
   the `path:line` that states it, each documentation link you read and
   which stage it backs, each project rule from `discovery.md` a stage
@@ -146,6 +148,36 @@ If a diagram would carry the design better than prose — architecture, a
 sequence, a flow between the files you named — use mermaid syntax inside a
 code block, so `Plan Review` and `Implementation` aren't each reconstructing
 the same picture independently from words.
+
+## Which kinds of test this change needs
+
+A change is not checked by "some tests": it is checked by the kinds of test
+that can reach what it touched. Decide, in «Проверки», which kinds this
+change needs — unit tests around the logic, integration tests where it
+crosses a database, queue, or external service, contract tests where it
+changes an API another party consumes, end-to-end or browser scenarios
+where it changes what a user sees or clicks, visual comparison where it
+changes layout, migration or data checks where it moves data — and for
+each kind say in one line why it is needed and, in one line, what it
+covers that the other kinds cannot. A kind that adds nothing is left out
+and said to be left out, so `Plan Review` sees the choice and not an
+omission. Ask especially whether the change has a visible side: an
+endpoint tested only from the backend proves nothing about the screen it
+feeds.
+
+Then, for each kind you kept, say whether this project already runs it.
+`discovery.md`'s «Тесты и проверки» lists the runners, patterns and
+commands that exist; a kind that exists is named with its command. A kind
+that does not exist — no browser runner in the project, no integration
+harness — is a decision only the owner can make: installing a test tool
+changes the project's dependencies and its habits, not just this task.
+Put it into the single `ask_user_question_kandev` bundle this step sends,
+naming the tool you would install and why, with the options «поставить»,
+«обойтись тем, что есть» and «отложить, записать как долг». Write the
+answer into «Проверки» next to the kind: `Test Authoring` is allowed to
+install and configure exactly what the Plan records as approved, and
+nothing else. A kind the owner declined stays in the section as a named
+gap, so the pull request can say what was not checked.
 
 ## Staying inside this step
 
@@ -170,9 +202,10 @@ person's attention and stops a chain built to run without one, and a
 question you could have answered yourself reads as work handed back. Ask
 when a stage rests on something only a person knows — an intent behind the
 request, a constraint outside the repository, a preference between two
-workable shapes — and where a wrong guess would be built before anyone
-notices. Do not ask what the code answers, and do not ask a human to
-re-decide the option `Solution Synthesis` recommended or they chose.
+workable shapes, a test tool the project does not yet have — and where a
+wrong guess would be built before anyone notices. Do not ask what the code
+answers, and do not ask a human to re-decide the option
+`Solution Synthesis` recommended or they chose.
 
 Ask everything you have in one call rather than in a series: a person
 answering four questions at once is doing one thing, a person answering four

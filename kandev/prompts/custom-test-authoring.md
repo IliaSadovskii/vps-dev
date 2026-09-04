@@ -34,6 +34,15 @@ tells you which behaviour this task actually owns; a test for something
 asked you to cover. `discovery.md`'s «Тесты и проверки» tells you where a
 test file goes, what it is called and which command runs it — put yours
 where the project puts them, so the patterns recorded there match your files.
+The Plan's «Проверки» also says which kinds of test this change needs —
+unit, integration, browser scenario, visual, contract — and which of them
+the project already runs. Write every kind the Plan kept, not only the
+cheapest; a kind the Plan named and you skipped is a gap `Plan Review`
+already ruled out. Where «Проверки» records the owner approving a tool the
+project did not have, install and configure it as part of this step —
+following the tool's own documentation, in the place and shape the
+project's existing test setup uses — and commit that setup with the same
+trailer as the tests. Install nothing the Plan does not record as approved.
 `research.md`, where it exists, and the Plan's «Источники» name the stack's
 documentation and the practices already settled for this task; a test that
 exercises the framework the way its documentation shows is one
@@ -116,10 +125,11 @@ trailer before this step ends.
 
 ## When there is no test to write
 
-If the repository has no test runner and setting one up is beyond this task's
-scope, or the behaviour genuinely cannot be exercised by a test — say that
-plainly in `test-authoring.md` instead of writing a test that always passes to
-fill the section. A trivial test that asserts nothing meaningful is worse than
+If the repository has no runner for a kind of test the change needs and the
+Plan does not record the owner approving one — or the behaviour genuinely
+cannot be exercised by a test — say that plainly in `test-authoring.md`,
+naming the kind that is missing, instead of writing a test that always
+passes to fill the section. A trivial test that asserts nothing meaningful is worse than
 an honest gap: it reads downstream as coverage that isn't there.
 
 ## Artifact shape
