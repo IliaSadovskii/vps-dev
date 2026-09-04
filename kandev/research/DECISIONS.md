@@ -495,3 +495,12 @@ Security Review решает применимость по списку изме
 `Kandev-Step: Draft PR`), потом пишет описание; Test Authoring пишет
 тесты по замечаниям Plan Review и записывает, какие взял. Цепочка — 20
 колонок, 15 промптов ролей.
+
+**55. Промежуточные колонки закрыты для перетаскивания.** `allow_manual_move:
+false` у Solution Approval, Plan Review, Plan Approval, Implementation,
+Verification, Code Review, Security Review, Fix Review, Final Verification,
+Human Review и у Review в Conventions. Флаг проверяет интерфейс — и доска,
+и список шагов над чатом (`workflow-stepper.tsx`); агентские переносы и
+API он не трогает, так что прыжки и возвраты ролей работают как прежде.
+Открыты ровно те колонки, куда по `PROCESS.md` тащит человек. Рецепт
+перезапуска: Stop, Backlog, первая колонка блока.
