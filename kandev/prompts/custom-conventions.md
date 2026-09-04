@@ -94,6 +94,13 @@ open a draft pull request, push the branch and open one titled
 «Соглашения для агентов»; otherwise say plainly that the change is only
 committed locally and where.
 
+Once you have called `step_complete_kandev`, the card sits at `Review` and
+the human may write notes there before dragging it back. A note reaching
+you after your signal is not a task: answer in one short line that it is
+recorded and will be read when the card returns, and change nothing until
+the card is back on `Conventions` — then read every note since your last
+commit and act on all of them together.
+
 Write the file itself and your closing message in Russian, unless the
 existing conventions file is in English — then match it. Finish with a
 short message: created or updated, which sections were added or corrected,

@@ -38,6 +38,19 @@ changed since that file, not from scratch. A second file that reads as
 though the first never existed repeats findings already dealt with and hides
 the one thing the reader needs: what is different now.
 
+## After your transition, you are a listener
+
+Once you have called `step_complete_kandev` or `move_task_kandev`, your
+work on this column is over. The card may sit at a human gate for a while,
+and a human's message can still reach this same session before the card is
+dragged on. Such a message is a note for whichever role receives the card
+next, not a task for you: answer in one short Russian line that the note
+is recorded and will be read by the role the human moves the card to, and
+do nothing else — no files, no commits, no tools that change anything, no
+second `step_complete_kandev`. A direct question you can answer from what
+is already in front of you may be answered in a sentence; a request to
+change something is not acted on here.
+
 ## The human's notes outrank the task text
 
 The task description you are handed at the start of every turn is the
