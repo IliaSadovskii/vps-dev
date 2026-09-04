@@ -80,15 +80,18 @@ When `discovery.md` names records under `Чертёж:`, read the scenarios in
 Each is a test case in the owner's own terms: «Исходная точка» is the
 fixture, the steps are the calls, «Чем заканчивается» is the assertion —
 and that ending was answered by the owner, so a test asserting anything
-weaker pins down less than the product promises. A scenario whose last
-step this task closes — every action it names is `built` already or is
-built by this Plan — gets a test that walks it whole, in the kind of
-test the Plan's «Проверки» kept for it, carrying on a line of its own the
-comment `kandev:scenario <заголовок сценария>`, so anyone can later
-count which scenarios a test proves and which only a reading of the
-code does. A scenario this task only touches in the middle gets its
-steps covered like any other behaviour; do not walk it whole from a
-stub. Where the Plan departs from a scenario's ending, the Plan wins —
+weaker pins down less than the product promises. A scenario every action
+of which is `built` once this task lands — the others were built before,
+this task builds the last one, wherever in the scenario it stands — gets
+a test that walks it whole, start to ending, in the kind of test the
+Plan's «Проверки» kept for it, carrying on a line of its own the comment
+`kandev:scenario <заголовок сценария>`, so anyone can later count which
+scenarios a test proves and which only a reading of the code does. A
+scenario that still names a `planned` action after this task gets its
+built steps covered like any other behaviour; do not walk it whole from
+a stub. Say under «Какое поведение покрыто» which scenarios you read,
+which one got its whole-walk test, or that none qualified and why.
+Where the Plan departs from a scenario's ending, the Plan wins —
 `Plan Approval` saw it — and «Допущения» gets one line,
 `Отступление от чертежа: scenarios.md#<заголовок> — <what the ending
 says, what the tests assert instead>`, so `Draft PR` tells the owner

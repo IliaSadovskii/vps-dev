@@ -79,14 +79,19 @@ tree you do not correct. It is the product's description, written by the
 `Blueprint` chain from the owner's own words, and a sentence there is a
 decision the owner made: a task that made one untrue has changed the
 product, and whether the description or the change is right is theirs to
-settle. So each `Расхождение с чертежом:` line `discovery.md` left, and
-each `Отступление от чертежа:` line in the Plan's «Риски», `scoping.md`'s
+settle. Three kinds of line go under «Отложено», and only these: each
+`Расхождение с чертежом:` line `discovery.md` left; each
+`Отступление от чертежа:` line in the Plan's «Риски», `scoping.md`'s
 «Допущения» or `test-authoring.md`'s «Допущения» — an action now
 behaving otherwise, a state the entity does not list, a scenario whose
-ending no longer holds — becomes one line under «Отложено»: the record's
-key, what the description says, what the code now does. The debt card
-carries them to the owner, who settles them by dictating the answer into
-a `Blueprint` card. Say under «Документация» that the description was
+ending no longer holds; and, for every record in the `Чертёж:` line whose
+`state: planned` this task built, one line saying so — «`user.list_notes`
+построено этой задачей, `state: planned` устарело». One line each: the
+record's key, what the description says, what the code now does. A
+record the task merely followed — an invariant now kept, a scenario step
+now true — is not outdated and gets no line. The debt card carries them
+to the owner, who settles them by dictating the answer into a
+`Blueprint` card. Say under «Документация» that the description was
 checked and what was left to the owner; when the task touched no
 record, say so in the checked list. Without `docs/knowledge/` nothing
 here applies.
