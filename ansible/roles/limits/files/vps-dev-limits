@@ -606,7 +606,22 @@ class Snapshot:
 
     def payload(self):
         order = {p["id"]: i for i, p in enumerate(PROVIDERS)}
-        cards = sorted(self.cards.values(), key=lambda c: order.get(c.get("id"), 99))
+        now = time.time()
+        cards = []
+        for card in sorted(self.cards.values(), key=lambda c: order.get(c.get("id"), 99)):
+            # Особенно важно для Codex: его лимит берётся из последнего ответа
+            # CLI и после сброса нового ответа может не быть часами. Старые
+            # 100 % нельзя показывать как текущие цифры — окно уже закончилось.
+            # Копируем данные, а не меняем кэш: resets_at всё ещё полезен для
+            # диагностики, а при следующем ответе поставщика придут новые числа.
+            shown = dict(card)
+            shown["windows"] = []
+            for item in card.get("windows") or []:
+                window_data = dict(item)
+                if window_data.get("resets_at") and window_data["resets_at"] <= now:
+                    window_data["percent"] = 0.0
+                shown["windows"].append(window_data)
+            cards.append(shown)
         return {"generated_at": self.generated_at, "providers": cards}
 
 
@@ -737,11 +752,13 @@ def render(payload):
             left = human_left(w.get("resets_at"))
             when = human_when(w.get("resets_at"))
             tail = f"сброс {left} ({when})" if left and when else (w.get("note") or "")
+            resets_at = w.get("resets_at") or ""
             parts.append(
-                f'<div class="bar {heat(w["percent"])}">'
+                f'<div class="bar {heat(w["percent"])}" data-resets-at="{resets_at}" '
+                f'data-percent="{w["percent"]:.6f}">'
                 f'<div class="row"><span>{esc(w["label"])}</span>'
                 f'<span class="pct">{w["percent"]:.0f}%</span>'
-                f'<span class="left">{esc(tail)}</span></div>'
+                f'<span class="left reset-time">{esc(tail)}</span></div>'
                 f'<div class="track"><div class="fill" style="width:{w["percent"]:.1f}%"></div></div>'
                 f'</div>')
 
@@ -760,7 +777,43 @@ def render(payload):
     if not cards:
         parts.append('<div class="card"><div class="msg">первый круг опроса ещё идёт</div></div>')
 
-    parts.append("</div></body></html>")
+    # Часовой пояс нельзя достоверно получить из обычного HTTP-запроса: его
+    # нет ни в заголовках, ни в cookies по умолчанию. Браузер уже знает зону
+    # пользователя, поэтому форматируем абсолютный epoch здесь. Заодно
+    # открытая вкладка обнулит завершившееся окно без перезагрузки и без нового
+    # запроса к модели.
+    parts.append("""</div><script>
+(() => {
+  const bars = [...document.querySelectorAll('.bar[data-resets-at]')];
+  const formatLeft = seconds => {
+    if (seconds <= 0) return 'сброшен';
+    const hours = Math.floor(seconds / 3600), minutes = Math.floor(seconds % 3600 / 60);
+    if (hours >= 24) return `через ${Math.floor(hours / 24)} дн. ${hours % 24} ч.`;
+    return hours ? `через ${hours} ч. ${minutes} мин.` : `через ${minutes} мин.`;
+  };
+  const refresh = () => {
+    const now = Date.now() / 1000;
+    let next = 30000;
+    for (const bar of bars) {
+      const resetAt = Number(bar.dataset.resetsAt);
+      if (!resetAt) continue;
+      const left = resetAt - now;
+      const text = bar.querySelector('.reset-time');
+      if (left <= 0) {
+        bar.querySelector('.pct').textContent = '0%';
+        bar.querySelector('.fill').style.width = '0%';
+        text.textContent = 'сброшен';
+      } else {
+        const at = new Date(resetAt * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+        text.textContent = `сброс ${formatLeft(left)} (${at})`;
+        next = Math.min(next, Math.max(1, Math.ceil(left * 1000)));
+      }
+    }
+    window.setTimeout(refresh, next);
+  };
+  refresh();
+})();
+</script></body></html>""")
     return "".join(parts)
 
 
