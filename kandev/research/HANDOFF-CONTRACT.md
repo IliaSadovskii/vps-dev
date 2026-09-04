@@ -46,7 +46,7 @@
 | Decision Mapping | продолжает | `scoping.md`, `discovery.md` | `decision-mapping.md` |
 | Targeted Research | продолжает | `decision-mapping.md` | `targeted-research.md` |
 | Solution Synthesis | продолжает | `decision-mapping.md`, `targeted-research.md`, `discovery.md` | `solution-synthesis.md` |
-| Planning | продолжает | `scoping.md`, `solution-synthesis.md` если есть | нативный Kandev Plan |
+| Planning | продолжает | нативный Plan (обязательно до записи), `scoping.md`, `solution-synthesis.md` если есть | нативный Kandev Plan |
 | Plan Review | **сброшен** | нативный Plan, `scoping.md`, `solution-synthesis.md` если есть, свой прошлый `plan-review.md` | `plan-review.md`, при блокирующем вердикте — возврат на `Planning` |
 | Test Authoring | сброшен в Standard и Deep, продолжает в Quick | нативный Plan если есть, `scoping.md` | `test-authoring.md` |
 | Implementation | продолжает | — (тот же контекст, что Test Authoring) | своего файла нет, см. ниже |
