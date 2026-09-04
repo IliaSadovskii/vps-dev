@@ -1,0 +1,328 @@
+#!/usr/bin/env python3
+# kandev-seed-workflows — цепочки шагов из файлов на доску Kandev, с
+# обновлением на месте.
+#
+# Запускает роль seed при каждом прогоне. Руками звать не нужно.
+#
+# ЗАЧЕМ. Родной импорт Kandev аддитивен по имени: новую цепочку создаёт,
+# занятое имя молча пропускает. Поэтому исправленную цепочку приходилось
+# сначала удалять в интерфейсе. Этот скрипт делает то же, что родная
+# синхронизация из GitHub (`workflow/service/sync_apply.go`), но из файлов
+# репозитория: цепочку находит по имени, колонки — по именам внутри неё.
+# Совпавшая колонка сохраняет свой идентификатор, и задачи, которые в ней
+# стоят, никуда не деваются; новая создаётся; исчезнувшая удаляется, только
+# если в ней нет задач — иначе цепочка не трогается и об этом сказано.
+#
+# ВХОД — JSON на stdin:
+#   {"api": ".../api/v1", "workspace_id": "...",
+#    "files": [{"name": "deep.yml", "doc": {<разобранный YAML>}}]}
+# YAML разбирает Ansible: на машине PyYAML может не быть, а у Ansible он
+# есть всегда.
+#
+# ВЫХОД — JSON на stdout:
+#   {"created": [...], "updated": [...], "unchanged": [...],
+#    "warnings": [...]}
+# Ненулевой код — только когда API не отвечает или отвечает ошибкой: это
+# сбой прогона, а не состояние доски. Предупреждение — это состояние доски,
+# которое требует руки человека (задачи в удалённой колонке, профиль агента,
+# которого нет), и прогон из-за него не падает.
+#
+# ЧЕГО НЕ ДЕЛАЕТ. Не удаляет цепочки: файл пропал — цепочка остаётся.
+# Не трогает `stage_type` (в переносимом формате его нет) и профили агентов
+# (`agent_profile` ищется по имени в настройках машины; здесь его не
+# сопоставить, поэтому существующий профиль колонки сохраняется, а новый
+# из файла не ставится — с предупреждением).
+
+import json
+import sys
+import urllib.error
+import urllib.request
+
+TRIGGERS_WITH_TARGET = (
+    "on_turn_start",
+    "on_turn_complete",
+    "on_comment",
+    "on_blocker_resolved",
+    "on_children_completed",
+    "on_approval_resolved",
+    "on_heartbeat",
+    "on_budget_alert",
+    "on_agent_error",
+)
+
+STEP_FIELDS = (
+    "color",
+    "prompt",
+    "is_start_step",
+    "show_in_command_panel",
+    "allow_manual_move",
+    "auto_archive_after_hours",
+    "auto_advance_requires_signal",
+    "cancel_triggers_turn_complete",
+    "wip_limit",
+)
+
+
+class Api:
+    def __init__(self, base):
+        self.base = base.rstrip("/")
+
+    def call(self, method, path, body=None, content_type="application/json"):
+        data = None
+        headers = {"Accept": "application/json"}
+        if body is not None:
+            # JSON — подмножество YAML, поэтому импорт, ждущий YAML, читает
+            # его как есть.
+            data = json.dumps(body).encode()
+            headers["Content-Type"] = content_type
+        req = urllib.request.Request(
+            self.base + path, data=data, method=method, headers=headers
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                raw = resp.read()
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode(errors="replace")[:300]
+            raise SystemExit(f"{method} {path}: HTTP {e.code}: {detail}")
+        except urllib.error.URLError as e:
+            raise SystemExit(f"{method} {path}: {e.reason}")
+        return json.loads(raw) if raw else {}
+
+
+def remap_events(events, key_from, key_to, lookup):
+    """Переписать цели move_to_step: позиция ↔ идентификатор колонки."""
+    out = {}
+    for trigger, actions in (events or {}).items():
+        new_actions = []
+        for a in actions or []:
+            a = dict(a)
+            cfg = a.get("config")
+            if (
+                trigger in TRIGGERS_WITH_TARGET
+                and a.get("type") == "move_to_step"
+                and isinstance(cfg, dict)
+                and key_from in cfg
+            ):
+                target = lookup(cfg[key_from])
+                if target is None:
+                    raise SystemExit(
+                        f"move_to_step points at unknown {key_from} "
+                        f"{cfg[key_from]!r}"
+                    )
+                cfg = {k: v for k, v in cfg.items() if k != key_from}
+                cfg[key_to] = target
+                a["config"] = cfg
+            new_actions.append(a)
+        if new_actions:
+            out[trigger] = new_actions
+    return out
+
+
+def normalize(value):
+    """Привести к виду, в котором пустое и отсутствующее — одно и то же."""
+    if isinstance(value, dict):
+        return {
+            k: normalize(v)
+            for k, v in value.items()
+            if v not in (None, "", [], {}) and normalize(v) not in ([], {})
+        }
+    if isinstance(value, list):
+        return [normalize(v) for v in value]
+    return value
+
+
+def coerce(field, value):
+    """Одна и та же форма поля для доски и для файла."""
+    if field in ("color", "prompt"):
+        return value or ""
+    if field in ("auto_archive_after_hours", "wip_limit"):
+        return value
+    return bool(value)
+
+
+def portable_of_live(step, id_to_pos):
+    """Колонка с доски в переносимом виде, чтобы сравнить с файлом."""
+    p = {"name": step["name"], "position": step["position"]}
+    for f in STEP_FIELDS:
+        p[f] = coerce(f, step.get(f))
+    p["events"] = remap_events(
+        step.get("events"), "step_id", "step_position", id_to_pos.get
+    )
+    pull = step.get("pull_from_step_id")
+    if pull and pull in id_to_pos:
+        p["pull_from_step_position"] = id_to_pos[pull]
+    return normalize(p)
+
+
+def portable_of_file(sp):
+    p = {"name": sp["name"], "position": sp["position"]}
+    for f in STEP_FIELDS:
+        p[f] = coerce(f, sp.get(f))
+    p["events"] = sp.get("events") or {}
+    if sp.get("pull_from_step_position") is not None:
+        p["pull_from_step_position"] = sp["pull_from_step_position"]
+    return normalize(p)
+
+
+def reconcile(api, wf, desired, result):
+    name = desired["name"]
+    warnings = result["warnings"]
+    if desired.get("agent_profile"):
+        warnings.append(
+            f"{name}: профиль агента на уровне цепочки из файла не ставится"
+        )
+
+    live = api.call("GET", f"/workflows/{wf['id']}/workflow/steps")["steps"]
+    live_by_name = {}
+    for st in live:
+        if st["name"] in live_by_name:
+            warnings.append(
+                f"{name}: на доске две колонки «{st['name']}», "
+                "переименуйте одну — цепочка не обновлена"
+            )
+            return
+        live_by_name[st["name"]] = st
+
+    steps = desired.get("steps") or []
+    wanted = {}
+    for sp in steps:
+        if sp["name"] in wanted:
+            warnings.append(
+                f"{name}: в файле две колонки «{sp['name']}» — "
+                "цепочка не обновлена"
+            )
+            return
+        wanted[sp["name"]] = sp
+        if sp.get("agent_profile"):
+            warnings.append(
+                f"{name}/{sp['name']}: профиль агента из файла не ставится"
+            )
+
+    to_delete = []
+    for st in live:
+        if st["name"] in wanted:
+            continue
+        count = api.call("GET", f"/workflow/steps/{st['id']}/task-count")
+        if count.get("task_count", 0) > 0:
+            warnings.append(
+                f"{name}: колонка «{st['name']}» убрана из файла, но в ней "
+                f"{count['task_count']} задач(и) — переместите их, "
+                "цепочка не обновлена"
+            )
+            return
+        to_delete.append(st)
+
+    # Сравнение до любой записи: неизменившуюся цепочку не трогаем вовсе.
+    id_to_pos = {st["id"]: st["position"] for st in live}
+    same_steps = sorted(
+        (portable_of_live(st, id_to_pos) for st in live),
+        key=lambda p: p["position"],
+    ) == sorted(
+        (portable_of_file(sp) for sp in steps), key=lambda p: p["position"]
+    )
+    same_head = (wf.get("description") or "") == (
+        desired.get("description") or ""
+    ) and (wf.get("prompt") or "") == (desired.get("prompt") or "")
+    if same_steps and same_head and not to_delete:
+        result["unchanged"].append(name)
+        return
+
+    # Новые колонки заводим пустыми, чтобы получить идентификаторы: цели
+    # переходов могут указывать на них.
+    pos_to_id = {}
+    for sp in steps:
+        st = live_by_name.get(sp["name"])
+        if st is None:
+            created = api.call(
+                "POST",
+                "/workflow/steps",
+                {
+                    "workflow_id": wf["id"],
+                    "name": sp["name"],
+                    "position": sp["position"],
+                    "color": sp.get("color") or "",
+                    "allow_manual_move": bool(sp.get("allow_manual_move")),
+                },
+            )
+            st = created.get("step", created)
+            live_by_name[sp["name"]] = st
+        pos_to_id[sp["position"]] = st["id"]
+
+    for sp in steps:
+        st = live_by_name[sp["name"]]
+        body = {
+            "name": sp["name"],
+            "position": sp["position"],
+            "events": remap_events(
+                sp.get("events"), "step_position", "step_id", pos_to_id.get
+            ),
+        }
+        for f in STEP_FIELDS:
+            v = coerce(f, sp.get(f))
+            if v is not None:
+                body[f] = v
+        pull = sp.get("pull_from_step_position")
+        if pull is not None:
+            body["pull_from_step_id"] = pos_to_id[pull]
+        api.call("PUT", f"/workflow/steps/{st['id']}", body)
+
+    for st in to_delete:
+        api.call("DELETE", f"/workflow/steps/{st['id']}")
+
+    if not same_head:
+        api.call(
+            "PATCH",
+            f"/workflows/{wf['id']}",
+            {
+                "description": desired.get("description") or "",
+                "prompt": desired.get("prompt") or "",
+            },
+        )
+    result["updated"].append(name)
+
+
+def main():
+    payload = json.load(sys.stdin)
+    api = Api(payload["api"])
+    ws = payload["workspace_id"]
+    result = {"created": [], "updated": [], "unchanged": [], "warnings": []}
+
+    existing = api.call("GET", f"/workspaces/{ws}/workflows")
+    by_name = {}
+    for wf in existing.get("workflows", []):
+        by_name.setdefault(wf["name"], wf)
+
+    for f in payload["files"]:
+        doc = f["doc"] or {}
+        if doc.get("type") != "kandev_workflow" or doc.get("version") != 1:
+            result["warnings"].append(
+                f"{f['name']}: не переносимый формат Kandev version 1, "
+                "пропущен"
+            )
+            continue
+        for desired in doc.get("workflows") or []:
+            wf = by_name.get(desired["name"])
+            if wf is None:
+                single = dict(doc, workflows=[desired])
+                api.call(
+                    "POST",
+                    f"/workspaces/{ws}/workflows/import",
+                    single,
+                    content_type="application/x-yaml",
+                )
+                result["created"].append(desired["name"])
+                continue
+            if wf.get("source") not in (None, "", "manual"):
+                result["warnings"].append(
+                    f"{desired['name']}: цепочка синхронизируется из "
+                    f"{wf['source']}, файлом не обновляется"
+                )
+                continue
+            reconcile(api, wf, desired, result)
+
+    json.dump(result, sys.stdout, ensure_ascii=False)
+    print()
+
+
+if __name__ == "__main__":
+    main()

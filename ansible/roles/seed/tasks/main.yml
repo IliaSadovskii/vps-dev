@@ -126,32 +126,57 @@
 
     # ═══ Цепочки ═════════════════════════════════════════════════════════
 
-    - name: Цепочки шагов
-      # Тот же переносимый формат и тот же вход, что у кнопки Import
-      # в интерфейсе. Импорт аддитивен по имени: новое создаёт, занятое
-      # возвращает в `skipped` и не трогает. Поэтому исправленную цепочку
-      # надо сначала удалить в интерфейсе — см. kandev/README.md.
-      ansible.builtin.uri:
-        url: "{{ seed_api }}/workspaces/{{ seed_workspace_id }}/workflows/import"
-        method: POST
-        headers:
-          Content-Type: application/x-yaml
-        body: "{{ lookup('file', item) }}"
-        status_code: [200, 201]
-      register: seed_import
+    - name: Файлы цепочек
+      # YAML разбираем здесь, а не в скрипте: у Ansible PyYAML есть всегда,
+      # у машины — не обязательно.
+      ansible.builtin.set_fact:
+        seed_workflow_files: >-
+          {{ seed_workflow_files | default([])
+             + [{'name': item | basename,
+                 'doc': lookup('file', item) | from_yaml}] }}
       loop: "{{ q('fileglob', seed_content_dir ~ '/workflows/*.yml') | sort }}"
       loop_control:
         label: "{{ item | basename }}"
-      # `default([], true)`, а не `default([])`: при пустом результате Kandev
-      # присылает `"created": null`, а не отсутствующий ключ, — и обычный
-      # default такое значение не подменяет, оставляя длину от None.
-      changed_when: seed_import.json.created | default([], true) | length > 0
+
+    - name: Скрипт сверки цепочек
+      # Лежит на машине, а не гоняется через `script`: тому модулю нечем
+      # передать stdin, а входа у скрипта на десятки килобайт.
+      ansible.builtin.copy:
+        src: kandev-seed-workflows
+        dest: "{{ seed_tool_dir }}/kandev-seed-workflows"
+        mode: "0755"
+
+    - name: Цепочки шагов
+      # Не родной импорт, а своя сверка: импорт аддитивен по имени и молча
+      # пропускает занятое, а нам нужно, чтобы исправленная цепочка
+      # обновилась на месте. Скрипт находит цепочку по имени, колонки — по
+      # именам внутри неё, и сохраняет их идентификаторы, чтобы задачи в
+      # колонках остались на месте. Подробности в шапке скрипта.
+      ansible.builtin.command:
+        argv: ["{{ seed_tool_dir }}/kandev-seed-workflows"]
+        stdin: >-
+          {{ {'api': seed_api,
+              'workspace_id': seed_workspace_id,
+              'files': seed_workflow_files | default([])} | to_json }}
+      register: seed_workflows
+      changed_when: >-
+        (seed_workflows.stdout | from_json).created | length > 0
+        or (seed_workflows.stdout | from_json).updated | length > 0
+
+    - name: Цепочки, которые не удалось обновить
+      # Не падение прогона: доска в состоянии, которое требует руки человека
+      # (задачи в убранной колонке, профиль агента из файла).
+      ansible.builtin.debug:
+        msg: "{{ item }}"
+      loop: "{{ (seed_workflows.stdout | from_json).warnings }}"
 
     - name: Что получилось
       ansible.builtin.debug:
         msg: >-
-          Доска наполнена: ролей в каталоге {{ seed_prompt_files | length }},
+          Доска наполнена: ролей в каталоге {{ seed_prompt_files | length }};
           цепочек создано
-          {{ seed_import.results | map(attribute='json.created') | select | flatten | join(', ') | default('—', true) }},
-          уже было
-          {{ seed_import.results | map(attribute='json.skipped') | select | flatten | join(', ') | default('—', true) }}.
+          {{ (seed_workflows.stdout | from_json).created | join(', ') | default('—', true) }},
+          обновлено
+          {{ (seed_workflows.stdout | from_json).updated | join(', ') | default('—', true) }},
+          без изменений
+          {{ (seed_workflows.stdout | from_json).unchanged | join(', ') | default('—', true) }}.
