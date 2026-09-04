@@ -87,5 +87,6 @@ Done.
 
 ## Что за этим стоит
 
-Решения 24–50 в `research/DECISIONS.md`, найденные дыры в
-`PROMPT-AUDIT.md`. Quick и Standard — после первой полной задачи на Deep.
+Решения — в `research/DECISIONS.md`, отчёт о пробном прогоне — в
+`research/TRIAL-2026-09-04.md`. Quick и Standard — после первых
+настоящих задач на Deep.
