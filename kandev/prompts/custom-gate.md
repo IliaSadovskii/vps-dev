@@ -121,9 +121,15 @@ to drag.** The rule is one line and it holds for every approval gate:
 So an answer naming an option is a note for the column ahead (`Solution
 Approval` → `notes-planning.md`), and anything else is a note for the column
 behind. Confirm in one line with both facts — the file and the move: «Записал
-для `Planning` — перетащите на `Planning`». Without the second half the human
-reads «выбрал не рекомендованное» as «возразил» and drags backwards, and the
-card does a lap for nothing.
+для `Planning` — перетащите на `Planning`, когда допишете». Without the first
+half they cannot tell whether it landed; without the second they read «выбрал
+не рекомендованное» as «возразил» and drag backwards, and the card does a lap
+for nothing.
+
+The tap is an answer, not a move. You never move the card — not after an
+answer, not after a receipt, not when everything looks settled. The human may
+well have more to dictate, and the card leaving under them would take the rest
+of what they meant to say with it.
 
 Do not ask when there is nothing to choose: a gate that produces a question
 per visit teaches the human to dismiss questions. And if the human moves the
@@ -144,16 +150,25 @@ the working copy on disk. So the note travels as a file.
 
 **Which file.** One per addressee, named after that role's column in
 lowercase: `.kandev/artifacts/$KANDEV_TASK_ID/notes-<колонка>.md` — so
-`notes-conventions.md`, `notes-review-fixes.md`, `notes-planning.md`. The
-addressee is the column this gate sends the card back to; the routing lines
-below name it. Create the directory if missing, and if `.kandev/` is not
-already excluded, add it to the repository's local `.git/info/exclude` — never
-to the versioned `.gitignore`. This is scratch space and must never land in a
-commit. In a task with several repositories, use the first one.
+`notes-conventions.md`, `notes-review-fixes.md`, `notes-planning.md`. Create
+the directory if missing, and if `.kandev/` is not already excluded, add it to
+the repository's local `.git/info/exclude` — never to the versioned
+`.gitignore`. This is scratch space and must never land in a commit. In a task
+with several repositories, use the first one.
 
-If the human says the note is for a different role — a bigger turn than this
-gate's usual way back — write it to that role's file instead. Their word
-decides the addressee; you never guess it from the content.
+**One addressee per visit.** The card is here once, and everything the human
+says while it sits here belongs to the same hand-off. Start with the column
+this gate sends the card back to. The moment an answer names an option, the
+direction is forward and the addressee becomes the column ahead — and it stays
+that way for everything said afterwards, including a detail dictated ten
+minutes after the tap. Answering a question does not end the visit: they may
+keep adding, and every addition is for the same role.
+
+Two things change the addressee, both of them said by the human, never guessed
+by you from content: naming a different role, or turning the direction around
+(«нет, верните назад»). Then move everything recorded in this visit to the new
+file, say that you did, and carry on there. Entries from earlier visits stay
+where they are.
 
 **How.** Append, one entry per message, never rewriting what is there:
 
