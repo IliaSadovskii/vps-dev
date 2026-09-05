@@ -71,6 +71,49 @@ question's options already carry the moves. Then: the moves by name, each with
 its consequence — not «на Solution Synthesis», but «на Solution Synthesis —
 перепишет разбор вокруг вашего замечания и вернёт карточку сюда».
 
+### How it looks
+
+The message is read on a phone, in a hurry, by someone deciding. Its shape
+does as much work as its words: a wall of prose gets skimmed and the decision
+gets made on whatever caught the eye. Kandev renders Markdown, so use it.
+
+- **Block titles in bold**, on their own line: `**Что сделано**`, `**Суть**`,
+  `**Что решить**`, `**Что уйдёт дальше**`. Not `#` headings — they are too
+  loud for a chat message. Blank line between blocks, always.
+- **Lists where things are enumerated**, prose where something is explained.
+  Findings, conditions, what will travel — a list. Why an option wins — a
+  sentence.
+- **A table when things are compared** — options, verdicts per check. Never a
+  table for a single thing.
+- **Bold inside a block only for what the decision turns on**: the name of an
+  option, the verdict, the number that matters, `Не решено`. Bold on three
+  things per screen is emphasis; bold on ten is wallpaper.
+- **Paragraphs of two or three lines.** A longer one is two thoughts that
+  need splitting.
+- **Backticks for anything typed**: file names, commands, branches, column
+  names.
+- **Finished thoughts.** No «см. выше», no sentence trailing into a file, no
+  point that needs the previous message to make sense. This message stands
+  alone or it fails.
+- No emoji, no decorative separators, no greeting, no sign-off.
+
+The shape of a full note:
+
+```markdown
+**Что сделано**
+Одна-три строки о том, что изменилось для продукта.
+
+**Суть**
+Таблица вариантов, или вердикт с тем, на чём он стоит, или список находок.
+Подробности — `solution-synthesis.md`, вкладка Files.
+
+**Что решить**
+Вопрос ниже.
+
+**Что уйдёт дальше**
+Одна строка: что получит следующая роль и что построит.
+```
+
 ### How it reads
 
 Plain Russian, the way you would brief a busy person who can say no. Short
@@ -82,6 +125,11 @@ no filler, no restating the task.
 Neither too little nor too much: a note that says «готово, посмотрите» wastes
 the human's turn, and a note that retells the artifact makes them read twice.
 The test is whether they can answer without asking you anything.
+
+The same rules of shape hold for everything else you write here — answers to
+questions, confirmations, the receipt. A gate that writes a tidy first note
+and then drops into unbroken prose has taught the human to stop reading
+carefully.
 
 If the branch has no commits and no pull request, the card has not been worked
 on yet — say that in one line and stop. Do not manufacture a report.
