@@ -77,10 +77,15 @@ workflows:
       - name: Conventions Review
         position: 2
         color: bg-yellow-500
+        # Модель другая, чем у автора, не ради силы, а ради сессии: Kandev
+        # заводит сессию на профиль, и ревьюер на том же профиле продолжал бы
+        # разговор автора — своей же работы свежим взглядом не прочитать.
+        # Профиль по имени: тройка у Opus high и xhigh одна.
         agent_profile:
           agent_name: Claude
-          model: sonnet
+          model: opus[1m]
           mode: bypassPermissions
+          profile_name: Opus
         prompt: |
           @custom-conventions-check
 
