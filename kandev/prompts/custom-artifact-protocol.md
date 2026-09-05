@@ -33,6 +33,49 @@ belongs to the `Blueprint` chain. No role on this board edits it — a
 role that finds it wrong says so in its own artifact, and `Draft PR`
 carries that to the owner.
 
+## Speaking to the owner: «Для владельца»
+
+A step whose next column is a human gate writes its report to the owner
+itself, as the **first section of its own artifact**, headed
+`## Для владельца`. The gate publishes that section word for word. It does
+not summarise it, improve it, or write its own version.
+
+The reason is one author per decision. When the gate rewrote what you wrote,
+one decision existed in three places — your file, your closing message, the
+gate's note — in three wordings by two models, and they drifted. You did the
+work; you say what it means.
+
+The shape is fixed, because a gate has to be able to lift it and a person has
+to be able to read it on a phone:
+
+```markdown
+## Для владельца
+
+**Что сделано**
+Две-три строки о том, что изменилось для продукта. Не о том, какие колонки
+прошли.
+
+**Суть**
+Таблица вариантов, или вердикт с тем, на чём он стоит, или список находок.
+Всё, что нужно для решения, — здесь; в остальной файл идут за
+доказательствами.
+
+**Что решить**
+Вопрос и варианты. У каждого варианта — что будет, если его выбрать, и куда
+после него поедет карточка.
+
+**Что уйдёт дальше**
+Одна строка: что получит следующая роль и что построит.
+```
+
+Plain Russian, short sentences, bold for block titles, a list where things are
+enumerated, a table where they are compared. No board vocabulary — not
+«артефакт», «шаг», «колонка», «заход»; say «файл с разбором», «эта работа»,
+«прошлый раз». No file paths inside it except the one naming where the
+evidence is.
+
+Nothing decides for the owner here. You recommend, they choose.
+
 ## State is a file, not prose
 
 Which lap this is, whether the automatic return is still available, which

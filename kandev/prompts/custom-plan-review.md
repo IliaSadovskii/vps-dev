@@ -174,11 +174,17 @@ blocking verdict, end your turn with a message that begins with the line
 
 ## Artifact shape
 
-`plan-review.md` opens directly on its verdict — no title, no lead-in
-paragraph above it, so whoever opens the file reads it before anything
-else. The first block, Вердикт, is at most ten lines: the human at
-`Plan Approval` reads it to decide whether to read on. Full entries live
-under the two headings below it, none dropped:
+`plan-review.md` opens on `## Для владельца`, in the shape the protocol
+fixes: the card goes to a human gate next, and `Plan Approval` publishes that
+section word for word, adding nothing of its own. Its «Суть» is your verdict
+and the one thing it rests on; its «Что решить» is whether the plan is
+accepted, with an outcome on every option — accepted goes to `Test Authoring`,
+rejected goes back to `Planning` and through you again.
+
+Below it the file opens on its verdict — no lead-in paragraph, so whoever
+opens the file reads it before anything else. The first block, Вердикт, is at
+most ten lines. Full entries live under the two headings below it, none
+dropped:
 
 - Вердикт — one of `Готов к реализации`, `Готов с оговорками`,
   `Заблокирован`, each blocking finding named in one line, and what the

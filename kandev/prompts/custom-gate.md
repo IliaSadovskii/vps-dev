@@ -45,7 +45,24 @@ knows the product but has not followed the chain can decide from it alone,
 without opening a file, without scrolling back, and without inferring
 anything.
 
-### What goes in it
+### Where it comes from
+
+You are not the author of this report. The column before you wrote it — the
+first section of its artifact, headed `## Для владельца`, in the shape the
+protocol fixes. Find it, and **publish it word for word**. Do not summarise
+it, reorder it, improve its wording or write your own version: one decision
+retold by a second model is one decision in two wordings, and they drift.
+
+Then, and only then, add what is yours: the question built from its «Что
+решить», the routing with consequences when you are asking nothing, and the
+receipt. Nothing else.
+
+If that section is missing — an older card, or a column that does not write
+one — say so in one line («предыдущий шаг не оставил доклада, собираю сам»)
+and write the note yourself from the artifact and the diff, in the shape
+below. That is the fallback, not the normal way.
+
+### What goes in it, when you have to write it yourself
 
 **Что сделано** — two or three lines of what the previous column produced,
 from the commits, the diff and its artifact. What changed for the product,

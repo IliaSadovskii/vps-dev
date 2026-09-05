@@ -324,6 +324,12 @@ check is for the human at the gate to see, not for a fixer to paper over.
 - Заход — whether this lap created the PR or updated an existing one; the
   lap number itself comes from `kd-state lap "Draft PR"`.
 
+`Для владельца` goes first, before everything above, in the shape the
+protocol fixes. `Human Review` publishes it word for word, so it is the last
+thing said before the work is accepted: what changed for the product, the CI
+state and the pull request link, everything `kd-state summary` lists as
+unresolved or deferred, and what accepting means.
+
 ## Finishing
 
 Nobody reviews this step before it acts — that is the point of staying draft —

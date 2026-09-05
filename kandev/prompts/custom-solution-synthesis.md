@@ -105,9 +105,14 @@ a reversal you did not mean is not.
 
 ## Artifact shape
 
-Five sections, headed exactly `## Рекомендация`, `## Варианты`,
-`## Отклонённые варианты с причиной`, `## Что это меняет в границах задачи`,
-`## Номер круга`. Keep all five even when one is short — an empty section is
+Six sections, headed exactly `## Для владельца`, `## Рекомендация`,
+`## Варианты`, `## Отклонённые варианты с причиной`,
+`## Что это меняет в границах задачи`, `## Номер круга`. `Для владельца` is
+first and follows the shape the protocol fixes: this card goes to a human
+gate next, and what you write there is what the owner reads — the gate
+publishes it word for word and adds nothing of its own. Its «Суть» is the
+options table from `Варианты`; its «Что решить» is the choice, with an
+outcome on every option. Keep all five even when one is short — an empty section is
 a claim that there was nothing to say, and that is a different claim from not
 having checked.
 
