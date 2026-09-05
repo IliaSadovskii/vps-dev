@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+# vps-dev-update-run — исполнитель заданий со страницы обновлений.
+#
+# Запускает systemd по появлению файла в очереди
+# (vps-dev-update-run.path -> .service). Руками звать не нужно.
+#
+# ЧТО ДЕЛАЕТ. Берёт задание из очереди и выполняет одно из двух:
+#
+#   update  записывает выбранную версию в файл версий машины и прогоняет
+#           выкатку только тех ролей, которых это касается;
+#   reset   стирает файл версий целиком — следующая выкатка вернёт
+#           машину к тому, что записано в репозитории.
+#
+# ПОЧЕМУ ОТДЕЛЬНАЯ СЛУЖБА ОТ ROOT. Выкатка пишет в /usr и /etc и поднимает
+# службы; веб-странице такие права давать незачем. Она кладёт задание в
+# свой каталог, systemd будит эту службу, и всё опасное делается здесь.
+# Обратной связи у страницы ровно две: журнал прогона и state.json.
+#
+# ПОРЯДОК ДЛЯ KANDEV. Он применяет миграции базы при старте, и обратной
+# дороги у них нет, поэтому снимок базы снимается ДО смены версии — тем же
+# скриптом, что делает суточные снимки.
+#
+# Зависимостей нет: стандартная библиотека Python 3.12.
+
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+STATE_DIR = os.environ.get("UPDATES_STATE_DIR", "/var/lib/vps-dev/updates")
+OVERRIDES = os.environ.get("UPDATES_OVERRIDES_FILE", "/var/lib/vps-dev/versions.yml")
+REPO_DIR = os.environ.get("UPDATES_REPO_DIR", "/home/dev/.vps-dev/src")
+PAGE_USER = os.environ.get("UPDATES_USER", "dev")
+
+SERVICES_FILE = os.path.join(STATE_DIR, "services.json")
+QUEUE_DIR = os.path.join(STATE_DIR, "queue")
+LOG_DIR = os.path.join(STATE_DIR, "logs")
+STATE_FILE = os.path.join(STATE_DIR, "state.json")
+KANDEV_BACKUP = "/usr/local/bin/kandev-backup.sh"
+
+
+def read_json(path, default):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def write_json(path, data):
+    tmp = path + ".new"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)
+    # Страница читает эти файлы от своего имени.
+    try:
+        import pwd
+        entry = pwd.getpwnam(PAGE_USER)
+        os.chown(path, entry.pw_uid, entry.pw_gid)
+    except (ImportError, KeyError, OSError):
+        pass
+
+
+def overrides():
+    """Версии, выбранные на машине. Формат — одна строка `ключ: "значение"`,
+    чтобы файл читался и Ansible, и страницей без разбора полного YAML."""
+    out = {}
+    try:
+        with open(OVERRIDES, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or ":" not in line:
+                    continue
+                key, _, value = line.partition(":")
+                out[key.strip()] = value.strip().strip("'\"")
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def write_overrides(values):
+    lines = [
+        "# Версии служб, выбранные на этой машине.",
+        "#",
+        "# Пишет страница обновлений (:8072), читает сценарий Ansible первым",
+        "# делом (pre_tasks в site.yml). Значения отсюда сильнее того, что",
+        "# записано в репозитории, — поэтому выкатка не откатывает то, что",
+        "# здесь обновили.",
+        "#",
+        "# Вернуть машину к репозиторию: удалить этот файл (кнопка «сбросить",
+        "# все версии» на той же странице) и прогнать выкатку.",
+        "---",
+    ]
+    for key in sorted(values):
+        lines.append(f'{key}: "{values[key]}"')
+    tmp = OVERRIDES + ".new"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, OVERRIDES)
+
+
+def repo_defaults(names):
+    """Что записано в репозитории: действует, пока машину не обновляли.
+    Ищем построчно — то же делает страница, и это дешевле, чем поднимать
+    Ansible ради двух строк."""
+    out = {}
+    wanted = re.compile(r"^\s*(" + "|".join(re.escape(n) for n in names) + r")\s*:\s*(.+?)\s*$")
+    for root in (os.path.join(REPO_DIR, "ansible", "roles"),
+                 os.path.join(REPO_DIR, "ansible", "inventory")):
+        for dirpath, _dirs, files in os.walk(root):
+            for name in files:
+                if not name.endswith((".yml", ".yaml")):
+                    continue
+                try:
+                    with open(os.path.join(dirpath, name), encoding="utf-8") as f:
+                        for line in f:
+                            m = wanted.match(line)
+                            if m and m.group(1) not in out:
+                                out[m.group(1)] = m.group(2).strip().strip("'\"")
+                except OSError:
+                    continue
+    return out
+
+
+def set_job(job, **fields):
+    state = read_json(STATE_FILE, {})
+    state["job"] = {**(job or {}), **fields}
+    write_json(STATE_FILE, state)
+
+
+def remember_previous(service_id, value):
+    state = read_json(STATE_FILE, {})
+    state.setdefault("previous", {})[service_id] = value
+    write_json(STATE_FILE, state)
+
+
+def run(argv, out, cwd=None, env=None):
+    out.write(f"$ {' '.join(argv)}\n")
+    out.flush()
+    done = subprocess.run(argv, cwd=cwd, env=env, stdout=out, stderr=subprocess.STDOUT, text=True)
+    out.write(f"[код возврата {done.returncode}]\n")
+    out.flush()
+    return done.returncode
+
+
+def do_update(job, svc, out):
+    var, value = svc["var"], job["version"]
+    if svc.get("image"):
+        # У образов в переменной лежит `имя:тег`, а на странице — только тег.
+        value = svc["image"].replace("{tag}", job["version"])
+
+    chosen = overrides()
+    defaults = repo_defaults([var])
+    before = chosen.get(var) or defaults.get(var, "")
+    out.write(f"Служба: {svc['name']}\nБыло: {before or '—'}\nСтавим: {value}\n\n")
+
+    if svc.get("backup") and os.path.exists(KANDEV_BACKUP):
+        out.write("Снимок базы перед обновлением:\n")
+        if run([KANDEV_BACKUP], out) != 0:
+            out.write("\nСнимок не снялся — обновление отменено, версия не менялась.\n")
+            return 1
+        out.write("\n")
+
+    if before:
+        remember_previous(svc["id"], before)
+    chosen[var] = value
+    write_overrides(chosen)
+    out.write(f"Записано в {OVERRIDES}: {var} = {value}\n\n")
+
+    env = dict(os.environ,
+               ANSIBLE_CONFIG="ansible.cfg",
+               ANSIBLE_COLLECTIONS_PATH="/usr/share/ansible/collections",
+               ANSIBLE_FORCE_COLOR="0")
+    code = run(["/usr/local/bin/ansible-playbook",
+                "-i", "../servers.yml", "-i", "inventory", "-c", "local",
+                "site.yml", "--tags", ",".join(svc["tags"]),
+                "-e", "dev_pull_mode=true"],
+               out, cwd=os.path.join(REPO_DIR, "ansible"), env=env)
+    if code != 0:
+        out.write("\nВыкатка не прошла. Версия в файле осталась выбранной: "
+                  "почините причину и повторите, либо вернитесь на прежнюю версию кнопкой.\n")
+    return code
+
+
+def do_reset(out):
+    try:
+        os.remove(OVERRIDES)
+        out.write(f"Файл выбранных версий удалён: {OVERRIDES}\n")
+    except FileNotFoundError:
+        out.write("Выбранных версий и не было — машина и так идёт по репозиторию.\n")
+    out.write("\nТеперь прогоните выкатку: она вернёт службы к версиям из репозитория.\n"
+              "Кнопка в GitHub Actions («Сервер разработки», режим apply) или "
+              "`make apply` с управляющей машины.\n")
+    state = read_json(STATE_FILE, {})
+    state["previous"] = {}
+    write_json(STATE_FILE, state)
+    return 0
+
+
+def handle(path):
+    job = read_json(path, None)
+    if not job:
+        os.remove(path)
+        return
+    services = {s["id"]: s for s in read_json(SERVICES_FILE, [])}
+    svc = services.get(job.get("service", ""))
+    title = (f"{svc['name']} → {job.get('version')}" if svc else "сброс выбранных версий")
+    os.makedirs(LOG_DIR, exist_ok=True)
+    log_path = os.path.join(LOG_DIR, f"{job['id']}.log")
+    set_job(job, title=title, status="running", started_at=time.time())
+    with open(log_path, "w", encoding="utf-8") as out:
+        try:
+            import pwd
+            entry = pwd.getpwnam(PAGE_USER)
+            os.chown(log_path, entry.pw_uid, entry.pw_gid)
+        except (ImportError, KeyError, OSError):
+            pass
+        out.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} · {title}\n\n")
+        try:
+            if job["action"] == "update" and svc:
+                code = do_update(job, svc, out)
+            elif job["action"] == "reset":
+                code = do_reset(out)
+            else:
+                out.write("Непонятное задание, ничего не делаю.\n")
+                code = 1
+        except Exception as e:  # noqa: BLE001 — упасть здесь значит оставить задание в очереди
+            out.write(f"\nСбой исполнителя: {e}\n")
+            code = 1
+    set_job(job, title=title, status="ok" if code == 0 else "failed",
+            finished_at=time.time(), code=code)
+    os.remove(path)
+
+
+def main():
+    os.makedirs(QUEUE_DIR, exist_ok=True)
+    jobs = sorted(f for f in os.listdir(QUEUE_DIR) if f.endswith(".json"))
+    if not jobs:
+        return 0
+    # По одному за раз: две выкатки разом подрались бы за пакеты и службы.
+    for name in jobs:
+        handle(os.path.join(QUEUE_DIR, name))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

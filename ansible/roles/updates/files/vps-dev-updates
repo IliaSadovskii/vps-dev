@@ -1,0 +1,428 @@
+#!/usr/bin/env python3
+# vps-dev-updates — страница обновления служб машины: что стоит, что
+# вышло, кнопка на каждую службу.
+#
+# Ставит роль updates, запускает systemd (vps-dev-updates.service). Руками
+# звать не нужно; что отдаёт — curl 127.0.0.1:8072/api/updates.
+#
+# ЧТО ДЕЛАЕТ. Раз в час спрашивает источники (GitHub Releases, npm), что
+# вышло, и рисует таблицу: служба, стоит, вышло, кнопка. Нажатие кладёт
+# задание в очередь; работу делает не эта страница, а служба-исполнитель
+# от root (vps-dev-update-run), которая пишет журнал прогона рядом.
+#
+# ПОЧЕМУ ОЧЕРЕДЬ, А НЕ ЗАПУСК ОТСЮДА. Обновление — это выкатка роли: она
+# пишет в /usr, /etc и поднимает службы. Дать это веб-странице значит
+# снять с неё всю изоляцию systemd. Вместо этого страница пишет файл в
+# свой каталог, а path-юнит будит исполнителя. Страница остаётся
+# безопасной: всё, что она умеет, — положить задание и показать журнал.
+#
+# ЗАЩИТА ОТ ЧУЖОЙ ФОРМЫ. Как на странице общего промпта: запись только
+# если Origin (или Referer) совпадает с Host запроса.
+#
+# Зависимостей нет: стандартная библиотека Python 3.12 плюс `gh`, который
+# на машине и так стоит и авторизован.
+
+import html
+import json
+import os
+import re
+import subprocess
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+PORT = int(os.environ.get("UPDATES_PORT", "8072"))
+STATE_DIR = os.environ.get("UPDATES_STATE_DIR", "/var/lib/vps-dev/updates")
+OVERRIDES = os.environ.get("UPDATES_OVERRIDES_FILE", "/var/lib/vps-dev/versions.yml")
+REPO_DIR = os.environ.get("UPDATES_REPO_DIR", "/home/dev/.vps-dev/src")
+POLL_SECONDS = max(300, int(os.environ.get("UPDATES_POLL_SECONDS", "3600")))
+
+SERVICES_FILE = os.path.join(STATE_DIR, "services.json")
+QUEUE_DIR = os.path.join(STATE_DIR, "queue")
+LOG_DIR = os.path.join(STATE_DIR, "logs")
+STATE_FILE = os.path.join(STATE_DIR, "state.json")   # пишет исполнитель
+LATEST_FILE = os.path.join(STATE_DIR, "latest.json")  # пишем мы
+HTTP_TIMEOUT = 15
+
+
+def log(msg):
+    print(f"vps-dev-updates: {msg}", flush=True)
+
+
+def read_json(path, default):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return default
+    except (OSError, json.JSONDecodeError) as e:
+        log(f"{path} не прочитан: {e}")
+        return default
+
+
+# ------------------------------------------------------------- версии --
+
+def overrides():
+    """Выбранные на этой машине версии. Формат простой — `ключ: "значение"`
+    по строке, — потому что файл пишет исполнитель и читает Ansible, и
+    разбирать полноценный YAML здесь незачем."""
+    out = {}
+    try:
+        with open(OVERRIDES, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or ":" not in line:
+                    continue
+                key, _, value = line.partition(":")
+                out[key.strip()] = value.strip().strip("'\"")
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        log(f"{OVERRIDES} не прочитан: {e}")
+    return out
+
+
+def repo_defaults(names):
+    """Версии, записанные в репозитории: они действуют, пока машину не
+    обновляли. Ищем построчно в defaults ролей и в inventory — то же
+    делает исполнитель, и это дешевле, чем поднимать Ansible ради двух
+    строк."""
+    out = {}
+    roots = [os.path.join(REPO_DIR, "ansible", "roles"),
+             os.path.join(REPO_DIR, "ansible", "inventory")]
+    wanted = re.compile(r"^\s*(" + "|".join(re.escape(n) for n in names) + r")\s*:\s*(.+?)\s*$")
+    for root in roots:
+        for dirpath, _dirs, files in os.walk(root):
+            for name in files:
+                if not name.endswith((".yml", ".yaml")):
+                    continue
+                try:
+                    with open(os.path.join(dirpath, name), encoding="utf-8") as f:
+                        for line in f:
+                            m = wanted.match(line)
+                            if m and m.group(1) not in out:
+                                out[m.group(1)] = m.group(2).strip().strip("'\"")
+                except OSError:
+                    continue
+    return out
+
+
+def latest_github(ref):
+    """Тег последнего релиза. Через `gh` — он на машине авторизован, и
+    предел запросов у него на порядок выше анонимного."""
+    try:
+        done = subprocess.run(["gh", "api", f"repos/{ref}/releases/latest", "--jq", ".tag_name"],
+                              capture_output=True, text=True, timeout=HTTP_TIMEOUT)
+        if done.returncode == 0 and done.stdout.strip():
+            return done.stdout.strip()
+        detail = (done.stderr or done.stdout).strip().splitlines()[-1:] or [""]
+    except (OSError, subprocess.SubprocessError) as e:
+        detail = [str(e)]
+    # Без gh или без входа — обычный запрос, у него предел 60 в час на адрес.
+    try:
+        req = urllib.request.Request(f"https://api.github.com/repos/{ref}/releases/latest",
+                                     headers={"Accept": "application/vnd.github+json",
+                                              "User-Agent": "vps-dev-updates"})
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as r:
+            return json.load(r).get("tag_name")
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as e:
+        raise RuntimeError(f"GitHub не ответил: {detail[0] or e}")
+
+
+def latest_npm(ref):
+    """Прямо у реестра, а не командой `npm view`: та пишет в свой кэш в
+    домашнем каталоге, а домашний каталог у этой службы только на чтение
+    (см. юнит). Ответ реестра — тот же самый JSON, что читает npm."""
+    try:
+        req = urllib.request.Request(f"https://registry.npmjs.org/{urllib.parse.quote(ref, safe='@/')}/latest",
+                                     headers={"Accept": "application/json",
+                                              "User-Agent": "vps-dev-updates"})
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as r:
+            return json.load(r)["version"]
+    except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError) as e:
+        raise RuntimeError(f"npm не ответил: {e}")
+
+
+def poll_once():
+    services = read_json(SERVICES_FILE, [])
+    out = read_json(LATEST_FILE, {})
+    for svc in services:
+        try:
+            tag = latest_github(svc["ref"]) if svc["source"] == "github" else latest_npm(svc["ref"])
+            version = tag[1:] if (svc.get("strip_v") and tag.startswith("v")) else tag
+            out[svc["id"]] = {"version": version, "tag": tag, "at": time.time(), "error": ""}
+        except Exception as e:  # noqa: BLE001 — источник чужой, падать нельзя
+            prev = out.get(svc["id"], {})
+            prev["error"] = str(e)[:200]
+            out[svc["id"]] = prev
+            log(f"{svc['id']}: {e}")
+    try:
+        tmp = LATEST_FILE + ".new"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(out, f, ensure_ascii=False)
+        os.replace(tmp, LATEST_FILE)
+    except OSError as e:
+        log(f"кэш версий не записан: {e}")
+
+
+def poll_loop():
+    while True:
+        poll_once()
+        time.sleep(POLL_SECONDS)
+
+
+# -------------------------------------------------------------- модель --
+
+def picture():
+    """Что показываем: по службе — что стоит, что вышло, что было до
+    обновления и чем закончился последний прогон."""
+    services = read_json(SERVICES_FILE, [])
+    chosen = overrides()
+    defaults = repo_defaults([s["var"] for s in services])
+    latest = read_json(LATEST_FILE, {})
+    state = read_json(STATE_FILE, {})
+    rows = []
+    for svc in services:
+        var = svc["var"]
+        current = chosen.get(var) or defaults.get(var, "")
+        # У образов в переменной лежит `имя:тег` — человеку показываем тег.
+        shown = current.rsplit(":", 1)[-1] if svc.get("image") else current
+        newest = (latest.get(svc["id"]) or {}).get("version") or ""
+        previous = (state.get("previous") or {}).get(svc["id"]) or ""
+        prev_shown = previous.rsplit(":", 1)[-1] if (svc.get("image") and previous) else previous
+        rows.append({
+            "id": svc["id"], "name": svc["name"], "var": var,
+            "current": shown, "latest": newest,
+            "outdated": bool(newest) and newest != shown,
+            "pinned": var in chosen,
+            "previous": prev_shown,
+            "warn": svc.get("warn", ""),
+            "error": (latest.get(svc["id"]) or {}).get("error", ""),
+        })
+    return {"services": rows, "job": state.get("job"), "reset_hint": bool(chosen)}
+
+
+def enqueue(job):
+    os.makedirs(QUEUE_DIR, exist_ok=True)
+    job_id = f"{int(time.time())}-{job.get('service', job['action'])}"
+    job = dict(job, id=job_id, queued_at=time.time())
+    tmp = os.path.join(QUEUE_DIR, f".{job_id}.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(job, f, ensure_ascii=False)
+    # Переименованием, а не записью на место: исполнитель просыпается на
+    # появление файла и не должен увидеть половину задания.
+    os.replace(tmp, os.path.join(QUEUE_DIR, f"{job_id}.json"))
+    return job_id
+
+
+def job_log(job_id):
+    path = os.path.join(LOG_DIR, f"{job_id}.log")
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()[-20000:]
+    except OSError:
+        return ""
+
+
+# ------------------------------------------------------------ страница --
+
+def esc(text):
+    return html.escape(str(text or ""), quote=True)
+
+
+def human_ago(epoch):
+    if not epoch:
+        return ""
+    s = int(time.time() - epoch)
+    if s < 60:
+        return "только что"
+    if s < 3600:
+        return f"{s // 60} мин. назад"
+    if s < 86400:
+        return f"{s // 3600} ч. назад"
+    return f"{s // 86400} дн. назад"
+
+
+def render(view, flash=""):
+    job = view.get("job") or {}
+    running = job.get("status") == "running"
+    rows = []
+    for s in view["services"]:
+        state = "новее" if s["outdated"] else "свежая"
+        klass = "old" if s["outdated"] else "ok"
+        latest = esc(s["latest"]) if s["latest"] else '<span class="dim">не спросили</span>'
+        buttons = []
+        if s["outdated"]:
+            buttons.append(
+                f'<form method="post" action="/update"><input type="hidden" name="service" value="{esc(s["id"])}">'
+                f'<input type="hidden" name="version" value="{esc(s["latest"])}">'
+                f'<button {"disabled" if running else ""}>обновить</button></form>')
+        if s["previous"] and s["previous"] != s["current"]:
+            buttons.append(
+                f'<form method="post" action="/update"><input type="hidden" name="service" value="{esc(s["id"])}">'
+                f'<input type="hidden" name="version" value="{esc(s["previous"])}">'
+                f'<button class="ghost" {"disabled" if running else ""}>вернуть {esc(s["previous"])}</button></form>')
+        note = f'<div class="warn">{esc(s["warn"])}</div>' if s["warn"] and s["outdated"] else ""
+        if s["error"]:
+            note += f'<div class="warn bad">{esc(s["error"])}</div>'
+        pin = '<span class="pin" title="версия выбрана на этой машине">закреплена здесь</span>' if s["pinned"] else ""
+        rows.append(
+            f'<tr class="{klass}"><td class="name">{esc(s["name"])} {pin}{note}</td>'
+            f'<td class="ver">{esc(s["current"])}</td>'
+            f'<td class="ver">{latest}</td>'
+            f'<td class="act">{"".join(buttons)}</td></tr>')
+
+    log_block = ""
+    if job:
+        status = {"running": "идёт", "ok": "готово", "failed": "не вышло"}.get(job.get("status"), job.get("status", ""))
+        badge = "bad" if job.get("status") == "failed" else ("run" if running else "good")
+        log_block = (f'<h2>Последний прогон</h2>'
+                     f'<div class="job {badge}">{esc(job.get("title", ""))} — {esc(status)}'
+                     f' <span class="dim">{esc(human_ago(job.get("finished_at") or job.get("started_at")))}</span></div>'
+                     f'<pre>{esc(job_log(job.get("id", "")))}</pre>')
+
+    reset = ""
+    if view["reset_hint"]:
+        reset = ('<form method="post" action="/reset" class="reset">'
+                 f'<button class="ghost" {"disabled" if running else ""}>сбросить все версии</button>'
+                 '<span class="dim">сотрёт выбранные здесь версии; следующая выкатка вернёт то, '
+                 'что записано в репозитории</span></form>')
+
+    refresh = '<meta http-equiv="refresh" content="5">' if running else ""
+    return f"""<!doctype html><html lang="ru"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">{refresh}
+<title>Обновления служб</title>
+<style>
+ /* Тот же язык, что у дашборда и остальных страниц машины. */
+ :root{{color-scheme:light dark;--line:color-mix(in srgb,currentColor 14%,transparent);--accent:#2563eb}}
+ *{{box-sizing:border-box}}
+ body{{font:15px/1.5 system-ui,-apple-system,sans-serif;max-width:940px;margin:0 auto;padding:1.75rem 1rem 3rem}}
+ h1{{font-size:1.3rem;margin:0 0 .25rem}} h2{{font-size:1rem;margin:1.75rem 0 .5rem}}
+ .sub{{opacity:.55;font-size:.85rem;margin:0 0 1.5rem}}
+ table{{width:100%;border-collapse:collapse}}
+ th{{text-align:left;font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;opacity:.5;font-weight:600;padding:.35rem .5rem}}
+ td{{padding:.6rem .5rem;border-top:1px solid var(--line);vertical-align:top}}
+ td.name{{font-weight:600}}
+ td.ver{{font-variant-numeric:tabular-nums;white-space:nowrap;opacity:.85}}
+ tr.old td.ver:last-of-type{{color:var(--accent);font-weight:600}}
+ td.act{{text-align:right;white-space:nowrap}}
+ td.act form{{display:inline-block;margin-left:.4rem}}
+ button{{font:inherit;font-size:.85rem;font-weight:600;padding:.35rem .8rem;border-radius:8px;border:0;
+   background:var(--accent);color:#fff;cursor:pointer}}
+ button:disabled{{opacity:.45;cursor:default}}
+ button.ghost{{background:none;color:inherit;border:1px solid var(--line);font-weight:500}}
+ .dim{{opacity:.5;font-weight:400}}
+ .pin{{font-size:.7rem;font-weight:500;opacity:.55;border:1px solid var(--line);border-radius:6px;padding:0 .3rem}}
+ .warn{{font-weight:400;font-size:.8rem;opacity:.7;margin-top:.3rem}}
+ .warn.bad{{color:#dc2626;opacity:.9}}
+ .flash{{padding:.6rem .9rem;border-radius:10px;margin:0 0 1rem;font-size:.9rem;
+   background:color-mix(in srgb,#16a34a 12%,transparent);border:1px solid color-mix(in srgb,#16a34a 35%,transparent)}}
+ .job{{font-size:.9rem;padding:.5rem .8rem;border-radius:10px;border:1px solid var(--line)}}
+ .job.run{{border-color:color-mix(in srgb,var(--accent) 45%,transparent)}}
+ .job.good{{border-color:color-mix(in srgb,#16a34a 40%,transparent)}}
+ .job.bad{{border-color:color-mix(in srgb,#dc2626 45%,transparent)}}
+ pre{{font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:color-mix(in srgb,currentColor 6%,transparent);
+   padding:.8rem;border-radius:10px;max-height:26rem;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}}
+ .reset{{margin-top:2rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;font-size:.85rem}}
+ @media(prefers-color-scheme:dark){{:root{{--accent:#7aa7ff}} .warn.bad{{color:#f87171}}}}
+</style></head><body>
+<h1>Обновления служб</h1>
+<div class="sub">версия, выбранная здесь, переживает выкатку: она пишется на машине, а не в репозиторий</div>
+{flash}
+<table><tr><th>Служба</th><th>Стоит</th><th>Вышло</th><th></th></tr>
+{''.join(rows) or '<tr><td colspan="4">список служб пуст</td></tr>'}
+</table>
+{reset}
+{log_block}
+</body></html>"""
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "vps-dev-updates"
+
+    def do_GET(self):  # noqa: N802 — имя задано BaseHTTPRequestHandler
+        path, _, query = self.path.partition("?")
+        path = path.rstrip("/") or "/"
+        if path == "/":
+            flash = ""
+            if "queued=1" in query:
+                flash = '<div class="flash">Задание принято. Журнал прогона появится ниже, страница обновляется сама.</div>'
+            elif "reset=1" in query:
+                flash = ('<div class="flash">Выбранные версии стёрты. Прогоните выкатку — машина вернётся '
+                         'к тому, что записано в репозитории.</div>')
+            self.reply(200, "text/html; charset=utf-8", render(picture(), flash).encode("utf-8"))
+        elif path == "/api/updates":
+            self.reply(200, "application/json; charset=utf-8",
+                       json.dumps(picture(), ensure_ascii=False, indent=1).encode("utf-8"))
+        elif path == "/healthz":
+            self.reply(200, "text/plain; charset=utf-8", b"ok\n")
+        else:
+            self.reply(404, "text/plain; charset=utf-8", "нет такой страницы\n".encode("utf-8"))
+
+    def do_POST(self):  # noqa: N802
+        path = self.path.rstrip("/")
+        if not self.same_origin():
+            self.reply(403, "text/plain; charset=utf-8", "форма пришла с чужого адреса\n".encode("utf-8"))
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8", "replace")) if length else {}
+        if path == "/update":
+            service = (form.get("service") or [""])[0]
+            version = (form.get("version") or [""])[0]
+            known = {s["id"] for s in read_json(SERVICES_FILE, [])}
+            # Версия приходит из нашей же формы, но проверяем: в задании
+            # она попадёт в файл, который читает Ansible.
+            if service not in known or not re.fullmatch(r"[A-Za-z0-9._+-]{1,64}", version or ""):
+                self.reply(400, "text/plain; charset=utf-8", "непонятное задание\n".encode("utf-8"))
+                return
+            enqueue({"action": "update", "service": service, "version": version})
+            self.redirect("/?queued=1")
+        elif path == "/reset":
+            enqueue({"action": "reset"})
+            self.redirect("/?reset=1")
+        else:
+            self.reply(404, "text/plain; charset=utf-8", "нет такой страницы\n".encode("utf-8"))
+
+    def same_origin(self):
+        host = (self.headers.get("Host") or "").lower()
+        src = self.headers.get("Origin") or self.headers.get("Referer") or ""
+        if not host or not src:
+            return False
+        return (urllib.parse.urlsplit(src).netloc or "").lower() == host
+
+    def redirect(self, where):
+        self.send_response(303)
+        self.send_header("Location", where)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def reply(self, code, ctype, body):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except BrokenPipeError:
+            pass
+
+    def log_message(self, fmt, *args):
+        pass
+
+
+def main():
+    os.makedirs(QUEUE_DIR, exist_ok=True)
+    os.makedirs(LOG_DIR, exist_ok=True)
+    threading.Thread(target=poll_loop, daemon=True).start()
+    # Только loopback: в частную сеть отдаёт ports-web с TLS на том же порту.
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    log(f"слушаю 127.0.0.1:{PORT}, опрос источников раз в {POLL_SECONDS} с")
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

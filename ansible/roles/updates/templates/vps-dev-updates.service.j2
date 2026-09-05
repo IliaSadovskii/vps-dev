@@ -1,0 +1,37 @@
+# Управляется Ansible: roles/updates/templates/vps-dev-updates.service.j2
+[Unit]
+Description=Обновления служб машины (страница на :{{ updates_port }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Под {{ updates_user }}: странице нужен `gh` с его входом (предел
+# запросов к GitHub у авторизованного на два порядка выше) и чтение копии
+# репозитория в его домашнем каталоге.
+User={{ updates_user }}
+WorkingDirectory={{ updates_state_dir }}
+Environment=UPDATES_PORT={{ updates_port }}
+Environment=UPDATES_STATE_DIR={{ updates_state_dir }}
+Environment=UPDATES_OVERRIDES_FILE={{ updates_overrides_file }}
+Environment=UPDATES_REPO_DIR={{ updates_repo_dir }}
+Environment=UPDATES_POLL_SECONDS={{ updates_poll_seconds }}
+Environment=HOME=/home/{{ updates_user }}
+ExecStart={{ updates_install_dir }}/vps-dev-updates
+Restart=on-failure
+RestartSec=5
+
+# Страница только читает и кладёт задание в очередь. Всё, что меняет
+# машину, делает vps-dev-update-run от root — поэтому здесь можно
+# закрутить гайки: писать разрешено ровно в свой каталог.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths={{ updates_state_dir }}
+
+[Install]
+WantedBy=multi-user.target

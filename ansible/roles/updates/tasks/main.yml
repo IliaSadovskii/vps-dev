@@ -1,0 +1,89 @@
+# Обновление служб машины кнопкой. См. defaults/main.yml — зачем и как.
+
+- name: Каталоги состояния, очереди и журналов
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ updates_user }}"
+    group: "{{ updates_user }}"
+    mode: '0755'
+  loop:
+    - "{{ updates_state_dir }}"
+    - "{{ updates_state_dir }}/queue"
+    - "{{ updates_state_dir }}/logs"
+
+- name: Список служб, которые умеем обновлять
+  # Один список на страницу и на исполнителя: разъехавшись, они молча
+  # обновляли бы разное. Источник — defaults этой роли.
+  ansible.builtin.copy:
+    dest: "{{ updates_state_dir }}/services.json"
+    owner: "{{ updates_user }}"
+    group: "{{ updates_user }}"
+    mode: '0644'
+    content: "{{ updates_services | to_nice_json }}\n"
+
+- name: Страница обновлений
+  ansible.builtin.copy:
+    src: vps-dev-updates
+    dest: "{{ updates_install_dir }}/vps-dev-updates"
+    owner: root
+    group: root
+    mode: '0755'
+  register: updates_page_script
+
+- name: Исполнитель заданий
+  ansible.builtin.copy:
+    src: vps-dev-update-run
+    dest: "{{ updates_install_dir }}/vps-dev-update-run"
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Службы и наблюдатель за очередью
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - vps-dev-updates.service
+    - vps-dev-update-run.service
+    - vps-dev-update-run.path
+  register: updates_units
+
+# Намеренно не обработчик: службы поднимаются следующими задачами.
+- name: Перечитать systemd, если юниты изменились  # noqa: no-handler
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: updates_units.changed
+
+- name: Есть ли уже юнит страницы
+  ansible.builtin.stat:
+    path: /etc/systemd/system/vps-dev-updates.service
+  register: updates_unit_exists
+  check_mode: false
+  when: ansible_check_mode
+
+- name: Страница включена и работает
+  ansible.builtin.systemd:
+    name: vps-dev-updates
+    enabled: true
+    state: "{{ 'restarted' if (updates_page_script.changed or updates_units.changed) else 'started' }}"
+  when: not (ansible_check_mode and not (updates_unit_exists.stat.exists | default(false)))
+
+- name: Наблюдатель за очередью включён
+  # Только .path: сама служба-исполнитель запускается им, а не с загрузки.
+  ansible.builtin.systemd:
+    name: vps-dev-update-run.path
+    enabled: true
+    state: started
+  when: not (ansible_check_mode and not (updates_unit_exists.stat.exists | default(false)))
+
+- name: Куда смотреть
+  ansible.builtin.debug:
+    msg: >-
+      Обновления служб: порт {{ updates_port }} на дашборде. Выбранные
+      версии — {{ updates_overrides_file }} (сценарий читает его первым
+      делом); вернуть машину к репозиторию — кнопка «сбросить все версии»
+      и следующая выкатка.

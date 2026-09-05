@@ -1,0 +1,15 @@
+# Управляется Ansible: roles/updates/templates/vps-dev-update-run.path.j2
+#
+# Ждёт задание в очереди и будит исполнителя. Так страница остаётся без
+# прав менять машину: её дело — положить файл.
+[Unit]
+Description=Ждать задание на обновление службы
+
+[Path]
+DirectoryNotEmpty={{ updates_state_dir }}/queue
+# Пока исполнитель работает, повторно не дёргать: задания он разбирает
+# сам, все, что лежат в очереди.
+Unit=vps-dev-update-run.service
+
+[Install]
+WantedBy=multi-user.target
