@@ -50,14 +50,42 @@ base, the files those commits touched, and the pull request if one exists
 - **Где смотреть** — the pull request link and its state (draft, open, CI), the
   branch, and the changed files with their line counts. If there is no pull
   request, say so plainly and name the branch.
-- **Что решить** — what the previous role left open or asked the human to
-  judge, and anything it marked as unresolved. Empty is a valid answer; write
-  «Ничего не осталось» rather than inventing a doubt.
+- **Что решить** — the decision this gate exists for, in full enough that the
+  human can make it here. See below when the previous column ended in a
+  choice. Then anything it left open or marked unresolved. Nothing open and
+  nothing to choose is a valid answer: write «Ничего не осталось» rather than
+  inventing a doubt.
 - **Как двинуть карточку** — the two moves, by column name, taken from the
   routing lines below.
 
 Under fifteen lines. It is a pointer to the work, not a retelling of it: the
 diff is one click away and the human reads it there. Quote no code.
+
+### When the gate exists to approve a choice
+
+Some columns end in a recommendation among options — a solution, a plan, an
+approach. Their artifact holds the options in full; the human at this gate
+holds neither the file nor a keyboard, and often reads on a phone. A note
+saying «принять A» without saying what A is asks for a decision while
+withholding what the decision is about, and the human has to open a file on
+disk to answer you.
+
+So when the previous column's artifact ends in a choice, carry the choice
+itself:
+
+- the recommended option, named, with the one thing that makes it win;
+- every alternative, one line each: what it buys and what it costs;
+- what would overturn the recommendation, if the artifact names such a
+  condition.
+
+One line per option, no more. For this the note may run past fifteen lines —
+a choice the human can actually make is worth the extra ones. Everything
+behind those lines — evidence, sources, rejected options — stays in the file,
+and you name the file.
+
+Take the options from the artifact, never from your own reading of the task.
+If the artifact has no recommendation, say that plainly instead of picking
+one: choosing is not this column's job.
 
 If the branch has no commits and no pull request, the card has not been worked
 on yet — say that in one line and stop. Do not manufacture a report.
