@@ -3,9 +3,11 @@ Review the review fixes with a fresh context before their test run is trusted.
 Goal: Confirm that every disposition in `review-fixes.md` is supported by the
     actual diff, that each fix closes the finding or human objection it names,
     and that the fix introduced no new correctness or security defect.
-Reads: `discovery.md` (project rules and its test-file patterns),
-    `scoping.md`, `code-review.md`, `security-review.md`, `review-fixes.md`,
-    `final-verification.md` when it caused the current rework, the artifact
+Reads: `discovery.md#Тесты и проверки` (the commands and test-file patterns)
+    and `discovery.md#Правила проекта`, `scoping.md#Входит`,
+    `code-review.md#Находки`, `security-review.md#Находки`, `review-fixes.md`
+    in full — it is what you are checking — `final-verification.md#Итог` when
+    it caused the current rework, the artifact
     `README.md` for the starting commit, your own previous `fix-review.md`
     when this step has run before, and the human's notes in `notes-review-fixes.md`.
 Writes: `fix-review.md`; new actionable defects also go through

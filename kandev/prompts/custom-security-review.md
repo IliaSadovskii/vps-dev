@@ -11,9 +11,9 @@ Reads: `code-review.md` first — its Что проверялось section name
     against a reset context), and its Находки, so you don't reopen what it
     already caught; your own previous `security-review.md` when it exists
     (this is then a repeat lap); and, only once the change is judged
-    applicable, `scoping.md` (what this task was meant to cover, so scope
-    creep isn't mistaken for a vulnerability), `discovery.md` (the project's
-    stack and structure, so you know what this change sits inside), and
+    applicable, `scoping.md#Входит` (what this task was meant to cover, so scope
+    creep isn't mistaken for a vulnerability), `discovery.md#Стек и структура`
+    (so you know what this change sits inside), and
     `notes-review-fixes.md`, since your context was cleared and anything a human said at a
     gate lives only there.
 Writes: `security-review.md`, and every finding you keep also goes live

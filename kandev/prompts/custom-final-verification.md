@@ -13,9 +13,10 @@ Reads: `review-fixes.md` for what changed, why, and who called it, and
     neither review had a finding; then there were no fixes, the diff is
     what `Verification` last ran against, and a failure here still returns
     the card to `Review Fixes` (which will read your file as its caller),
-    `verification.md` for the baseline this task passed before review, the
-    artifact `README.md` for the starting commit, `discovery.md` for the
-    project's test-file patterns, and your own previous
+    `verification.md#Итог` for the baseline this task passed before review, the
+    artifact `README.md` for the starting commit,
+    `discovery.md#Тесты и проверки` for the commands and the test-file
+    patterns, and your own previous
     `final-verification.md`, if the card has already been through this step,
     for the lap it left off on. Your context is cleared on entry, so
     everything before you is a file to open, not a memory.

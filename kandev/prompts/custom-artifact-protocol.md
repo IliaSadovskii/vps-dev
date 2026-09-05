@@ -260,6 +260,25 @@ file rather than restating its contents. A path stays true when the file
 changes; a retelling drifts from it silently, and each retelling of a
 retelling loses more.
 
+## Reading a section, not a file
+
+Your inputs are named as `файл#Раздел` where a section is all you need. Read
+that section, not the file around it. One command does it:
+
+```sh
+awk '/^## /{p=($0 ~ /^## Тесты и проверки/)} p' discovery.md
+```
+
+The measured difference is not decorative: `discovery.md` runs to a hundred
+and sixty lines, «Тесты и проверки» to twenty-seven, and a role that needs the
+test commands reads the twenty-seven. Six roles read that file; five of them
+need one section each.
+
+Read the whole file when your input names the whole file, when the section you
+were sent to is missing (say so in your artifact), or when you are checking
+somebody's work rather than using its result — a reviewer reads what it
+reviews.
+
 ## Skills
 
 A skill is a saved prompt that carries what one specialty needs beyond a

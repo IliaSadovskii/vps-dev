@@ -134,7 +134,13 @@ Authoring` в «Допущения»). `Test Authoring` берёт сценар�
 
 Колонка «контекст» — сброшен ли он на входе в шаг (по YAML цепочки).
 Колонка «читает» — обязательные входы. Всё, что не перечислено, роль не
-читает, даже если файл существует. «Если есть» — файл появляется не на
+читает, даже если файл существует. Запись `файл#Раздел` означает именно
+раздел, а не файл вокруг него: `discovery.md` — сто шестьдесят строк,
+`discovery.md#Тесты и проверки` — двадцать семь, и роли, которой нужны
+команды прогона, хватает двадцати семи. Читается одной командой:
+`awk '/^## /{p=($0 ~ /^## Тесты и проверки/)} p' discovery.md`. Целиком файл
+читают, когда так и записано, когда названного раздела в файле нет (сказать
+об этом в артефакте) и когда файл проверяют, а не пользуются его выводом. «Если есть» — файл появляется не на
 каждом маршруте; «свой прошлый» — файл того же шага с предыдущего захода.
 
 `discovery.md` стоит во входах у каждой роли со сброшенным контекстом: правила
@@ -162,12 +168,12 @@ Authoring` в «Допущения»). `Test Authoring` берёт сценар�
 | Test Authoring | **сброшен** | нативный Plan если есть, `plan-review.md` если есть («Незаблокирующие замечания» — названные там сценарии тестов), `scoping.md`, `discovery.md` («Тесты и проверки»), `research.md` если есть, `docs/knowledge/scenarios.md` и `actions.md` (состояния) если строка `Чертёж:` называет записи, свой прошлый `test-authoring.md`, `notes-test-authoring.md` | `test-authoring.md`, коммит тестов с трейлером `Kandev-Step: Test Authoring` |
 | Implementation | продолжает Test Authoring | контекст Test Authoring; `research.md` и `solution-synthesis.md` если есть; `verification.md` при возврате | код и коммиты с трейлером `Kandev-Step: Implementation`, файла нет |
 | Verification | продолжает | `README.md` (стартовый коммит), свой прошлый `verification.md`, `notes-review-fixes.md` (время последней заметки) | `verification.md`; красный прогон на попытке 1 — возврат на `Implementation` |
-| Code Review | **сброшен** | `README.md`, `scoping.md`, `discovery.md`, `verification.md`, `research.md` если есть, нативный Plan если есть, свой прошлый `code-review.md` | `code-review.md` + `publish_review_findings_kandev` |
-| Security Review | **сброшен** | `scoping.md`, `discovery.md`, `code-review.md`, свой прошлый `security-review.md` | `security-review.md` + `publish_review_findings_kandev` |
+| Code Review | **сброшен** | `README.md`, `scoping.md`, `discovery.md#Правила проекта` и `#Как здесь пишут код` если есть, `verification.md#Итог`, нативный Plan если есть, свой прошлый `code-review.md` | `code-review.md` + `publish_review_findings_kandev` |
+| Security Review | **сброшен** | `scoping.md#Входит`, `discovery.md#Стек и структура`, `code-review.md#Что проверялось` и `#Находки`, свой прошлый `security-review.md` | `security-review.md` + `publish_review_findings_kandev` |
 | Review Fixes | **сброшен**, в том числе при возврате с `Human Review`/`Done` | `code-review.md`, `security-review.md`, `fix-review.md` или `final-verification.md` если вернули они, `discovery.md`, свой прошлый `review-fixes.md`, `notes-review-fixes.md` | `review-fixes.md`, коммиты с трейлером `Kandev-Step: Review Fixes`, без тестов |
-| Fix Review | **сброшен** | `README.md`, `discovery.md`, `scoping.md`, `code-review.md`, `security-review.md`, `review-fixes.md`, `final-verification.md` если она вернула карточку, свой прошлый `fix-review.md` | `fix-review.md` + `publish_review_findings_kandev` (только новые дефекты); блокирующий вердикт при доступном автовозврате — возврат на `Review Fixes` |
-| Final Verification | **сброшен** | `review-fixes.md`, `fix-review.md`, `verification.md`, `README.md`, `discovery.md`, свой прошлый `final-verification.md` | `final-verification.md`; провал при доступном автовозврате — возврат на `Review Fixes` |
-| Draft PR | продолжает Final Verification | `scoping.md`, `plan-review.md`, `fix-review.md`, `final-verification.md`, `test-authoring.md` («Допущения», строки `Нужны руки человека:`), `verification.md` («Отклонения от плана», те же строки), `review-fixes.md`, нативный Plan («Проверки», строки `Отступление от чертежа:` в «Риски») если есть, `discovery.md` (строки `Расхождение с AGENTS.md:` и `Расхождение с чертежом:`, строка `Чертёж:`), строки `Отступление от чертежа:` в `scoping.md` и `test-authoring.md`, `README.md` (стартовый коммит), диф задачи с него и документация проекта, свой прошлый `pull-request.md` | `pull-request.md`, коммиты в документацию проекта с трейлером `Kandev-Step: Draft PR` (код и тесты не трогаются), draft PR на хосте (обновляется, не дублируется); при непустом «Отложено» — карточка «Долг по PR N» в `Backlog` через `create_task_kandev` (`start_agent: false`, `source_task_id` = эта задача; на повторном заходе обновляется та, что записана в прошлом `pull-request.md`) |
+| Fix Review | **сброшен** | `README.md`, `discovery.md#Тесты и проверки` и `#Правила проекта`, `scoping.md#Входит`, `code-review.md#Находки`, `security-review.md#Находки`, `review-fixes.md` целиком (его и проверяем), `final-verification.md#Итог` если она вернула карточку, свой прошлый `fix-review.md` | `fix-review.md` + `publish_review_findings_kandev` (только новые дефекты); блокирующий вердикт при доступном автовозврате — возврат на `Review Fixes` |
+| Final Verification | **сброшен** | `review-fixes.md`, `fix-review.md#Вердикт`, `verification.md#Итог`, `README.md`, `discovery.md#Тесты и проверки`, свой прошлый `final-verification.md` | `final-verification.md`; провал при доступном автовозврате — возврат на `Review Fixes` |
+| Draft PR | продолжает Final Verification | `kd-state summary` — нерешённое, отложенное, «нужны руки» и вердикты уже собраны там; маркерные строки (`Расхождение с AGENTS.md:`, `Расхождение с чертежом:`, `Отступление от чертежа:`) — grep-ом по каталогу артефактов, а не чтением файлов; `scoping.md#Входит`, `final-verification.md#Итог`, `README.md` (стартовый коммит), диф задачи с него и документация проекта, свой прошлый `pull-request.md` | `pull-request.md`, коммиты в документацию проекта с трейлером `Kandev-Step: Draft PR` (код и тесты не трогаются), draft PR на хосте (обновляется, не дублируется); при непустом «Отложено» — карточка «Долг по PR N» в `Backlog` через `create_task_kandev` (`start_agent: false`, `source_task_id` = эта задача; на повторном заходе обновляется та, что записана в прошлом `pull-request.md`) |
 
 ### Про Implementation
 
