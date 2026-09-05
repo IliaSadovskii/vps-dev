@@ -23,3 +23,24 @@ change nothing.
 
 If the repository is not where the process started, pass the path explicitly
 with `git -C <path>` rather than assuming the current directory.
+
+## A sibling repository the project points at
+
+Project conventions often send you to a repository next door — «read
+`../listate-internal/docs/CRM-RULES.md` before working here». In a task with
+that repository attached it is where the path says, beside your own working
+copy. In a task without it the path resolves to nothing.
+
+That is not the same as «unavailable», and stopping there costs a round trip
+through the human for something you could have read. The repositories of this
+machine live in `/projects/<имя>`, checked out at their main branch. So when a
+relative path to a sibling does not resolve, look for the same repository at
+`/projects/<имя>` and read it there.
+
+Two conditions, both absolute. **Read only** — never write, never commit,
+never run anything that touches its tree; it is somebody's working copy and
+not part of your task. And **say where you read it**: that checkout is at its
+own branch and may be newer or older than what your task expects, so an
+artifact citing it names the path you actually opened. If the repository is
+neither beside you nor in `/projects`, then it really is unavailable — say so
+plainly and work with what the task gives you.
