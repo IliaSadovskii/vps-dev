@@ -163,11 +163,14 @@ evidence this step produces is the runs you executed yourself, now.
 
 ## Artifact shape
 
-`verification.md` carries four sections, kept even when short:
-`Что запущено, дословный вывод`, `Результат`, `Отклонения от плана`,
-`Попытка`. «Что запущено, дословный вывод» lists every command you
-ran, in order, each with its literal terminal output beside it — the
-narrow run first, then any broader one, then the ownership script.
+`verification.md` carries five sections, kept even when short: `Итог`,
+`Что запущено`, `Результат`, `Отклонения от плана`, `Попытка`. «Итог» is at
+most ten lines — green or not, and the one failure that decides it.
+«Что запущено» lists every command you ran, in order — the narrow run first,
+then any broader one, then the ownership script — each with its summary line
+and, where something failed, that failure word for word. The full output of
+every run goes to `.kandev/artifacts/$KANDEV_TASK_ID/logs/verification.txt`,
+appended, and this section names that path.
 «Результат» states plainly what passed, what didn't, and — where
 something is still red — whether that's an unresolved failure, an
 ownership failure, or a test `Implementation` already contested.

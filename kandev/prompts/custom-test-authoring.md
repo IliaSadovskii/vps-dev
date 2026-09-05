@@ -201,9 +201,11 @@ is worse than an honest gap: it reads downstream as coverage that isn't there.
 `Какое поведение покрыто` names each behaviour a test targets, tied to the
 Plan, `scoping.md` or a `plan-review.md` note if any of them named it.
 `Файлы тестов` lists the paths you
-wrote or changed. `Вывод прогона` carries the actual terminal output of the
-failing run for each test — not a description of it — so a reader can see the
-failure reason for themselves instead of taking your word for its meaning.
+wrote or changed. `Вывод прогона` carries the failure line of each new test word for word —
+not a description of it — so a reader sees the reason instead of taking your
+word for its meaning. The whole run goes to
+`.kandev/artifacts/$KANDEV_TASK_ID/logs/test-authoring.txt`, and this section
+names that path.
 `Допущения` holds what you decided where neither the Plan nor `scoping.md`
 settled it, the `plan-review.md` notes you did not turn into tests and why,
 and the `Нужны руки человека:` lines, or says plainly that there were none.

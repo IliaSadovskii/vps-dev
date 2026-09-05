@@ -33,6 +33,37 @@ belongs to the `Blueprint` chain. No role on this board edits it — a
 role that finds it wrong says so in its own artifact, and `Draft PR`
 carries that to the owner.
 
+## The answer first, the evidence under it
+
+Every artifact opens with a summary block of at most ten lines: what this step
+concluded and the one thing it rests on. For a step whose next column is a
+human gate that block is `## Для владельца` and is described below; for every
+other step it is `## Итог`. Same job, different reader.
+
+A role that needs only your result reads those ten lines and stops. A role
+that needs to check you reads on. Without the block both read everything, and
+in measurements across model families a focused prompt beats a full one every
+time — the second reader is not more informed, only more distracted.
+
+## Tool output goes to a log, not into the artifact
+
+Terminal output — a test run, a linter, a type checker, a script — is
+evidence, and evidence is bulky. Write it to
+`.kandev/artifacts/$KANDEV_TASK_ID/logs/<колонка>.txt`, appending, with a line
+naming the command and the time above each run.
+
+The artifact then carries three things instead of the dump: the summary line
+(`pass 22 fail 0`, `PHPStan: 0 errors`), whatever **failed**, word for word,
+and the path to the log. Nothing is lost — the log is on the same disk as the
+artifact, and a reader who wants the whole run opens it. What disappears is
+two hundred lines of green output that every later role paid to read.
+
+This is the safest compression there is: the model summarises nothing, the
+code decides what moves. Never do the opposite kind — never replace a
+predecessor's file with your own précis of it. That is the failure that has
+bitten every system that tried it: the summary looks complete, the detail that
+mattered is gone, and nobody notices until a decision is made without it.
+
 ## Speaking to the owner: «Для владельца»
 
 A step whose next column is a human gate writes its report to the owner
@@ -288,16 +319,6 @@ that is different from having forgotten to look. Do not add sections beyond
 those.
 
 Write artifacts and any message a human will read in Russian.
-
-## Open with what the reader decides
-
-Some artifacts are read by a human at a gate before anything else happens:
-`plan-review.md` at `Plan Approval`, `solution-synthesis.md` at
-`Solution Approval`, `fix-review.md` at `Human Review`. In those, the first
-block is at most ten lines: the verdict, what blocks, and what the human
-has to decide. Everything else goes below it. This orders the file, it does
-not shorten it — every list keeps every entry, and only comes after the ten
-lines a person reads before deciding whether to read on.
 
 ## Asking a human
 

@@ -119,9 +119,12 @@ end.
 ## Artifact shape
 
 `final-verification.md`:
-- Что запущено, дословный вывод — the exact command or commands you ran:
-  the test run, the linter, the type checker and the ownership script, and
-  their terminal output as it printed, not a paraphrase of what they found.
+- Итог — at most ten lines: green or not, and the one failure that decides it.
+- Что запущено — the exact commands you ran: the test run, the linter, the
+  type checker and the ownership script, each with its summary line and, where
+  something failed, that failure as it printed, not a paraphrase. The whole
+  output goes to `.kandev/artifacts/$KANDEV_TASK_ID/logs/final-verification.txt`,
+  appended, and this section names that path.
 - Результат — the verdict itself: clean, or what failed and where, linter,
   type check and test ownership included.
 - Расхождения с verification.md, если есть — the regressions identified by
