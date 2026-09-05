@@ -2,7 +2,7 @@ Who may touch a test file, checked from git history rather than from prose.
 
 Test files in a task's history belong to `Test Authoring`: only commits
 carrying the trailer `Kandev-Step: Test Authoring` may touch one. The script
-below is what enforces that. `Verification`, `Final Verification` and
+below is what enforces that. The check inside `Implementation`, the run inside `Fix Review` and
 `Fix Review` run it and record its output verbatim in their artifact; a
 failure is a blocking finding for the role that ran it — named, carried
 forward, decided by a human — and never something to make green by editing,

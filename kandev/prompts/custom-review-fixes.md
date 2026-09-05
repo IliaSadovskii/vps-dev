@@ -166,8 +166,7 @@ Read your own previous `review-fixes.md` if one exists on this task: its
 `kd-state lap "Review Fixes"` gives you the number of this entry. Nothing
 caps it here; a human can send the card back as often as the work needs.
 
-`Fix Review` and `Final Verification` share one automatic return to this
-step between two human messages. Whether it is still available they ask the
+`Fix Review` has one automatic return to this step between two human messages. Whether it is still available they ask the
 state, not your file — `kd-state return fix_chain check` — so there is
 nothing for you to record about it and nothing you can get wrong. When it is
 spent, the next failure goes forward to the human as «Не решено».

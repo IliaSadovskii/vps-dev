@@ -419,7 +419,7 @@ workflows:
         auto_advance_requires_signal: true
         cancel_triggers_turn_complete: false
 
-      # на Final Verification мимо Review Fixes и Fix Review (решение 50).
+      # на Draft PR мимо Review Fixes и Fix Review (решение 50).
       - name: Code Review
         position: 11
         color: bg-yellow-500
@@ -468,7 +468,7 @@ workflows:
         cancel_triggers_turn_complete: false
 
       # Может быть пустым, если замечаний нет. Сюда возвращают: Fix Review
-      # и Final Verification (не больше одного автовозврата на заход) и
+      # (не больше одного автовозврата на заход) и
       # человек сообщением с Human Review или Done.
       - name: Review Fixes
         position: 12
