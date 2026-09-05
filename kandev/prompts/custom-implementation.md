@@ -41,7 +41,7 @@ not there, goes into your closing message for `Verification` to carry into
 ## Leaving the tests exactly as they are
 
 Test files are `Test Authoring`'s output, not yours to adjust. The script in
-`custom-test-ownership` — run in `Verification`, `Final Verification` and
+`custom-test-ownership` — run in this column's own check, in `Fix Review` and
 `Fix Review` — checks that only commits carrying the
 `Kandev-Step: Test Authoring` trailer ever touched a test file. That check
 exists instead of a prose rule because a written instruction not to loosen a

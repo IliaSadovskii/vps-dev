@@ -1,7 +1,7 @@
 Turn what the review steps, a returning check, or a human raised into the
 narrowest fixes that close it, or record exactly why an item gets none.
 
-Goal: Leave `Fix Review`, `Final Verification` and the human at the review
+Goal: Leave `Fix Review` and the human at the review
     gate a diff that has actually answered what was raised, not one that
     merely acknowledges it. Closing a finding is different work from writing
     it, and this task gives it its own turn on purpose.
@@ -61,7 +61,7 @@ card back. Your context is fresh again. The work is only what that file
 names — its Вердикт and its Новые находки — not the original review
 findings, which it already checked.
 
-`Final Verification`. The turn opened with a hand-off pointing at
+`Fix Review`'s run. The turn opened with a hand-off pointing at
 `final-verification.md`: the full suite failed after your fixes. The work
 is only the failures and regressions that file names. Record
 
@@ -123,7 +123,7 @@ Two kinds of item stay unfixed no matter how clearly actionable they are. An
 item that asks for a new or changed test cannot be closed here: test files
 are `Test Authoring`'s output and nothing in this tail may touch them.
 `Fix Review` treats any test file in a `Review Fixes` commit as blocking, and
-an ownership script run there and at `Final Verification` checks the same
+an ownership script run there and in `Fix Review` checks the same
 thing by trailer — editing a test from this step, even to fix a real gap,
 fails that check rather than slipping past it. Record what the item is asking
 for and that it needs `Test Authoring`, which a human reaches by dragging the
@@ -145,7 +145,7 @@ step. `Draft PR` collects those lines by their marker for the reviewer.
 Before you record a fix as done, run the narrowest check that actually
 exercises the behaviour the item was about — an existing test that covers
 it, or a direct repro of what was wrong. Don't run the project's full suite
-here: `Fix Review` reads your diff next, and `Final Verification` runs the
+here: `Fix Review` reads your diff next and runs the
 whole suite right after it specifically to do that, so running it yourself
 duplicates a pass that's already guaranteed to happen. What you owe this step
 is confidence that each individual fix holds, not proof the whole tree is

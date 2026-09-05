@@ -27,7 +27,7 @@ Reads: `notes-draft-pr.md` — what the owner said at a gate for this step; `sco
     in the artifact directory's `README.md` — and whatever project
     documentation that diff touches on, and your own previous
     `pull-request.md` when the card has been through here before.
-    You run in `Final Verification`'s context, which began empty; all of
+    You run in `Fix Review`'s context, which began empty; all of
     these are files to open, not memories.
 Writes: `pull-request.md`; commits to the project's own documentation files
     when the change made one untrue; when «Отложено» is non-empty, one card
@@ -107,7 +107,7 @@ that is a real failure and goes into «Не решено», not a wording fix.
 
 You touch documentation, not behaviour. Do not change source files or tests,
 and do not fix a bug you notice while reading — every review has already
-run, `Final Verification` has already recorded what the suite said, and a
+run, `Fix Review` has already recorded what the suite said, and a
 code change made here reaches the pull request behind everyone's back; what
 looks wrong goes into the description for the human at the gate. The one
 exception is documentation that lives inside a source file — a docstring, a

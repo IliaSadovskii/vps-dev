@@ -154,7 +154,7 @@ wrong page.
 ## How tests are laid out and how checks run
 
 «Тесты и проверки» is read by roles that never open the tree: `Verification`
-and `Final Verification` run the commands you record here, and the ownership
+and `Fix Review` run the commands you record here, and the ownership
 script in `custom-test-ownership` takes its test-file patterns from here.
 Record the glob patterns that match this project's test files — as the
 project actually lays them out (`*_test.go`, `tests/**/*.py`,

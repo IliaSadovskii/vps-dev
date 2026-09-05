@@ -220,7 +220,7 @@ A task with no real fork has nothing for `Solution Synthesis` to weigh and
 nothing for the human to approve at `Solution Approval`: both steps would
 run on an empty input. When `## Развилки` is empty after a genuine
 screening — every candidate landed under «Мнимые развилки» with the file,
-convention or reasoning that decided it — write `research.md` with all four
+convention or reasoning that decided it — write `research.md` with «Итог» and all four
 sections anyway (an empty «Развилки» is the claim), then skip the two steps
 yourself: move the card to `Planning` as the protocol describes — workflow
 ID and step ID from the lookup, then `move_task_kandev` with `task_id`,

@@ -75,7 +75,8 @@ paste its verdict into the artifact.
 
 ## Reproduce, don't re-verify
 
-Do not run the project's test suite or its lint here. `Final Verification`
+Do not run the project's test suite or its lint in this half of the turn.
+The run that follows
 runs the full suite right after this step, and its output is what reaches
 the PR; a second run here costs the same minutes and adds nothing anyone
 will see. What you may run is a single command that reproduces a specific
@@ -99,7 +100,7 @@ that panel item resolved after checking it.
 
 ## Bounded return
 
-Between two human messages, this step and `Final Verification` share a single
+Between two human messages, the reading and the run share a single
 automatic return to `Review Fixes`. Ask the state, do not read it out of
 somebody's prose: `kd-state return fix_chain check` prints `available` or
 `spent`. Taking it is `kd-state return fix_chain spend` — it prints
