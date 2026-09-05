@@ -20,25 +20,36 @@
     mode: '0644'
     force: false
 
-- name: Справочник по машине
-  # Отдельным файлом, а не в промпте: промпт уезжает в каждый ход каждого
-  # агента, справочник — только когда его открыли. Роль browser дописывает
-  # сюда свой раздел.
-  ansible.builtin.blockinfile:
-    path: "{{ style_machine_file }}"
-    marker: "<!-- {mark} vps-dev: машина -->"
-    block: "{{ lookup('template', 'machine.md.j2') }}"
+- name: Каталог справок по машине
+  ansible.builtin.file:
+    path: "{{ style_machine_dir }}"
+    state: directory
+    owner: "{{ style_user }}"
+    group: "{{ style_user }}"
+    mode: '0755'
+
+- name: Справки по машине — по одной на тему
+  # Роль browser кладёт сюда же свою, browser.md.
+  ansible.builtin.template:
+    src: "machine-{{ item }}.md.j2"
+    dest: "{{ style_machine_dir }}/{{ item }}.md"
     owner: "{{ style_user }}"
     group: "{{ style_user }}"
     mode: '0644'
-    create: true
+  loop: [ports, mail, limits]
 
-- name: Указатель на справочник в общем промпте
-  # Пять строк вместо страницы: где что лежит и когда туда идти.
-  # Остальной текст промпта пишет человек на странице :8071.
+- name: Оглавление справок в общем промпте
+  # Одна строка на тему: по ней видно, нужна справка или нет. Остальной
+  # текст промпта пишет человек на странице :8071, поэтому пишем только
+  # между своими маркерами. Пустая строка в начале блока отделяет его от
+  # текста человека: файл читают и глазами, на странице.
   ansible.builtin.blockinfile:
     path: "{{ style_file }}"
-    marker: "<!-- {mark} vps-dev: машина -->"
+    # Маркер — сам по себе разделитель: файл читают глазами на странице
+    # :8071, и текст человека не должен слипаться с нашим блоком.
+    # Переносом строки в маркере это не решается: blockinfile тогда не
+    # находит свой же блок и дописывает второй (проверено).
+    marker: "<!-- ─────── vps-dev: машина, пишет выкатка ─────── {mark} -->"
     block: "{{ lookup('template', 'prompt-machine.md.j2') }}"
     owner: "{{ style_user }}"
     group: "{{ style_user }}"
