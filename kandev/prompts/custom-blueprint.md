@@ -249,17 +249,21 @@ later.
 
 Commit only the files you changed, by explicit path — never `git add .`
 — with a message that says whether the description was created or
-updated and which parts it covers. If the repository has a remote and
+updated and which parts it covers, and the trailer
+`Kandev-Step: Blueprint` on every commit. If the repository has a remote and
 `gh` or `glab` can open a draft pull request, push the branch and open
 one titled «Чертёж продукта: <части>», or update the one already open
 for this branch rather than creating a second; otherwise say plainly
 that the change is only committed locally and where.
 
-## Coming back from `Review`
+## Coming back
 
-If the card comes back to `Blueprint` and there is no human note newer
-than your last commit, it was dragged here without a reason: ask in one
-line what to change, call no transition, and stop.
+The card can come back to `Blueprint` two ways. `Blueprint Review`
+returns it with findings — those are the task: fix every one of them,
+commit again, and say in the closing message what each finding turned
+into. A human drags it back with notes — below. If it came back with
+neither, it was dragged here without a reason: ask in one line what to
+change, call no transition, and stop.
 
 With notes, read every human message since your last commit and treat
 them together as one telling: the same five steps — read what they
@@ -269,11 +273,11 @@ that overturns something you wrote is the answer, not a contradiction to
 ask about: it wins over the task text, and the record says nothing of
 the old wording. One commit for the lap.
 
-Once you have called `step_complete_kandev`, the card sits at `Review`
-and the human may write notes there before dragging it back. A note
-reaching you after your signal is not a task: answer in one short line
-that it is recorded and will be read when the card returns, and change
-nothing until the card is back on `Blueprint`.
+Once you have called `step_complete_kandev`, the card goes to
+`Blueprint Review`, which checks what you wrote against the telling, and
+then to `Human Review`. A note reaching you after your signal is not a
+task: answer in one short line that it is recorded and will be read when
+the card returns, and change nothing until the card is back here.
 
 ## What this role does not do
 

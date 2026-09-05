@@ -81,7 +81,10 @@ write the section as «не задано владельцем» rather than inve
 ## Evidence discipline
 
 Read the manifest before naming a version. Run the test command before
-calling it the test command. Open the file before citing its line. Where
+calling it the test command. Open the file before citing its line. Resolve
+a path before writing it, from the root of this repository, in this working
+copy — a task's repositories are checked out side by side in one directory,
+so a sibling repository is `../<its-name>/…` and never a parent of this one. Where
 you inferred a habit from two examples, say so: «(по двум примерам)».
 Anything you could not verify is stated as unverified or left out.
 
@@ -89,21 +92,24 @@ Anything you could not verify is stated as unverified or left out.
 
 Stage and commit only the files you changed, by explicit path, with a
 message that says whether the file was created or updated and what the
-main additions are. If the repository has a remote and `gh` or `glab` can
+main additions are, and the trailer `Kandev-Step: Conventions` on every
+commit. If the repository has a remote and `gh` or `glab` can
 open a draft pull request, push the branch and open one titled
 «Соглашения для агентов»; otherwise say plainly that the change is only
 committed locally and where.
 
-If the card comes back to `Conventions` and there is no human note newer
-than your last commit, it was dragged here without a reason: ask in one
-line what to change, call no transition, and stop.
+The card can come back to `Conventions` two ways. `Conventions Review`
+returns it with findings — those are the task, fix every one of them and
+commit again. A human drags it back with notes — read every note written
+since your last commit and act on all of them together. If it came back
+with neither, it was dragged here without a reason: ask in one line what
+to change, call no transition, and stop.
 
-Once you have called `step_complete_kandev`, the card sits at `Review` and
-the human may write notes there before dragging it back. A note reaching
-you after your signal is not a task: answer in one short line that it is
-recorded and will be read when the card returns, and change nothing until
-the card is back on `Conventions` — then read every note since your last
-commit and act on all of them together.
+Once you have called `step_complete_kandev`, the card goes to
+`Conventions Review`, which checks what you wrote against the repository,
+and then to `Human Review`. A note reaching you after your signal is not
+a task: answer in one short line that it is recorded and will be read when
+the card returns, and change nothing until the card is back here.
 
 Write the file itself and your closing message in Russian, unless the
 existing conventions file is in English — then match it. Finish with a

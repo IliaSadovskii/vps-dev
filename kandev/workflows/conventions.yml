@@ -1,12 +1,18 @@
 # Conventions — завести или обновить файл соглашений проекта для агентов
 # (AGENTS.md, CLAUDE.md с @AGENTS.md).
 #
-# Служебная цепочка на два хода: агент собирает соглашения по коду и
-# спрашивает владельца о том, чего в коде нет, человек читает и принимает.
-# Нужна до первой задачи на Deep: роли той цепочки читают этот файл первым
-# после каждого сброса памяти.
+# Служебная цепочка: агент собирает соглашения по коду и спрашивает владельца
+# о том, чего в коде нет; вторая роль сверяет написанное с репозиторием; человек
+# читает и принимает. Нужна до первой задачи на Deep: роли той цепочки читают
+# этот файл первым после каждого сброса памяти.
 #
-# Возврат — заметками на Review и перетаскиванием на Conventions, когда
+# Машинная проверка стоит перед человеком по той же причине, что Code Review
+# в Deep: автор только что держал весь репозиторий в голове, и правдоподобная
+# строка — ровно та, которую он не перечитает. Предел — один автовозврат между
+# сообщениями человека; память проверяющего не сбрасывается, поэтому он сам
+# знает, израсходован ли возврат.
+#
+# Возврат — заметками на Human Review и перетаскиванием на Conventions, когда
 # мысль закончена; память не сбрасывается, агент видит все заметки.
 version: 1
 type: kandev_workflow
@@ -14,7 +20,7 @@ workflows:
   - name: Conventions
     # Порядок дорожек на доске (ключ наш, не Kandev; выкатка вырезает его перед импортом).
     sort_order: 2
-    description: "AGENTS.md / CLAUDE.md: собрать соглашения по коду, спросить владельца о приоритетах, отдать на приёмку."
+    description: "AGENTS.md / CLAUDE.md: собрать соглашения по коду, спросить владельца о приоритетах, сверить написанное с репозиторием, отдать на приёмку."
     prompt: |
       @custom-git-safety
     steps:
@@ -25,14 +31,13 @@ workflows:
           agent_name: Claude
           model: haiku
           mode: bypassPermissions
-        prompt: &gate |
-          Эта колонка — ворота человека. Человек думает вслух; ты здесь не
-          работаешь. Сообщение здесь — заметка для той роли, которой человек
-          перетащит карточку; она прочитает все заметки разом. Ответь одной
-          строкой по-русски, что заметка записана и её прочитает следующая роль.
-          Ничего не открывай, не меняй, не коммить, не вызывай step_complete_kandev
-          и move_task_kandev: карточку двигает человек. На прямой вопрос, ответ на
-          который уже есть в этом разговоре, ответь одним-двумя предложениями.
+        prompt: |
+          @custom-gate
+
+          Колонка сейчас: Backlog, первые ворота. Обычно карточка здесь ещё
+          не работала, и приёмочную записку писать не из чего: тогда скажи
+          одной строкой, что задача ждёт запуска. Начать работу — перетащить
+          на Conventions.
         events: {}
         is_start_step: true
         show_in_command_panel: false
@@ -66,16 +71,49 @@ workflows:
         auto_advance_requires_signal: true
         cancel_triggers_turn_complete: false
 
+      # Машинная сверка перед человеком. Память не сбрасывается нарочно: на
+      # втором заходе роль проверяет, закрыты ли её же находки, и знает, что
+      # автовозврат уже израсходован.
+      - name: Conventions Review
+        position: 2
+        color: bg-yellow-500
+        agent_profile:
+          agent_name: Claude
+          model: sonnet
+          mode: bypassPermissions
+        prompt: |
+          @custom-conventions-check
+
+          Колонка сейчас: Conventions Review. Возврат — на Conventions,
+          дальше — на Human Review.
+
+          {{task_prompt}}
+        events:
+          on_enter:
+            - type: auto_start_agent
+          on_turn_complete:
+            - type: move_to_next
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        auto_advance_requires_signal: true
+        cancel_triggers_turn_complete: false
+
       # Ворота человека: прочитать файл, при PR — diff. Принять — в Done.
       # Поправить — написать, что не так, и перетащить на Conventions.
-      - name: Review
-        position: 2
+      - name: Human Review
+        position: 3
         color: bg-orange-500
         agent_profile:
           agent_name: Claude
           model: haiku
           mode: bypassPermissions
-        prompt: *gate
+        prompt: |
+          @custom-gate
+
+          Колонка сейчас: Human Review, ворота человека. Принять — перетащить
+          в Done. Доработать — написать заметки и перетащить на Conventions;
+          файл снова пройдёт Conventions Review.
         events: {}
         is_start_step: false
         show_in_command_panel: true
@@ -84,13 +122,17 @@ workflows:
         cancel_triggers_turn_complete: false
 
       - name: Done
-        position: 3
+        position: 4
         color: bg-green-500
         agent_profile:
           agent_name: Claude
           model: haiku
           mode: bypassPermissions
-        prompt: *gate
+        prompt: |
+          @custom-gate
+
+          Колонка сейчас: Done, работа принята. Переоткрыть — написать, что
+          изменилось, и перетащить на Conventions.
         events: {}
         is_start_step: false
         show_in_command_panel: false
