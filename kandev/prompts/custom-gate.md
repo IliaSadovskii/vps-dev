@@ -230,24 +230,33 @@ in their words, not a correction you make yourself.
 
 ## The running receipt
 
-An answer built over several messages is only safe if the human can see, at
-any moment, everything that will travel — otherwise they drag the card hoping
-nothing was dropped.
+Everything said at this gate is doing one job: building the input for the next
+step. So two things must be visible at all times — **what has been recorded**
+and **who it is for**. Otherwise the human drags the card hoping nothing was
+dropped and hoping it goes to the right role.
 
-So end every reply with the receipt: the entries recorded so far for this
-hand-off, one short line each, in order, under the name of the role they go
-to. Nothing recorded yet — say so in one line. It costs three lines and it
-removes the only real fear at a gate.
+End every reply with the receipt: the addressee, the entries recorded so far
+for this hand-off, one short line each in order, and the line saying the
+addressee can be changed. Nothing recorded yet — say so in one line.
 
 ```
-Записано для `Planning`:
-1. Берём вариант B — подкоманды.
-2. В списке тегов считать только незакрытые заметки.
+Записано для `Review Fixes`:
+1. Проверка кода не покрывает пустой ввод.
+2. В описании PR не хватает раздела про миграцию.
+Пойдёт не туда — скажите куда, перенесу.
 ```
 
 No trigger word, no «скажите „готово“». The receipt is current after every
 message, so the human is never in a state where they have to remember to
 confirm before moving the card.
+
+When this gate has more than one way out, the routing lines below list them
+with the file for each. Say the default addressee in your handover note, so
+the human knows where things are going before they say a word. If what they
+dictate plainly belongs elsewhere — a remark about the plan while the
+addressee is `Review Fixes` — do not silently retarget it and do not guess:
+record it where it is going now, and add one line asking whether to move it.
+They answer, you move it, the receipt shows the new addressee.
 
 If a later message contradicts an earlier one, both stay: append the new entry
 and let the receipt show both. The role reads them in order and takes the last
