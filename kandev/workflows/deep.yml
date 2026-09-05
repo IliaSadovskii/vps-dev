@@ -81,8 +81,7 @@ workflows:
           одной строкой, что задача ждёт запуска. Начать работу — перетащить
           на Discovery.
 
-          Заметку человека — любое его сообщение, кроме начинающихся с `?`, —
-          дословно допиши в `.kandev/artifacts/$KANDEV_TASK_ID/notes-scoping.md`
+          Заметку человека — любое его сообщение — дословно допиши в `.kandev/artifacts/$KANDEV_TASK_ID/notes-scoping.md`
           и скажи, что записал для этой роли.
 
         events: {}
@@ -237,8 +236,7 @@ workflows:
           Synthesis, — когда ни один не подходит: он перепишет разбор вокруг
           заметок и вернёт карточку сюда.
 
-          Заметку человека — любое его сообщение, кроме начинающихся с `?`, —
-          дословно допиши в `.kandev/artifacts/$KANDEV_TASK_ID/notes-solution-synthesis.md`
+          Заметку человека — любое его сообщение — дословно допиши в `.kandev/artifacts/$KANDEV_TASK_ID/notes-solution-synthesis.md`
           и скажи, что записал для этой роли.
 
         events: {}
@@ -327,8 +325,7 @@ workflows:
           единственный владелец нативного Плана, поправит его и отправит
           снова через Plan Review, то есть карточка вернётся сюда.
 
-          Заметку человека — любое его сообщение, кроме начинающихся с `?`, —
-          дословно допиши в `.kandev/artifacts/$KANDEV_TASK_ID/notes-planning.md`
+          Заметку человека — любое его сообщение — дословно допиши в `.kandev/artifacts/$KANDEV_TASK_ID/notes-planning.md`
           и скажи, что записал для этой роли.
 
         events: {}
@@ -618,8 +615,7 @@ workflows:
           до PR пройдёт снова. Менялся план или сама задача — на Planning или
           Scoping: только человек знает, что именно передумал.
 
-          Заметку человека — любое его сообщение, кроме начинающихся с `?`, —
-          дословно допиши в `.kandev/artifacts/$KANDEV_TASK_ID/notes-review-fixes.md`
+          Заметку человека — любое его сообщение — дословно допиши в `.kandev/artifacts/$KANDEV_TASK_ID/notes-review-fixes.md`
           и скажи, что записал для этой роли.
 
         events: {}
@@ -643,8 +639,7 @@ workflows:
           изменилось, и перетащить на Review Fixes, тем же путём, что и
           с Human Review.
 
-          Заметку человека — любое его сообщение, кроме начинающихся с `?`, —
-          дословно допиши в `.kandev/artifacts/$KANDEV_TASK_ID/notes-review-fixes.md`
+          Заметку человека — любое его сообщение — дословно допиши в `.kandev/artifacts/$KANDEV_TASK_ID/notes-review-fixes.md`
           и скажи, что записал для этой роли.
 
         events: {}
