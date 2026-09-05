@@ -19,7 +19,7 @@ Reads: `code-review.md` and `security-review.md` — file, line, what's wrong,
     second source; the files carry the reasoning, so read those.
 Writes: `review-fixes.md`.
 Done when: `review-fixes.md` carries one entry for every item this entry's
-    caller raised, its Заход section names the number and the caller, every
+    caller raised, every
     commit you made carries the trailer `Kandev-Step: Review Fixes`, names
     explicit paths, and touches no test file, and `step_complete_kandev`
     has been called.
@@ -28,7 +28,7 @@ Done when: `review-fixes.md` carries one entry for every item this entry's
 
 Four different callers land a card on this step, and the first thing to do is
 tell which one it was, because each makes a different set of items this
-turn's work and the artifact records the answer under Заход. Tell them apart
+turn's work. Tell them apart
 by three checks, in this order, stopping at the first that holds: the turn
 opened with a hand-off pointing at `fix-review.md` or
 `final-verification.md` — the step that wrote that file sent the card;
@@ -40,8 +40,7 @@ review steps.
 The review steps. No hand-off opened the turn and neither
 `review-fixes.md` nor `pull-request.md` exists yet: the card arrived from
 `Security Review` after `Code Review`, your context is fresh, and the work
-is every finding in `code-review.md` and `security-review.md`. Record
-`Вызван: ревью`.
+is every finding in `code-review.md` and `security-review.md`.
 
 A human. No hand-off opened the turn, but your previous `review-fixes.md`
 exists: someone at `Human Review` or `Done` wrote one or more notes there
@@ -54,19 +53,18 @@ together as one request. The work is what the person wrote, and nothing
 else: the two review files were answered in an earlier entry, and reopening
 them wastes the lap and undoes work someone accepted. Where a note
 contradicts a finding you closed earlier, the human wins, and you say
-plainly in your entry which earlier decision you reversed. Record
-`Вызван: человек`.
+plainly in your entry which earlier decision you reversed.
 
 `Fix Review`. The turn opened with a hand-off pointing at `fix-review.md`:
 it read your previous entry's diff and found it wanting, and it sent the
 card back. Your context is fresh again. The work is only what that file
 names — its Вердикт and its Новые находки — not the original review
-findings, which it already checked. Record `Вызван: Fix Review`.
+findings, which it already checked.
 
 `Final Verification`. The turn opened with a hand-off pointing at
 `final-verification.md`: the full suite failed after your fixes. The work
 is only the failures and regressions that file names. Record
-`Вызван: Final Verification`.
+
 
 A human's message is not the task description. It is a person addressing this
 change, in this chain, on purpose — directive in a way the task text is not.
@@ -165,17 +163,14 @@ something to act on because it was phrased as one.
 ## Which entry this is, and why the caller matters
 
 Read your own previous `review-fixes.md` if one exists on this task: its
-Заход tells you the number of the last entry, and yours is one more. Nothing
+`kd-state lap "Review Fixes"` gives you the number of this entry. Nothing
 caps it here; a human can send the card back as often as the work needs.
 
-The caller you record is not bookkeeping. `Fix Review` and
-`Final Verification` are allowed one automatic return to this step between
-two human messages, shared between them, and the way they know whether that
-return has already been spent is by reading Вызван in your latest file: a
-file that says `ревью` or `человек` leaves the return available, one that
-says `Fix Review` or `Final Verification` means it is used and the next
-failure goes forward to the human as «Не решено». Recording the wrong caller
-either loops the tail or forfeits a return that was still available.
+`Fix Review` and `Final Verification` share one automatic return to this
+step between two human messages. Whether it is still available they ask the
+state, not your file — `kd-state return fix_chain check` — so there is
+nothing for you to record about it and nothing you can get wrong. When it is
+spent, the next failure goes forward to the human as «Не решено».
 
 ## Artifact shape
 
@@ -190,10 +185,6 @@ either loops the tail or forfeits a return that was still available.
 - Что намеренно не тронуто — for each fix you made, anything adjacent
   you noticed and chose not to change even though it looked related;
   if you made no fixes at all this entry, say that plainly.
-- Заход — this step's ordinal count on this task, 1 the first time and one
-  more than your own prior `review-fixes.md` shows on any later pass, and
-  on its own line the caller, exactly one of: `Вызван: ревью`,
-  `Вызван: человек`, `Вызван: Fix Review`, `Вызван: Final Verification`.
 
 ## Finishing
 

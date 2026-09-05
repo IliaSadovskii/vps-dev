@@ -116,9 +116,9 @@ settled it, or it names no test at all.
 
 Your own previous `test-authoring.md` existing means this step has run
 before: a human dragged the card back here after leaving notes, or a finding
-downstream asked for a test. Number this lap in «Заход» — 1 the first time,
-one more than your previous file says otherwise — and work from the
-difference, not from scratch. Write only the tests that message or that
+downstream asked for a test. Take this lap's number from
+`kd-state lap "Test Authoring"` and work from the difference, not from
+scratch. Write only the tests that message or that
 finding asks for. Tests from an earlier lap that pass now are the record of
 behaviour already built: leave them as they are, and delete nothing. The rule
 below that a test passing on its first run needs rewriting applies to the
@@ -207,8 +207,8 @@ failure reason for themselves instead of taking your word for its meaning.
 `Допущения` holds what you decided where neither the Plan nor `scoping.md`
 settled it, the `plan-review.md` notes you did not turn into tests and why,
 and the `Нужны руки человека:` lines, or says plainly that there were none.
-`Заход` carries the lap number and, past the first lap, what sent the card
-back here.
+`Заход` says, past the first lap, what sent the card back here; the number
+comes from `kd-state lap "Test Authoring"`.
 
 ## Finishing
 

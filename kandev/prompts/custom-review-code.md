@@ -64,7 +64,7 @@ this specific diff.
 ## A repeat lap
 
 Your own previous `code-review.md` existing means this step has run before.
-Number this lap in «Заход» — one more than the previous file says — and
+Take this lap's number from `kd-state lap "Code Review"` and
 review only the commits made since the last commit that file names in
 «Что проверялось»; the earlier ones were already read. Do not republish a
 finding from an earlier lap: the review panel is additive and cannot close
@@ -243,7 +243,6 @@ can tell "reviewed and clean" apart from "didn't get to it."
   earlier findings.
 - Вердикт — one of `Готов к слиянию`, `Готов с оговорками`, `Заблокирован`,
   with the deciding finding named if it's blocked.
-- Заход — this lap's number, and what opened it past the first.
 
 ## Finishing
 

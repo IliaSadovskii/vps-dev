@@ -33,14 +33,44 @@ belongs to the `Blueprint` chain. No role on this board edits it — a
 role that finds it wrong says so in its own artifact, and `Draft PR`
 carries that to the owner.
 
+## State is a file, not prose
+
+Which lap this is, whether the automatic return is still available, which
+option the owner chose, what each reviewer concluded, what is left unresolved
+— that is control flow, and control flow written in prose is control flow
+every reader reconstructs differently. It lives in one place,
+`.kandev/artifacts/$KANDEV_TASK_ID/state.json`, and you never edit that file
+by hand. You call `kd-state`, which is on `PATH`:
+
+```sh
+kd-state lap "Code Review"          # отметить заход, печатает его номер
+kd-state get lap "Code Review"      # номер, не увеличивая
+kd-state get choice                 # что выбрал владелец, пусто если не выбирал
+kd-state verdict "Code Review" "Заблокирован"
+kd-state return fix_chain check     # available | spent
+kd-state return fix_chain spend     # потратить; печатает spent и выходит с 1,
+                                    # если уже был потрачен
+kd-state open не-решено "Code Review" "пустой ввод не покрыт"
+kd-state summary                    # всё, что показывают человеку и кладут в PR
+```
+
+Call `kd-state lap` once, at the start of your run, and use the number it
+prints. Do not count laps by looking at your own previous file, and do not
+write a «Заход», «Попытка» or «Номер круга» section: that section no longer
+exists in any artifact.
+
+What you would have written as `Не решено:`, `Отложено:` or
+`Нужны руки человека:` goes through `kd-state open` as well as into your
+artifact where the reasoning belongs. `Draft PR` and the gates read the state,
+not nine files, and what they show the owner is extracted, not retold.
+
 ## Running a second time
 
 Some roles run more than once on a task: a card a human or a reviewing role
 sent back lands on a column it has already passed. If yours is one of them,
-read your own previous artifact before you write, record the run number in
-it — `Заход N`, or under the heading your role names for it: 1 the first
-time, one more than the previous file says after that — and work from what
-changed since that file, not from scratch. A second file that reads as
+read your own previous artifact before you write, take the lap number from
+`kd-state lap`, and work from what changed since that file, not from
+scratch. A second file that reads as
 though the first never existed repeats findings already dealt with and hides
 the one thing the reader needs: what is different now.
 

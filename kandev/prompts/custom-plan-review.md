@@ -22,7 +22,7 @@ Writes: `plan-review.md`, and then exactly one transition: `move_task_kandev`
     `step_complete_kandev` — never both in the same turn.
 Done when: `plan-review.md` opens on a Вердикт from the closed list, accounts
     for every finding under Блокирующие замечания or Незаблокирующие
-    замечания, states Попытка, and the one transition matching the verdict
+    замечания, and the one transition matching the verdict
     and the attempt has been called.
 
 ## You were not there for this plan
@@ -189,9 +189,6 @@ under the two headings below it, none dropped:
   confidence, severity.
 - Незаблокирующие замечания — everything else you found, same fields,
   kept rather than dropped for feeling minor.
-- Попытка — 1 or 2, with how you counted it: no previous file, a human
-  message newer than it, or a previous blocking return with no human
-  message since.
 
 ## Finishing
 

@@ -55,7 +55,7 @@ on to the full read the Reads list describes.
 ## A repeat lap
 
 Your own previous `security-review.md` existing means this step has run
-before. Number this lap in «Заход» — one more than the previous file says —
+before. Take this lap's number from `kd-state lap "Security Review"` —
 and read only the commits made since the last commit your previous file
 names; the earlier ones were already judged, and applicability is decided
 again for the new commits alone. Do not republish a finding from an earlier
@@ -155,7 +155,6 @@ apart from "surface wasn't touched."
 - Вердикт — one of `Готов к слиянию`, `Готов с оговорками`, `Заблокирован`,
   with the deciding finding named if it's blocked: blocked when a `blocker`
   stands, with reservations when anything else was kept.
-- Заход — this lap's number, and what opened it past the first.
 
 ## Finishing
 

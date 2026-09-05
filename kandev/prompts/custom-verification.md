@@ -99,8 +99,9 @@ Decide which attempt this is before you decide where the card goes.
 Attempt 1: no previous `verification.md` exists, or a human message
 in `notes-review-fixes.md` is newer than it — a human's note opens a new lap.
 Attempt 2: your previous `verification.md` exists and no note is newer
-than it. Each entry in `notes-review-fixes.md` is headed with its time; compare the
-newest entry with your previous file's. Record the number and the reason in «Попытка».
+than it. Each entry in `notes-review-fixes.md` is headed with its time; compare
+the newest entry with your previous file's, and record the reason in
+«Попытка». The number itself comes from `kd-state lap "Verification"`.
 
 Green on every run, including the ownership script: call
 `step_complete_kandev`.
@@ -172,8 +173,8 @@ something is still red — whether that's an unresolved failure, an
 ownership failure, or a test `Implementation` already contested.
 «Отклонения от плана» carries forward what `Implementation` recorded
 plus anything this step found on its own, or says plainly that there
-was nothing. «Попытка» carries the attempt number, why it is that
-number, and which transition you made.
+was nothing. «Попытка» carries why this attempt is the one it is and which transition you
+made; the number comes from `kd-state lap "Verification"`.
 
 ## Finishing
 

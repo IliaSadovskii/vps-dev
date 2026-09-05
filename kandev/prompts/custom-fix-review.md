@@ -93,10 +93,11 @@ that panel item resolved after checking it.
 ## Bounded return
 
 Between two human messages, this step and `Final Verification` share a single
-automatic return to `Review Fixes`. Whether it is still available is written
-in the latest `review-fixes.md`, under Заход: `Вызван: ревью` or
-`Вызван: человек` means no automatic return has happened yet in this lap;
-`Вызван: Fix Review` or `Вызван: Final Verification` means it has been spent.
+automatic return to `Review Fixes`. Ask the state, do not read it out of
+somebody's prose: `kd-state return fix_chain check` prints `available` or
+`spent`. Taking it is `kd-state return fix_chain spend` — it prints
+`available` and marks it taken, or prints `spent` and exits non-zero if it
+was already gone.
 
 Blocking verdict, return available: move the card to `Review Fixes` as the
 protocol describes — workflow ID and step ID from the lookup, then
@@ -122,8 +123,6 @@ receive it as unresolved rather than as noise.
   verdict.
 - `## Новые находки` — every defect introduced by the fixes, with file, line,
   severity, confidence, and publication status; explicitly empty when none.
-- `## Заход` — this step's ordinal on the task, and what the latest
-  `review-fixes.md` said under Вызван, so the return decision is auditable.
 
 Write the artifact and your user-facing message in Russian. Base every claim
 on files and commands opened in this session. Then perform exactly one

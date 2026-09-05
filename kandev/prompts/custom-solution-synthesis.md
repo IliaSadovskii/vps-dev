@@ -150,13 +150,11 @@ reason, and which fork it belongs to.
 `scoping.md`'s boundaries, named per option, or an explicit statement that
 none does.
 
-`Номер круга`: one line — this step's ordinal count on this task, 1 the
-first time and one more than your previous file says on every return. On a
-return, one more line: what the human's notes asked for and which of your
-earlier choices changed because of it. Bookkeeping belongs here and nowhere
-else — whether a human has chosen yet, whether a previous file exists, why
-the count is what it is. None of it goes into `Рекомендация`, where the
-reader is trying to make a decision.
+`Номер круга`: on a return, one line saying what the human's notes asked for
+and which of your earlier choices changed because of it. On the first lap the
+section says «Заход 1» and nothing more — the number itself comes from
+`kd-state lap "Solution Synthesis"`. Nothing else goes here and nothing of
+this kind goes into `Рекомендация`, where the reader is trying to decide.
 
 ## Finishing
 

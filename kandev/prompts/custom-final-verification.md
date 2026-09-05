@@ -22,7 +22,7 @@ Reads: `review-fixes.md` for what changed, why, and who called it, and
 Writes: `final-verification.md`.
 Done when: `final-verification.md` holds a verbatim run, the ownership
     script's verdict, a verdict, a comparison against `verification.md`, and
-    a Заход number, and exactly one of two things has happened —
+    and exactly one of two things has happened —
     `step_complete_kandev` was called because the run is clean or because
     the lap's automatic return is already spent, or `move_task_kandev` sent
     the card back to `Review Fixes` because the run failed and the return
@@ -90,12 +90,10 @@ because that erases the exact signal this comparison exists to produce.
 
 ## Returning the card, and when to stop returning
 
-Between two human messages, this step and `Fix Review` share a single
-automatic return to `Review Fixes`. Whether it is still available is written
-in the latest `review-fixes.md`, under Заход: `Вызван: ревью` or
-`Вызван: человек` — or no `review-fixes.md` at all, because both reviews
-were clean — means no automatic return has happened yet in this lap;
-`Вызван: Fix Review` or `Вызван: Final Verification` means it has been spent.
+automatic return to `Review Fixes`, shared with `Fix Review`. Ask the state:
+`kd-state return fix_chain check` prints `available` or `spent`; taking it is
+`kd-state return fix_chain spend`, which prints `available` and marks it
+taken, or prints `spent` and exits non-zero if it was already gone.
 
 A clean run with no regression, a clean linter and type check and a clean
 ownership verdict ends the step normally with `step_complete_kandev`. A run
@@ -129,10 +127,6 @@ end.
 - Расхождения с verification.md, если есть — the regressions identified by
   that comparison, or an explicit statement that none showed up where the
   comparison could actually be made.
-- Заход — this step's ordinal count on this task: 1 the first time,
-  and one more than your own prior `final-verification.md` shows on any
-  later pass. The number is for the reader; the return decision comes from
-  `review-fixes.md`, not from it.
 
 ## Finishing
 

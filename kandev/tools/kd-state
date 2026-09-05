@@ -1,0 +1,257 @@
+#!/usr/bin/env python3
+"""Состояние задачи одним файлом, а не прозой в семи артефактах.
+
+Круг, потраченный автовозврат, выбранный владельцем вариант, вердикты,
+нерешённое — всё это управление потоком. Пока оно жило разделами «Заход»,
+«Попытка», «Номер круга» и строкой «Вызван:», каждый читатель восстанавливал
+его из текста по-своему, а роль со сброшенной памятью — как получится.
+
+Роли не редактируют файл руками: они зовут этот скрипт, и форма держится
+программой, а не аккуратностью модели.
+
+    kd-state lap <колонка>                 отметить заход, печатает его номер
+    kd-state get lap <колонка>             номер захода, не увеличивая
+    kd-state choice <вариант> --where <файл> [--note <текст>]
+    kd-state get choice                    что выбрал владелец, пусто если ничего
+    kd-state verdict <колонка> <вердикт>
+    kd-state return <ключ> spend|check     автовозврат: потратить / спросить
+    kd-state open <вид> <колонка> <текст>  нерешённое, отложенное, нужны руки
+    kd-state gate <колонка> [--decision X] [--to Y]
+    kd-state show                          весь файл как есть
+    kd-state summary                       что показать человеку и в PR
+
+Файл — `.kandev/artifacts/$KANDEV_TASK_ID/state.json`. JSON, а не YAML:
+он не ломается от отступа и читается любым инструментом без библиотеки.
+"""
+
+import json
+import os
+import sys
+from datetime import datetime, timezone
+
+USAGE = __doc__
+
+OPEN_KINDS = ("не-решено", "отложено", "нужны-руки", "отклонение-от-плана")
+
+
+def now():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def state_path():
+    task = os.environ.get("KANDEV_TASK_ID")
+    if not task:
+        die("KANDEV_TASK_ID не задан — скрипт зовут из хода роли, там он есть")
+    root = os.environ.get("KANDEV_ARTIFACTS")
+    if not root:
+        root = os.path.join(".kandev", "artifacts", task)
+    os.makedirs(root, exist_ok=True)
+    return os.path.join(root, "state.json")
+
+
+def die(msg):
+    print("kd-state: " + msg, file=sys.stderr)
+    sys.exit(2)
+
+
+def load():
+    p = state_path()
+    if not os.path.exists(p):
+        return {
+            "task": os.environ.get("KANDEV_TASK_ID"),
+            "created": now(),
+            "laps": {},
+            "choice": None,
+            "verdicts": {},
+            "returns": {},
+            "open": [],
+            "gates": [],
+        }
+    with open(p, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save(s):
+    p = state_path()
+    s["updated"] = now()
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(s, f, ensure_ascii=False, indent=2, sort_keys=False)
+        f.write("\n")
+    os.replace(tmp, p)
+
+
+def cmd_lap(args):
+    if not args:
+        die("нужна колонка: kd-state lap Planning")
+    col = args[0]
+    s = load()
+    n = s["laps"].get(col, 0) + 1
+    s["laps"][col] = n
+    save(s)
+    print(n)
+
+
+def cmd_get(args):
+    if not args:
+        die("что получить: lap <колонка> | choice | verdict <колонка> | open")
+    s = load()
+    what = args[0]
+    if what == "lap":
+        if len(args) < 2:
+            die("нужна колонка")
+        print(s["laps"].get(args[1], 0))
+    elif what == "choice":
+        c = s.get("choice")
+        if not c:
+            return
+        line = c["option"]
+        if c.get("note"):
+            line += " — " + c["note"]
+        print(line)
+    elif what == "verdict":
+        if len(args) < 2:
+            die("нужна колонка")
+        print(s["verdicts"].get(args[1], {}).get("verdict", ""))
+    elif what == "open":
+        for e in s["open"]:
+            print("%s · %s · %s" % (e["kind"], e["by"], e["text"]))
+    else:
+        die("неизвестно: " + what)
+
+
+def cmd_choice(args):
+    if not args:
+        die("нужен вариант: kd-state choice B --where notes-planning.md")
+    opt = args[0]
+    where = note = None
+    rest = args[1:]
+    while rest:
+        k = rest.pop(0)
+        if k == "--where":
+            where = rest.pop(0) if rest else None
+        elif k == "--note":
+            note = rest.pop(0) if rest else None
+        else:
+            die("неизвестный ключ: " + k)
+    s = load()
+    s["choice"] = {"option": opt, "where": where, "note": note, "at": now()}
+    save(s)
+    print("выбор записан: %s" % opt)
+
+
+def cmd_verdict(args):
+    if len(args) < 2:
+        die("нужны колонка и вердикт")
+    s = load()
+    s["verdicts"][args[0]] = {"verdict": " ".join(args[1:]), "at": now()}
+    save(s)
+    print("вердикт записан")
+
+
+def cmd_return(args):
+    if len(args) < 2 or args[1] not in ("spend", "check"):
+        die("kd-state return <ключ> spend|check")
+    key, action = args[0], args[1]
+    s = load()
+    spent = s["returns"].get(key, {}).get("spent", False)
+    if action == "check":
+        print("spent" if spent else "available")
+        return
+    if spent:
+        print("spent")
+        sys.exit(1)
+    s["returns"][key] = {"spent": True, "at": now()}
+    save(s)
+    print("available")
+
+
+def cmd_open(args):
+    if len(args) < 3:
+        die("kd-state open <вид> <колонка> <текст>; вид: " + ", ".join(OPEN_KINDS))
+    kind, by = args[0], args[1]
+    if kind not in OPEN_KINDS:
+        die("вид должен быть одним из: " + ", ".join(OPEN_KINDS))
+    s = load()
+    s["open"].append(
+        {"kind": kind, "by": by, "text": " ".join(args[2:]), "at": now()}
+    )
+    save(s)
+    print("записано")
+
+
+def cmd_gate(args):
+    if not args:
+        die("нужна колонка ворот")
+    col = args[0]
+    decision = to = None
+    rest = args[1:]
+    while rest:
+        k = rest.pop(0)
+        if k == "--decision":
+            decision = rest.pop(0) if rest else None
+        elif k == "--to":
+            to = rest.pop(0) if rest else None
+        else:
+            die("неизвестный ключ: " + k)
+    s = load()
+    s["gates"].append(
+        {"gate": col, "at": now(), "decision": decision, "to": to}
+    )
+    save(s)
+    print("визит записан")
+
+
+def cmd_show(_args):
+    s = load()
+    json.dump(s, sys.stdout, ensure_ascii=False, indent=2)
+    sys.stdout.write("\n")
+
+
+def cmd_summary(_args):
+    s = load()
+    out = []
+    c = s.get("choice")
+    if c:
+        line = "Выбор владельца: %s" % c["option"]
+        if c.get("note"):
+            line += " — " + c["note"]
+        out.append(line)
+    for col, v in s["verdicts"].items():
+        out.append("Вердикт %s: %s" % (col, v["verdict"]))
+    for kind in OPEN_KINDS:
+        items = [e for e in s["open"] if e["kind"] == kind]
+        if items:
+            out.append(kind.replace("-", " ").capitalize() + ":")
+            for e in items:
+                out.append("  - %s (%s)" % (e["text"], e["by"]))
+    if not out:
+        out.append("Пока ничего: ни выбора, ни вердиктов, ни нерешённого.")
+    print("\n".join(out))
+
+
+COMMANDS = {
+    "lap": cmd_lap,
+    "get": cmd_get,
+    "choice": cmd_choice,
+    "verdict": cmd_verdict,
+    "return": cmd_return,
+    "open": cmd_open,
+    "gate": cmd_gate,
+    "show": cmd_show,
+    "summary": cmd_summary,
+}
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
+        print(USAGE)
+        return
+    cmd = sys.argv[1]
+    if cmd not in COMMANDS:
+        die("неизвестная команда %r; см. kd-state --help" % cmd)
+    COMMANDS[cmd](sys.argv[2:])
+
+
+if __name__ == "__main__":
+    main()
