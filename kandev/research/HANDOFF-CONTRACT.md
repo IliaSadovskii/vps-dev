@@ -154,8 +154,8 @@ Authoring` в «Допущения»). `Test Authoring` берёт сценар�
 `Verification` читает его тоже — ей нужно время последней заметки, чтобы
 посчитать попытку.
 
-Хвост от `Final Verification` до `Draft PR` работает в контексте `Fix Review`
-(решение 36): всё, что было до него, эти роли открывают файлами.
+`Draft PR` работает в контексте `Fix Review` (решение 36): всё, что было до
+него, он открывает файлами.
 
 | Роль | Контекст | Читает | Пишет |
 |---|---|---|---|
@@ -166,25 +166,26 @@ Authoring` в «Допущения»). `Test Authoring` берёт сценар�
 | Planning | **сброшен**; заметки — `notes-planning.md` | нативный Plan (обязательно до записи), `scoping.md`, `solution-synthesis.md` и `research.md` если есть, `discovery.md` и записи из строки `Чертёж:` если есть, `plan-review.md` если есть, `notes-planning.md` (запись, называющая вариант, сильнее рекомендации `solution-synthesis.md`) | нативный Kandev Plan, строка в `README.md` |
 | Plan Review | **сброшен** | нативный Plan, `discovery.md`, `scoping.md`, `solution-synthesis.md` и `research.md` если есть, свой прошлый `plan-review.md` | `plan-review.md`; блокирующий вердикт на попытке 1 — возврат на `Planning` |
 | Test Authoring | **сброшен** | нативный Plan если есть, `plan-review.md` если есть («Незаблокирующие замечания» — названные там сценарии тестов), `scoping.md`, `discovery.md` («Тесты и проверки»), `research.md` если есть, `docs/knowledge/scenarios.md` и `actions.md` (состояния) если строка `Чертёж:` называет записи, свой прошлый `test-authoring.md`, `notes-test-authoring.md` | `test-authoring.md`, коммит тестов с трейлером `Kandev-Step: Test Authoring` |
-| Implementation | продолжает Test Authoring | контекст Test Authoring; `research.md` и `solution-synthesis.md` если есть; `verification.md` при возврате | код и коммиты с трейлером `Kandev-Step: Implementation`, файла нет |
-| Verification | продолжает | `README.md` (стартовый коммит), свой прошлый `verification.md`, `notes-review-fixes.md` (время последней заметки) | `verification.md`; красный прогон на попытке 1 — возврат на `Implementation` |
+| Implementation | продолжает Test Authoring | контекст Test Authoring; `research.md` и `solution-synthesis.md` если есть; свой прошлый `verification.md` при возврате; `README.md` (стартовый коммит), `notes-review-fixes.md` | код и коммиты с трейлером `Kandev-Step: Implementation`; `verification.md` — прогон, результат, отклонения от плана |
 | Code Review | **сброшен**; два подагента: чтение на дефекты и чтение на безопасность | `README.md`, `scoping.md`, `discovery.md#Правила проекта` и `#Как здесь пишут код` если есть, `verification.md#Итог`, нативный Plan если есть, свои прошлые `code-review.md` и `security-review.md` | `code-review.md` и `security-review.md` + `publish_review_findings_kandev`; вердикт колонки — худший из двух |
 | Review Fixes | **сброшен**, в том числе при возврате с `Human Review`/`Done` | `code-review.md`, `security-review.md`, `fix-review.md` или `final-verification.md` если вернули они, `discovery.md`, свой прошлый `review-fixes.md`, `notes-review-fixes.md` | `review-fixes.md`, коммиты с трейлером `Kandev-Step: Review Fixes`, без тестов |
-| Fix Review | **сброшен** | `README.md`, `discovery.md#Тесты и проверки` и `#Правила проекта`, `scoping.md#Входит`, `code-review.md#Находки`, `security-review.md#Находки`, `review-fixes.md` целиком (его и проверяем), `final-verification.md#Итог` если она вернула карточку, свой прошлый `fix-review.md` | `fix-review.md` + `publish_review_findings_kandev` (только новые дефекты); блокирующий вердикт при доступном автовозврате — возврат на `Review Fixes` |
-| Final Verification | **сброшен** | `review-fixes.md`, `fix-review.md#Вердикт`, `verification.md#Итог`, `README.md`, `discovery.md#Тесты и проверки`, свой прошлый `final-verification.md` | `final-verification.md`; провал при доступном автовозврате — возврат на `Review Fixes` |
-| Draft PR | продолжает Final Verification | `kd-state summary` — нерешённое, отложенное, «нужны руки» и вердикты уже собраны там; маркерные строки (`Расхождение с AGENTS.md:`, `Расхождение с чертежом:`, `Отступление от чертежа:`) — grep-ом по каталогу артефактов, а не чтением файлов; `scoping.md#Входит`, `final-verification.md#Итог`, `README.md` (стартовый коммит), диф задачи с него и документация проекта, свой прошлый `pull-request.md` | `pull-request.md`, коммиты в документацию проекта с трейлером `Kandev-Step: Draft PR` (код и тесты не трогаются), draft PR на хосте (обновляется, не дублируется); при непустом «Отложено» — карточка «Долг по PR N» в `Backlog` через `create_task_kandev` (`start_agent: false`, `source_task_id` = эта задача; на повторном заходе обновляется та, что записана в прошлом `pull-request.md`) |
+| Fix Review | **сброшен**; чтение правок и полный прогон одной колонкой | `README.md`, `discovery.md#Тесты и проверки` и `#Правила проекта`, `scoping.md#Входит`, `code-review.md#Находки`, `security-review.md#Находки`, `review-fixes.md` целиком (его и проверяем), `final-verification.md#Итог` если она вернула карточку, свой прошлый `fix-review.md` | `fix-review.md` + `publish_review_findings_kandev` (только новые дефекты); блокирующий вердикт при доступном автовозврате — возврат на `Review Fixes` |
+| Draft PR | продолжает Fix Review | `kd-state summary` — нерешённое, отложенное, «нужны руки» и вердикты уже собраны там; маркерные строки (`Расхождение с AGENTS.md:`, `Расхождение с чертежом:`, `Отступление от чертежа:`) — grep-ом по каталогу артефактов, а не чтением файлов; `scoping.md#Входит`, `final-verification.md#Итог`, `README.md` (стартовый коммит), диф задачи с него и документация проекта, свой прошлый `pull-request.md` | `pull-request.md`, коммиты в документацию проекта с трейлером `Kandev-Step: Draft PR` (код и тесты не трогаются), draft PR на хосте (обновляется, не дублируется); при непустом «Отложено» — карточка «Долг по PR N» в `Backlog` через `create_task_kandev` (`start_agent: false`, `source_task_id` = эта задача; на повторном заходе обновляется та, что записана в прошлом `pull-request.md`) |
 
 ### Про Implementation
 
-Своего артефакта не имеет и не должен иметь. Она идёт в одном контексте с
-`Test Authoring` и `Verification`, её результат — код и коммиты, а не файл.
+Идёт в одном контексте с `Test Authoring` и держит две работы: написать код
+и прогнать проверки. Проверка и раньше жила в этом же контексте отдельной
+колонкой без собственной памяти — то есть была одной клеткой доски, а не
+отдельным агентом. Красный прогон роль чинит сама, но один круг за заход;
+дальше идёт вперёд, а несделанное записывает через `kd-state open`.
+
+Её результат — код, коммиты и `verification.md`.
 Единственное, что она обязана оставить наружу, — коммиты с трейлером шага
 (решение 9), по которым проверяющий скрипт отличает, кто трогал тесты.
 
-Если реализация приняла решение, расходящееся с планом, она говорит об этом
-в своём ходе, а записывает это `Verification` — в `verification.md`
-разделом «Отклонения от плана», потому что именно она идёт следом в том же
-контексте и именно там это увидит `Code Review`.
+Решение, разошедшееся с планом, она записывает в `verification.md` разделом
+«Отклонения от плана» — там его читает `Code Review`.
 
 ## Возврат с ворот
 
@@ -229,9 +230,8 @@ Authoring` в «Допущения»). `Test Authoring` берёт сценар�
 | Роль | Возврат куда | Когда | Как считает |
 |---|---|---|---|
 | `Plan Review` | `Planning` | вердикт «Заблокирован» на попытке 1 | попытка 1, если своего прошлого файла нет или запись в `notes-planning.md` новее его; иначе 2 |
-| `Verification` | `Implementation` | красный прогон на попытке 1 | так же: время своего прошлого `verification.md` против последней записи в `notes-review-fixes.md` |
-| `Fix Review` | `Review Fixes` | вердикт «Заблокировано», автовозврат не потрачен | `Вызван:` в последнем `review-fixes.md`: `ревью` или `человек` — возврат доступен; `Fix Review` или `Final Verification` — потрачен |
-| `Final Verification` | `Review Fixes` | провал прогона, линтера или тайпчекера, регрессия или владение тестами, автовозврат не потрачен | то же поле, тот же лимит — один на двоих |
+
+| `Fix Review` | `Review Fixes` | блокирующий вердикт чтения или провал прогона, автовозврат не потрачен | `Вызван:` в последнем `review-fixes.md`: `ревью` или `человек` — возврат доступен; `Fix Review` или `Final Verification` — потрачен |
 
 `Code Review` возврата не делает: у его находок уже есть
 штатный получатель — `Review Fixes` идёт следующим шагом вперёд. Возврат

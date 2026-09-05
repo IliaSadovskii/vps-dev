@@ -364,6 +364,12 @@ workflows:
         auto_advance_requires_signal: true
         cancel_triggers_turn_complete: false
 
+      # Реализация и проверка одной колонкой: Verification и раньше шла в
+      # этом же контексте, своей памяти у неё не было — только свой промпт.
+      # Написал и тут же прогнал — это один ход разработчика.
+      #
+      # Красный прогон роль чинит сама, но не бесконечно: один круг
+      # «поправил — прогнал заново», дальше вперёд с пометкой «Не решено».
       - name: Implementation
         position: 10
         color: bg-blue-500
@@ -374,39 +380,20 @@ workflows:
         prompt: |
           @custom-implementation
 
-          Колонка сейчас: Implementation. Если в этой сессии ты уже работал, карточку
-          вернули сюда: прочитай все заметки человека с прошлого раза и
-          действуй по ним.
-
-          {{task_prompt}}
-        events:
-          on_enter:
-            - type: auto_start_agent
-          on_turn_complete:
-            - type: move_to_next
-        is_start_step: false
-        show_in_command_panel: true
-        allow_manual_move: false
-        auto_advance_requires_signal: true
-        cancel_triggers_turn_complete: false
-
-      # Замыкает red-green цикл в том же контексте, что Test Authoring
-      # и Implementation. Кода не пишет: красный прогон один раз возвращает
-      # карточку на Implementation через move_task_kandev, второй раз идёт
-      # вперёд с пометкой «Не решено».
-      - name: Verification
-        position: 11
-        color: bg-blue-500
-        agent_profile:
-          agent_name: Claude
-          model: sonnet
-          mode: bypassPermissions
-        prompt: |
           @custom-verification
 
-          Колонка сейчас: Verification. Если в этой сессии ты уже работал, карточку
-          вернули сюда: прочитай все заметки человека с прошлого раза и
-          действуй по ним.
+          Колонка сейчас: Implementation. Здесь две работы подряд: написать код
+          по первой роли, потом прогнать проверки по второй и записать
+          `verification.md`. Красный прогон чини сам и прогони заново — но
+          только один раз за заход; если после этого всё ещё красно, иди
+          вперёд, а несделанное запиши через `kd-state open не-решено
+          Implementation "<что>"`.
+
+          Тесты остаются чужими: правило владения из общего промпта действует
+          и здесь, красный тест не чинится правкой теста.
+
+          Если в этой сессии ты уже работал, карточку вернули сюда: прочитай
+          все заметки человека с прошлого раза и действуй по ним.
 
           {{task_prompt}}
         events:
@@ -420,16 +407,9 @@ workflows:
         auto_advance_requires_signal: true
         cancel_triggers_turn_complete: false
 
-      # Два чтения одного диффа, одна колонка. Разными подагентами: чтение
-      # на дефекты и чтение на безопасность ищут разное, и тот, кто только
-      # что объяснил, почему код верен, плохо ищет в нём дыру. Раньше это
-      # были две колонки; выигрыш давало не расстояние на доске, а
-      # независимость контекста, и подагенты дают её дешевле.
-      #
-      # Если находок нет ни у одного чтения, роль сама переносит карточку
       # на Final Verification мимо Review Fixes и Fix Review (решение 50).
       - name: Code Review
-        position: 12
+        position: 11
         color: bg-yellow-500
         agent_profile:
           agent_name: Claude
@@ -471,7 +451,7 @@ workflows:
       # и Final Verification (не больше одного автовозврата на заход) и
       # человек сообщением с Human Review или Done.
       - name: Review Fixes
-        position: 13
+        position: 12
         color: bg-blue-500
         agent_profile:
           agent_name: Claude
@@ -500,8 +480,12 @@ workflows:
       # Свежим взглядом проверяет именно правки по ревью. Без этого между
       # Review Fixes и человеком был только прогон тестов: логическую ошибку
       # в исправлении никто независимо не читал.
+      # Одна колонка на две работы, которые судят одни и те же правки:
+      # свежее чтение диффа и полный прогон после него. У них и раньше был
+      # общий на двоих автовозврат — то есть одна сущность, разложенная на
+      # две клетки доски.
       - name: Fix Review
-        position: 14
+        position: 13
         color: bg-yellow-500
         agent_profile:
           agent_name: Claude
@@ -510,41 +494,22 @@ workflows:
         prompt: |
           @custom-fix-review
 
-          Колонка сейчас: Fix Review. Если в этой сессии ты уже работал, карточку
-          вернули сюда: прочитай все заметки человека с прошлого раза и
-          действуй по ним.
-
-          {{task_prompt}}
-        events:
-          on_enter:
-            - type: reset_agent_context
-            - type: auto_start_agent
-          on_turn_complete:
-            - type: move_to_next
-        is_start_step: false
-        show_in_command_panel: true
-        allow_manual_move: false
-        auto_advance_requires_signal: true
-        cancel_triggers_turn_complete: false
-
-      # Память сброшена: ревью правок ей не нужно, все входы — файлы.
-      # Гоняет полный прогон после правок — поэтому у неё свой промпт.
-      # Возврат на Review Fixes — только если в этом заходе автовозврата
-      # ещё не было; предел один на заход для Fix Review и Final
-      # Verification вместе. Draft PR продолжает её память.
-      - name: Final Verification
-        position: 15
-        color: bg-blue-500
-        agent_profile:
-          agent_name: Claude
-          model: haiku
-          mode: bypassPermissions
-        prompt: |
           @custom-final-verification
 
-          Колонка сейчас: Final Verification. Если в этой сессии ты уже работал, карточку
-          вернули сюда: прочитай все заметки человека с прошлого раза и
-          действуй по ним.
+          Колонка сейчас: Fix Review. Здесь две работы подряд, в этом порядке.
+          Сначала прочитай правки свежим взглядом по первой роли и напиши
+          `fix-review.md`. Потом прогони полное — тесты, линтер, тайпчекер,
+          скрипт владения тестами — по второй роли и напиши
+          `final-verification.md`. Читать чужие правки и гонять по ним прогон
+          это одно решение «годится или нет», и делить его между колонками
+          незачем.
+
+          Вердикт колонки — худший из двух. Автовозврат один на обе работы:
+          спроси `kd-state return fix_chain check` и потрать один раз, чем бы
+          из двух он ни был вызван.
+
+          Если в этой сессии ты уже работал, карточку вернули сюда: прочитай
+          все заметки человека с прошлого раза и действуй по ним.
 
           {{task_prompt}}
         events:
@@ -561,7 +526,7 @@ workflows:
 
       # final-verification.
       - name: Draft PR
-        position: 16
+        position: 14
         color: bg-indigo-500
         agent_profile:
           agent_name: Claude
@@ -588,7 +553,7 @@ workflows:
 
       # Последние ворота человека. Назад — за правками, вперёд — в Done.
       - name: Human Review
-        position: 17
+        position: 15
         color: bg-orange-500
         agent_profile:
           agent_name: Claude
@@ -625,7 +590,7 @@ workflows:
         cancel_triggers_turn_complete: false
 
       - name: Done
-        position: 18
+        position: 16
         color: bg-green-500
         agent_profile:
           agent_name: Claude

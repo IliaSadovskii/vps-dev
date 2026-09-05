@@ -60,18 +60,16 @@ main и увидит `AGENTS.md` и `docs/knowledge/` только после с
  Понять        Backlog → Discovery → Scoping
  Выбрать       Research → Solution Synthesis → [Solution Approval]
  Спланировать  Planning ⇄ Plan Review → [Plan Approval]
- Сделать       Test Authoring → Implementation ⇄ Verification
- Проверить     Code Review → Review Fixes → Fix Review
-               → Final Verification → Draft PR
+ Сделать       Test Authoring → Implementation
+ Проверить     Code Review → Review Fixes → Fix Review → Draft PR
  Принять       [Human Review] → Done
 ```
 
 `[ ]` — ворота, карточка ждёт вас. `⇄` — агент может один раз вернуть.
-Ещё два возврата: Fix Review и Final Verification возвращают на Review
-Fixes, один раз на заход вместе. И два прыжка вперёд, когда вход пуст:
-Research без развилок едет сразу на Planning (Solution Approval вы не
-увидите), Code Review без находок у обоих чтений едет сразу на Final
-Verification.
+Ещё один возврат: Fix Review возвращает на Review Fixes, один раз на заход.
+И два прыжка вперёд, когда вход пуст: Research без развилок едет сразу на
+Planning (Solution Approval вы не увидите), Code Review без находок у обоих
+чтений едет сразу на Draft PR.
 
 ## Ваши действия
 
@@ -100,7 +98,7 @@ Verification.
 | Ни один из вариантов не подходит (с Solution Approval) | Solution Synthesis |
 | Нужны новые данные по вариантам | Research |
 | План, задача та же | Planning, потом снова Plan Review |
-| Ошибка в коде, замечание к реализации, упавший CI | Review Fixes, потом весь хвост до PR |
+| Ошибка в коде, замечание к реализации, упавший CI | Review Fixes, потом хвост до PR |
 | Нужен новый или другой тест | Test Authoring |
 | Задача поменялась | Scoping |
 | Не так оформлен PR | Draft PR |
