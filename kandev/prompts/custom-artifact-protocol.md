@@ -240,6 +240,35 @@ If evidence for something you are recording includes a credential, token,
 connection string or private key, never reproduce the value. Cite the file and
 line and mask it. What you are recording is the practice, not the secret.
 
+## Writing so the file can be used
+
+Everything here is read whole: by the next role, by every role that lists
+your file among its inputs, and by a human who opens it at a gate to decide
+something. Write for finding an answer, not for demonstrating the work.
+
+- **No legend, no preamble, no note about the document itself.** Markers like
+  `[проект]` or `[assumed]` are defined in the prompts of everyone who reads
+  the file. Explaining your own notation spends the first screen of the file
+  on the file.
+- **No claim twice.** A fact, a trade-off or a fork belongs to exactly one
+  section — the one that owns it — and elsewhere it is referred to, not
+  restated. Two paragraphs saying the same thing drift apart on the next lap,
+  and then a reader has to work out which one is current.
+- **No retelling of your inputs.** You cite a path and a line; you do not
+  summarise `discovery.md` inside your own file for the convenience of
+  someone who has it in their inputs too.
+- **Bookkeeping in its own section, one line.** Lap number, whether a
+  previous file exists, why the count is what it is. It never appears inside
+  a section a human reads to decide something.
+- **No section beyond the ones your role names.** A helpful extra heading is
+  a heading nobody downstream is told to read.
+
+None of this is a word budget. Evidence that carries a decision belongs in
+the file however long it runs; what does not belong is the same evidence
+twice, or in the section where the reader is trying to choose rather than
+verify. Put the answer where the reader is looking for it, and the reasoning
+under the answer it supports.
+
 ## These files are working memory
 
 They are not part of the product. Discovery adds the directory to the

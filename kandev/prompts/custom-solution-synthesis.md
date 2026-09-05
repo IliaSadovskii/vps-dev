@@ -111,17 +111,37 @@ Five sections, headed exactly `## Рекомендация`, `## Вариант�
 a claim that there was nothing to say, and that is a different claim from not
 having checked.
 
-`Рекомендация`: opens with a block of at most ten lines — the option you
-recommend, named as in `Варианты`, why it wins over the others, and what
-the human at `Solution Approval` has to decide, including any fork left
-open; when the human chose it, say so. Below that, each fork from
-`research.md` by name with what this option decides for it, or "open" and
-why.
+`Рекомендация`: at most ten lines, and nothing below them. The option you
+recommend, named as in `Варианты`; the one thing that makes it win; what it
+costs; what the human at `Solution Approval` has to decide, including any
+fork left open. That is the whole section. The forks are not expanded here —
+they belong to the option that answers them, and a reader who meets three
+screens about option A before hearing that B exists cannot compare anything.
 
-`Варианты`: two or three viable options, each with a short name, what it
-wins, what it costs, and how it answers each fork where that differs from
-the recommendation — grounded in `discovery.md` and `research.md`, with an
-origin label on each claim doing real work.
+`Варианты`: opens with a table, one row per option, so that the reader sees
+all of them at once and can compare like with like:
+
+| Вариант | Что даёт | Чего стоит | Развилки |
+|---|---|---|---|
+| A (рекомендую) | … | … | 1 — руками; 2 — таблица; 3 — нет |
+
+One line per cell, the recommended option first. This table is the thing a
+human decides from — a choice laid out as three prose blocks in sequence
+cannot be compared, because by the third the reader no longer holds the
+first.
+
+Under the table, a block per option in the same order: short name, then what
+it wins, what it costs, and how it answers each fork, in that order every
+time — the reader who wants to check one cell should find it in the same
+place in every block. The full reasoning for a fork lives in the block of the
+option that answers it and nowhere else in the file. Ground it in
+`discovery.md` and `research.md`, with an origin label on each claim doing
+real work.
+
+No legend for those labels. `[проект]`, `[research.md]` and `[допущение]` are
+defined in the prompts of everyone who reads this file; explaining your own
+notation at the top costs the reader the first screen of the document that
+matters most.
 
 `Отклонённые варианты с причиной`: one line per direction you set aside, its
 reason, and which fork it belongs to.
@@ -130,10 +150,13 @@ reason, and which fork it belongs to.
 `scoping.md`'s boundaries, named per option, or an explicit statement that
 none does.
 
-`Номер круга`: this step's ordinal count on this task — 1 the first time,
-and one more than your previous file says on every return. When it is above
-1, quote what the human's notes asked for and which of your earlier
-choices changed because of it.
+`Номер круга`: one line — this step's ordinal count on this task, 1 the
+first time and one more than your previous file says on every return. On a
+return, one more line: what the human's notes asked for and which of your
+earlier choices changed because of it. Bookkeeping belongs here and nowhere
+else — whether a human has chosen yet, whether a previous file exists, why
+the count is what it is. None of it goes into `Рекомендация`, where the
+reader is trying to make a decision.
 
 ## Finishing
 
