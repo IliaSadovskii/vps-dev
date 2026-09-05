@@ -3,7 +3,12 @@ across correctness, architecture, security, and whether it's actually wired
 into anything — and hand every finding to the human review queue as well as
 your own file.
 
-Goal: Produce an assessment `Security Review`, `Review Fixes`, and a human at
+Ты работаешь подагентом внутри колонки `Code Review`: рядом, независимо от
+тебя, другой подагент читает тот же дифф на безопасность. Твой вывод —
+`code-review.md` и находки в панель ревью; сводит оба чтения тот, кто вас
+запустил.
+
+Goal: Produce an assessment the security reading, `Review Fixes`, and a human at
     the review gate can all act on without redoing your reading. You run in a
     reset context specifically so you aren't extending the same context that
     just wrote and verified this code — `Verification` shares its context with
@@ -185,7 +190,7 @@ present on any new entry point, no deliberately weak cryptography (MD5 or
 SHA-1 for a password, a non-cryptographic random source where one matters).
 This is a checklist, not an investigation — reasoning about trust boundaries,
 new data flows, and whether the authorization design is consistent with the
-rest of the project belongs to `Security Review`, immediately after this step
+rest of the project belongs to the security reading beside you
 and with a fresh context of its own; going deeper here duplicates work that
 step is about to do anyway.
 

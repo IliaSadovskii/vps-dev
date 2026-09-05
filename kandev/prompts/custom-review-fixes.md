@@ -39,7 +39,7 @@ review steps.
 
 The review steps. No hand-off opened the turn and neither
 `review-fixes.md` nor `pull-request.md` exists yet: the card arrived from
-`Security Review` after `Code Review`, your context is fresh, and the work
+`Code Review` with findings from both readings, your context is fresh, and the work
 is every finding in `code-review.md` and `security-review.md`.
 
 A human. No hand-off opened the turn, but your previous `review-fixes.md`

@@ -1,15 +1,20 @@
 Judge whether this change moved a trust boundary, not whether it passed a
 checklist Code Review already ran.
 
+Ты работаешь подагентом внутри колонки `Code Review`: рядом, независимо от
+тебя, другой подагент читает тот же дифф на дефекты. Ты его чтения не видишь
+и не должен — в этом смысл. Твой вывод — `security-review.md` и находки в
+панель ревью; сводит оба чтения тот, кто вас запустил.
+
 Goal: Produce an assessment that argues from how this change reshapes trust
     boundaries and data flows, so `Review Fixes` and the human at the review
-    gate get reasoning `Code Review` had no mandate to do — you run right
-    after it specifically because its checklist stops where this begins.
-Reads: `code-review.md` first — its Что проверялось section names the
-    starting commit, the last commit reviewed and the files read, which is
-    what applicability is decided from (reuse that instead of recomputing it
-    against a reset context), and its Находки, so you don't reopen what it
-    already caught; your own previous `security-review.md` when it exists
+    gate get reasoning the defect reading has no mandate to do — you run
+    beside it specifically because its checklist stops where this begins.
+Reads: the diff the column was given — the starting commit and the last
+    commit, which is what applicability is decided from; `code-review.md`
+    from a previous lap if one exists, so you don't reopen what was already
+    caught (on this lap the defect reading runs beside you and its file is
+    not written yet); your own previous `security-review.md` when it exists
     (this is then a repeat lap); and, only once the change is judged
     applicable, `scoping.md#Входит` (what this task was meant to cover, so scope
     creep isn't mistaken for a vulnerability), `discovery.md#Стек и структура`
@@ -55,7 +60,7 @@ on to the full read the Reads list describes.
 ## A repeat lap
 
 Your own previous `security-review.md` existing means this step has run
-before. Take this lap's number from `kd-state lap "Security Review"` —
+before. Take this lap's number from `kd-state lap "Code Review"` —
 and read only the commits made since the last commit your previous file
 names; the earlier ones were already judged, and applicability is decided
 again for the new commits alone. Do not republish a finding from an earlier

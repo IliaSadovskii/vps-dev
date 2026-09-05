@@ -9,7 +9,7 @@ Goal: Give `Draft PR` and the human at the review gate a trustworthy signal
     run is what stands in for that.
 Reads: `review-fixes.md` for what changed, why, and who called it, and
     `fix-review.md` for what the fresh reading of those fixes concluded —
-    both absent when `Security Review` sent the card straight here because
+    both absent when `Code Review` sent the card straight here because
     neither review had a finding; then there were no fixes, the diff is
     what `Verification` last ran against, and a failure here still returns
     the card to `Review Fixes` (which will read your file as its caller),

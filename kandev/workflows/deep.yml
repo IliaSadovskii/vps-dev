@@ -420,6 +420,14 @@ workflows:
         auto_advance_requires_signal: true
         cancel_triggers_turn_complete: false
 
+      # Два чтения одного диффа, одна колонка. Разными подагентами: чтение
+      # на дефекты и чтение на безопасность ищут разное, и тот, кто только
+      # что объяснил, почему код верен, плохо ищет в нём дыру. Раньше это
+      # были две колонки; выигрыш давало не расстояние на доске, а
+      # независимость контекста, и подагенты дают её дешевле.
+      #
+      # Если находок нет ни у одного чтения, роль сама переносит карточку
+      # на Final Verification мимо Review Fixes и Fix Review (решение 50).
       - name: Code Review
         position: 12
         color: bg-yellow-500
@@ -430,41 +438,21 @@ workflows:
         prompt: |
           @custom-review-code
 
-          Колонка сейчас: Code Review. Если в этой сессии ты уже работал, карточку
-          вернули сюда: прочитай все заметки человека с прошлого раза и
-          действуй по ним.
-
-          {{task_prompt}}
-        events:
-          on_enter:
-            - type: reset_agent_context
-            - type: auto_start_agent
-          on_turn_complete:
-            - type: move_to_next
-        is_start_step: false
-        show_in_command_panel: true
-        allow_manual_move: false
-        auto_advance_requires_signal: true
-        cancel_triggers_turn_complete: false
-
-      # Если ни у него, ни у Code Review нет находок, сам переносит карточку
-      # на Final Verification мимо Review Fixes и Fix Review (решение 50).
-      # Стоит во всех трёх маршрутах: «трогает ли безопасность» не связано
-      # с размером задачи. Роль сначала делает дешёвую проверку
-      # применимости и обычно сразу отвечает, что поверхность не затронута.
-      - name: Security Review
-        position: 13
-        color: bg-amber-500
-        agent_profile:
-          agent_name: Claude
-          model: opus[1m]
-          mode: bypassPermissions
-        prompt: |
           @custom-security-review
 
-          Колонка сейчас: Security Review. Если в этой сессии ты уже работал, карточку
-          вернули сюда: прочитай все заметки человека с прошлого раза и
-          действуй по ним.
+          Колонка сейчас: Code Review. Здесь два чтения одного диффа, и делают
+          их разные подагенты, а не ты сам подряд: чтение на дефекты по роли
+          выше и чтение на безопасность по роли под ней. Запусти их своим
+          родным механизмом подагентов, каждому отдай его роль целиком,
+          дождись обоих и сведи результат. Независимость чтений и есть смысл
+          этой колонки.
+
+          Пишешь два файла, `code-review.md` и `security-review.md`, каждый по
+          форме своей роли; находки обоих публикуются через
+          publish_review_findings_kandev. Вердикт колонки — худший из двух.
+
+          Если в этой сессии ты уже работал, карточку вернули сюда: прочитай
+          все заметки человека с прошлого раза и действуй по ним.
 
           {{task_prompt}}
         events:
@@ -483,7 +471,7 @@ workflows:
       # и Final Verification (не больше одного автовозврата на заход) и
       # человек сообщением с Human Review или Done.
       - name: Review Fixes
-        position: 14
+        position: 13
         color: bg-blue-500
         agent_profile:
           agent_name: Claude
@@ -513,7 +501,7 @@ workflows:
       # Review Fixes и человеком был только прогон тестов: логическую ошибку
       # в исправлении никто независимо не читал.
       - name: Fix Review
-        position: 15
+        position: 14
         color: bg-yellow-500
         agent_profile:
           agent_name: Claude
@@ -545,7 +533,7 @@ workflows:
       # ещё не было; предел один на заход для Fix Review и Final
       # Verification вместе. Draft PR продолжает её память.
       - name: Final Verification
-        position: 16
+        position: 15
         color: bg-blue-500
         agent_profile:
           agent_name: Claude
@@ -573,7 +561,7 @@ workflows:
 
       # final-verification.
       - name: Draft PR
-        position: 17
+        position: 16
         color: bg-indigo-500
         agent_profile:
           agent_name: Claude
@@ -600,7 +588,7 @@ workflows:
 
       # Последние ворота человека. Назад — за правками, вперёд — в Done.
       - name: Human Review
-        position: 18
+        position: 17
         color: bg-orange-500
         agent_profile:
           agent_name: Claude
@@ -637,7 +625,7 @@ workflows:
         cancel_triggers_turn_complete: false
 
       - name: Done
-        position: 19
+        position: 18
         color: bg-green-500
         agent_profile:
           agent_name: Claude

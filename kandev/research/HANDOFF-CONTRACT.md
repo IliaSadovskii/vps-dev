@@ -168,8 +168,7 @@ Authoring` в «Допущения»). `Test Authoring` берёт сценар�
 | Test Authoring | **сброшен** | нативный Plan если есть, `plan-review.md` если есть («Незаблокирующие замечания» — названные там сценарии тестов), `scoping.md`, `discovery.md` («Тесты и проверки»), `research.md` если есть, `docs/knowledge/scenarios.md` и `actions.md` (состояния) если строка `Чертёж:` называет записи, свой прошлый `test-authoring.md`, `notes-test-authoring.md` | `test-authoring.md`, коммит тестов с трейлером `Kandev-Step: Test Authoring` |
 | Implementation | продолжает Test Authoring | контекст Test Authoring; `research.md` и `solution-synthesis.md` если есть; `verification.md` при возврате | код и коммиты с трейлером `Kandev-Step: Implementation`, файла нет |
 | Verification | продолжает | `README.md` (стартовый коммит), свой прошлый `verification.md`, `notes-review-fixes.md` (время последней заметки) | `verification.md`; красный прогон на попытке 1 — возврат на `Implementation` |
-| Code Review | **сброшен** | `README.md`, `scoping.md`, `discovery.md#Правила проекта` и `#Как здесь пишут код` если есть, `verification.md#Итог`, нативный Plan если есть, свой прошлый `code-review.md` | `code-review.md` + `publish_review_findings_kandev` |
-| Security Review | **сброшен** | `scoping.md#Входит`, `discovery.md#Стек и структура`, `code-review.md#Что проверялось` и `#Находки`, свой прошлый `security-review.md` | `security-review.md` + `publish_review_findings_kandev` |
+| Code Review | **сброшен**; два подагента: чтение на дефекты и чтение на безопасность | `README.md`, `scoping.md`, `discovery.md#Правила проекта` и `#Как здесь пишут код` если есть, `verification.md#Итог`, нативный Plan если есть, свои прошлые `code-review.md` и `security-review.md` | `code-review.md` и `security-review.md` + `publish_review_findings_kandev`; вердикт колонки — худший из двух |
 | Review Fixes | **сброшен**, в том числе при возврате с `Human Review`/`Done` | `code-review.md`, `security-review.md`, `fix-review.md` или `final-verification.md` если вернули они, `discovery.md`, свой прошлый `review-fixes.md`, `notes-review-fixes.md` | `review-fixes.md`, коммиты с трейлером `Kandev-Step: Review Fixes`, без тестов |
 | Fix Review | **сброшен** | `README.md`, `discovery.md#Тесты и проверки` и `#Правила проекта`, `scoping.md#Входит`, `code-review.md#Находки`, `security-review.md#Находки`, `review-fixes.md` целиком (его и проверяем), `final-verification.md#Итог` если она вернула карточку, свой прошлый `fix-review.md` | `fix-review.md` + `publish_review_findings_kandev` (только новые дефекты); блокирующий вердикт при доступном автовозврате — возврат на `Review Fixes` |
 | Final Verification | **сброшен** | `review-fixes.md`, `fix-review.md#Вердикт`, `verification.md#Итог`, `README.md`, `discovery.md#Тесты и проверки`, свой прошлый `final-verification.md` | `final-verification.md`; провал при доступном автовозврате — возврат на `Review Fixes` |
@@ -234,7 +233,7 @@ Authoring` в «Допущения»). `Test Authoring` берёт сценар�
 | `Fix Review` | `Review Fixes` | вердикт «Заблокировано», автовозврат не потрачен | `Вызван:` в последнем `review-fixes.md`: `ревью` или `человек` — возврат доступен; `Fix Review` или `Final Verification` — потрачен |
 | `Final Verification` | `Review Fixes` | провал прогона, линтера или тайпчекера, регрессия или владение тестами, автовозврат не потрачен | то же поле, тот же лимит — один на двоих |
 
-`Code Review` и `Security Review` возврата не делают: у их находок уже есть
+`Code Review` возврата не делает: у его находок уже есть
 штатный получатель — `Review Fixes` идёт следующим шагом вперёд. Возврат
 оттуда означал бы прыжок через роль, созданную ровно для этой работы.
 
@@ -251,6 +250,15 @@ Authoring` в «Допущения»). `Test Authoring` берёт сценар�
 `fix-review.md` и `final-verification.md`; красный тест из `verification.md`
 доезжает туда через блокирующую находку `Code Review` и полный прогон
 `Final Verification`.
+
+## Одна колонка, два чтения
+
+`Code Review` держит два независимых чтения одного диффа — на дефекты и на
+безопасность, — и делает их **разными подагентами**, а не сама подряд. Тот,
+кто только что объяснил, почему код верен, плохо ищет в нём дыру: выигрыш
+давала независимость контекста, а не расстояние на доске, и подагенты дают
+её дешевле отдельной колонки. Файлов по-прежнему два, форма каждого своя,
+находки обоих публикуются в панель ревью, вердикт колонки — худший из двух.
 
 ## Служебные цепочки
 

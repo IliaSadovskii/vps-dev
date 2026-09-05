@@ -61,7 +61,7 @@ main и увидит `AGENTS.md` и `docs/knowledge/` только после с
  Выбрать       Research → Solution Synthesis → [Solution Approval]
  Спланировать  Planning ⇄ Plan Review → [Plan Approval]
  Сделать       Test Authoring → Implementation ⇄ Verification
- Проверить     Code Review → Security Review → Review Fixes → Fix Review
+ Проверить     Code Review → Review Fixes → Fix Review
                → Final Verification → Draft PR
  Принять       [Human Review] → Done
 ```
@@ -70,7 +70,7 @@ main и увидит `AGENTS.md` и `docs/knowledge/` только после с
 Ещё два возврата: Fix Review и Final Verification возвращают на Review
 Fixes, один раз на заход вместе. И два прыжка вперёд, когда вход пуст:
 Research без развилок едет сразу на Planning (Solution Approval вы не
-увидите), Security Review без находок у обоих ревью едет сразу на Final
+увидите), Code Review без находок у обоих чтений едет сразу на Final
 Verification.
 
 ## Ваши действия

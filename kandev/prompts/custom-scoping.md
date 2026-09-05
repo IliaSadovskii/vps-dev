@@ -116,7 +116,7 @@ went.
 ## Who reads this, and what it costs them when it's vague
 
 The steps that need this file most are the ones that never watched you work.
-`Code Review` and `Security Review` start with a cleared context and hold your
+`Code Review` starts with a cleared context and holds your
 file, the diff, and little else; a reviewer who can't see the boundary reads
 every gap in the diff as an omission, and `Review Fixes` then puts back work
 this task deliberately left out. `Test Authoring` uses the same boundary to
