@@ -350,8 +350,9 @@ def ensure_profiles(api, wanted, result):
             "auto_approve": bool(w.get("auto_approve", True)),
             "auto_fallback": False,
         }
-        if w.get("config_options"):
-            body["config_options"] = {k: str(v) for k, v in w["config_options"].items()}
+        # Всегда, даже пустой: иначе снятый в файле параметр (effort у
+        # Haiku) остался бы на доске.
+        body["config_options"] = {k: str(v) for k, v in (w.get("config_options") or {}).items()}
         have = next((p for p in agent.get("profiles", []) if p["name"] == w["name"]), None)
         if have is None:
             api.call("POST", f"/agents/{agent['id']}/profiles", body, settings=True)
@@ -366,10 +367,15 @@ def ensure_profiles(api, wanted, result):
             if not same:
                 api.call("PATCH", f"/agent-profiles/{have['id']}", body, settings=True)
                 result.setdefault("profiles_updated", []).append(f"{w['agent']}/{w['name']}")
+    # Два ключа на профиль: тройка переносимого формата и (агент, имя).
+    # Тройка не различает два профиля одной модели с разным усилием
+    # (Opus high и Opus xhigh), поэтому колонка может назвать профиль по
+    # имени полем `profile_name` рядом с тройкой.
     lookup = {}
     for a in api.call("GET", "/agents").get("agents", []):
         for p in a.get("profiles", []):
             lookup[(p.get("agent_display_name"), p.get("model"), p.get("mode") or "default")] = p["id"]
+            lookup[("name", p.get("agent_display_name"), p.get("name"))] = p["id"]
     return lookup
 
 
@@ -377,7 +383,10 @@ def resolve_profile(spec, lookup, where, result):
     """Тройка из YAML → id профиля; нет такого — предупреждение и None."""
     if not spec:
         return None
-    key = (spec.get("agent_name"), spec.get("model") or "", spec.get("mode") or "default")
+    if spec.get("profile_name"):
+        key = ("name", spec.get("agent_name"), spec["profile_name"])
+    else:
+        key = (spec.get("agent_name"), spec.get("model") or "", spec.get("mode") or "default")
     pid = lookup.get(key)
     if pid is None:
         result["warnings"].append(

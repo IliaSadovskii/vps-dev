@@ -12,7 +12,9 @@
 # создаётся, лишние не удаляются.
 #
 # Колонки ссылаются на профиль тройкой (agent_name = отображаемое имя
-# агента, model, mode) — так устроен переносимый формат Kandev.
+# агента, model, mode) — так устроен переносимый формат Kandev. Когда
+# два профиля различаются только усилием, колонка добавляет к тройке
+# `profile_name: <имя>` — выкатка тогда ищет профиль по имени.
 version: 1
 profiles:
   - agent: claude-acp
@@ -22,6 +24,17 @@ profiles:
     auto_approve: true
     config_options:
       effort: high
+  # Тот же Opus с усилием xhigh — для Solution Synthesis и Planning
+  # (решение 66). Колонка ссылается на него по имени полем
+  # `profile_name`: тройка (агент, модель, режим) у двух профилей Opus
+  # одинакова и их не различает.
+  - agent: claude-acp
+    name: Opus xhigh
+    model: opus[1m]
+    mode: bypassPermissions
+    auto_approve: true
+    config_options:
+      effort: xhigh
   - agent: claude-acp
     name: Sonnet
     model: sonnet
@@ -29,13 +42,12 @@ profiles:
     auto_approve: true
     config_options:
       effort: high
+  # Haiku 4.5 параметр effort не поддерживает — не задаём.
   - agent: claude-acp
     name: Haiku
     model: haiku
     mode: bypassPermissions
     auto_approve: true
-    config_options:
-      effort: high
   - agent: codex-acp
     name: GPT-5.6 Sol
     model: gpt-5.6-sol
