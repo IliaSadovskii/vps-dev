@@ -163,7 +163,9 @@ went forward with; `fix-review.md` — a Вердикт of `Заблокиров
 that the step went forward with. Take only what each file itself still
 calls unresolved; a finding a later file says was closed does not belong
 here. Add what your own documentation pass found broken rather than
-stale: a doc example CI executes that the change no longer satisfies.
+stale: a doc example CI executes that the change no longer satisfies. Add
+what the base-branch check below found: a conflict with the base, or
+commits behind that touch the same files.
 
 `Решено без вас` — decisions agents made after `Plan Approval` that no
 human has seen: what `test-authoring.md` records under «Допущения»,
@@ -258,6 +260,26 @@ The documentation pass repeats the same way: what your previous
 lap; look at the fixes made since — the ones after the human's objection —
 and at the documentation those made wrong in turn.
 
+## The branch against its base
+
+The task branch left the base branch at `Discovery`, hours ago, and nothing
+since has looked at what landed on the base in the meantime. Before the
+push, `git fetch` the remote and find the base branch — `origin/HEAD`, or
+the repository's default branch by the host's CLI — then check the two
+without touching the working tree: `git merge-tree --write-tree
+origin/<base> HEAD` reports conflicting files without merging anything, and
+`git rev-list --count HEAD..origin/<base>` says how far behind the branch
+is. Do not rebase, merge or reset: `custom-git-safety` applies, and whether
+to rebase is the human's call at the gate.
+
+A conflict goes into «Не решено» as its own line, naming the files, so the
+reviewer learns it here rather than from the host's merge button. A branch
+that is behind without conflict is recorded in `pull-request.md` with the
+count and left alone; when the commits it is behind touch the same files
+this task changed, say so under «Не решено» as well, since a clean
+three-way merge can still combine two correct changes into a wrong one.
+Without a remote, say so and skip the check.
+
 ## Draft, and checking before you open one
 
 Confirm the branch is pushed before anything else here — nothing earlier in
@@ -280,7 +302,9 @@ check is for the human at the gate to see, not for a fixer to paper over.
 ## Artifact shape
 
 `pull-request.md`:
-- Ссылка на PR — the URL, or, if creation failed, what failed and why.
+- Ссылка на PR — the URL, or, if creation failed, what failed and why;
+  and the base-branch check: which base, how many commits behind, the
+  conflicting files or that there were none, or that no remote exists.
 - Документация — what was corrected: each project file you changed, its
   path and one line on what was untrue and what it says now; what was
   checked and still true: the documentation you opened because the change

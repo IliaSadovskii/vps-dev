@@ -44,16 +44,25 @@ here, not confirming only what moved.
 
 ## Locating what to run
 
-Find the test command the way `Verification` does: the CI configuration,
-`Makefile`, `package.json`, or whatever the project's own tooling declares,
-not a command remembered from another project. Run locally whatever gives a
-fast, precise signal here, and skip whatever the CI pipeline is already
-certain to run once `Draft PR` opens a pull request — duplicating a check
-that's about to run anyway spends the turn without adding information. Do not
-poll or wait on that external run; it fires on a separate mechanism, after
-this step. What isn't optional is running something at all — reporting a pass
-without a run behind it is exactly the failure this step exists to catch, one
-step before a pull request opens on its word.
+Run the commands `discovery.md` records under «Тесты и проверки»: the full
+test run, the linter and the type checker, each as the project defines it,
+not a command remembered from another project. Where that section is empty
+or marked inferred, find the project's own definition yourself: the CI
+configuration, `Makefile`, `package.json`, a rule file. Do not poll or wait
+on the CI run; it fires on a separate mechanism, after this step.
+
+All three run here whatever CI will do later. This is the last step before
+a pull request opens, and a project without CI, or with a CI that skips the
+linter, has no other place where a red linter or a type error is caught
+before a human reads the PR. A check the project does not have is said so
+in the artifact, the way `discovery.md` said it, not silently skipped; a
+check that is too slow to run whole is run in its narrowest form that still
+covers the changed files, with the narrowing named. What isn't optional is
+running something at all — reporting a pass without a run behind it is
+exactly the failure this step exists to catch, one step before a pull
+request opens on its word. A red linter or type check is a failure of this
+step like a red test: it returns the card under the rule below, and goes
+forward as `Не решено:` when the return is spent.
 
 ## Who touched the tests
 
@@ -88,11 +97,12 @@ in the latest `review-fixes.md`, under Заход: `Вызван: ревью` or
 were clean — means no automatic return has happened yet in this lap;
 `Вызван: Fix Review` or `Вызван: Final Verification` means it has been spent.
 
-A clean run with no regression and a clean ownership verdict ends the step
-normally with `step_complete_kandev`. A run that fails, turns up a
-regression, or fails ownership, while the return is available, sends the
-card back: move it to `Review Fixes` as the protocol describes — workflow
-ID and step ID from the lookup, then `move_task_kandev` with `task_id`,
+A clean run with no regression, a clean linter and type check and a clean
+ownership verdict ends the step normally with `step_complete_kandev`. A run
+that fails, turns up a regression, fails the linter or the type checker, or
+fails ownership, while the return is available, sends the card back: move
+it to `Review Fixes` as the protocol describes — workflow ID and step ID
+from the lookup, then `move_task_kandev` with `task_id`,
 `workflow_id`, `workflow_step_id` and a `prompt` pointing at
 `final-verification.md` rather than restating the failures — the step reads
 your file directly once it resumes, so the hand-off only has to say where
@@ -111,11 +121,11 @@ end.
 ## Artifact shape
 
 `final-verification.md`:
-- Что запущено, дословный вывод — the exact command or commands you ran,
-  the ownership script among them, and their terminal output as it printed,
-  not a paraphrase of what they found.
-- Результат — the verdict itself: clean, or what failed and where, test
-  ownership included.
+- Что запущено, дословный вывод — the exact command or commands you ran:
+  the test run, the linter, the type checker and the ownership script, and
+  their terminal output as it printed, not a paraphrase of what they found.
+- Результат — the verdict itself: clean, or what failed and where, linter,
+  type check and test ownership included.
 - Расхождения с verification.md, если есть — the regressions identified by
   that comparison, or an explicit statement that none showed up where the
   comparison could actually be made.
