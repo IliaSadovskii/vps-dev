@@ -56,7 +56,9 @@ browser_mcp_command: /usr/bin/playwright-mcp
 # каждом вызове.
 browser_mcp_name: browser
 
-# Файл общего промпта агентов — роль дописывает в него блок про браузер,
-# между своими маркерами. Тот же путь, что style_file у роли style:
+# Справочник по машине — роль дописывает в него раздел про браузер между
+# своими маркерами. Тот же путь, что style_machine_file у роли style:
 # роли не видят defaults друг друга, поэтому он назван здесь ещё раз.
-browser_prompt_file: /var/lib/vps-dev/style/agent-style.md
+# В общий промпт браузер не пишется: там на весь справочник пять строк
+# указателя, и это осознанно — промпт читается на каждом ходу.
+browser_prompt_file: /var/lib/vps-dev/style/machine.md
