@@ -124,9 +124,16 @@ The human's notes are **not in this conversation**. A gate column runs on
 a different agent profile, which means a different session; what it shares
 with you is the working copy. Every note the human wrote at a gate was
 appended there to `.kandev/artifacts/$KANDEV_TASK_ID/notes.md`. Read that
-file at the start of every run — first thing, before you look at anything
-else — and act on every entry newer than your last commit, all of them
-together. A note outranks the task text where they disagree: it is newer,
+file at the start of every run, first thing, before you look at anything
+else.
+
+It holds only what nobody has acted on yet — a queue, not a log. So
+everything in it is for you: read all of it, act on all of it together,
+and when you are done move every entry you acted on to `notes-done.md`
+beside it, each under a line `> взято: Conventions, <время>`. An entry
+left behind is one the next run will act on twice; an entry moved without
+being acted on is one lost. Something you cannot act on stays in
+`notes.md`, and your closing message says why. A note outranks the task text where they disagree: it is newer,
 and your closing message says which part of the original wording it
 supersedes.
 

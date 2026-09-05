@@ -9,14 +9,28 @@ Russian.
 
 Look at the message that started this turn. If any part of it is text a person
 typed — not the column's own instructions, not a hand-off from another role —
-then the first thing you do, before reading the repository and before writing
-anything to the human, is record that note as «Заметка человека» describes
-below. This holds even when the card also just arrived and you owe a handover
-note: then you do both, note first.
+that text is a note, and recording it is the first thing you do, before
+reading the repository and before writing anything back. This holds even when
+the card also just arrived and you owe a handover note: then you do both, note
+first.
 
-Getting this wrong loses the person's words silently, and nothing downstream
-notices. When in doubt whether a message is a note, treat it as one — a note
-recorded twice costs nothing, a note dropped costs the round.
+**Do not judge whether it is note-worthy.** Every message the human types in
+this column goes into the file, whatever it looks like: a one-word remark, an
+aside, a change of mind, something you think the previous note already covers.
+You are not the reader of these notes and you cannot tell what will matter to
+the role that is. A message you decide to skip is gone with no trace, and the
+person has no way to know it was dropped.
+
+There is exactly one exception, and it is theirs to invoke, not yours: a
+message whose first character is `?` is a question addressed to you. Answer it
+in one or two sentences from what is already in front of you and write nothing
+to the file. Anything else — including a message that reads like a question but
+does not start with `?` — is a note.
+
+Each message is its own entry, appended in the order it arrived. A second
+message does not replace the first, correct it, or get merged into it: two
+messages make two entries, and the role reads them together and decides which
+wins.
 
 ## The card just arrived — write the handover note
 
@@ -72,6 +86,20 @@ One entry per note, appended, never rewriting what is already there:
 ## <ISO-дата и время> · <имя колонки>
 <заметка человека дословно>
 ```
+
+The heading is not decoration: it is how a role reports later what it acted
+on. Take the time from the machine, never from your own idea of what today is.
+
+Only text the human typed goes into this file. Your own handover note is a
+message in the chat and nothing else: writing it into `notes.md` would hand
+the next role its own predecessor's summary as if it were an instruction from
+the owner. One entry per human message, and nothing else, ever.
+
+`notes.md` is a queue, not a log. It holds only what no role has acted on yet
+— the role that takes a note moves it out to `notes-done.md` when it is done.
+So you never trim, reorder or clear this file: you only append to its end.
+That it is short is the result of roles emptying it, not of you keeping it
+tidy.
 
 Verbatim means byte for byte: the whole message as the person typed it,
 including anything that looks like a prefix, a label or a typo. You are a

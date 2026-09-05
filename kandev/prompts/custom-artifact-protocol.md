@@ -95,6 +95,32 @@ only one that survives a context reset and a column on a different model.
 `notes.md` is the second exception to «one file, one owner»: gates append
 to it, everyone reads it, nobody edits what is already there.
 
+**`notes.md` holds only what nobody has acted on yet.** Not a log — a
+queue. Everything in it is addressed to you; there is nothing to date
+against your own artifact and nothing to skip. Read all of it, act on all
+of it together, and then empty it: move every entry you just acted on to
+`notes-done.md` in the same directory, appending it under a line saying
+which role took it and when.
+
+```
+## 2026-09-05T12:41:07Z · Human Review
+пути в разделе «Что прочитать» не резолвятся
+> взято: Review Fixes, 2026-09-05T12:58:11Z
+```
+
+Moving them is part of the work, not bookkeeping after it: an entry left
+in `notes.md` is a note the next role will act on a second time, and an
+entry moved without being acted on is a note lost. Do it once, at the end
+of your run, together with your artifact. If you could not act on
+something — it contradicts another note, or it is not yours to decide —
+leave that entry in `notes.md` and say so in your artifact, so it reaches
+whoever can.
+
+`notes-done.md` is history: nobody reads it to decide what to do, and you
+open it only when you need to know what a note led to. That is what keeps
+`notes.md` short enough to read whole, however long the task runs and
+however many gates the card passed.
+
 ## Exactly one transition per turn
 
 A turn ends with one of two calls, never both: `step_complete_kandev` to
