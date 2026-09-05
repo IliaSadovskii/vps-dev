@@ -3,13 +3,21 @@ pass, that the tests `Test Authoring` left failing are actually green
 now, that nothing else nearby broke along the way, and that no commit
 other than Test Authoring's touched a test.
 
+Это вторая половина хода колонки `Implementation`: код уже написан тем же
+агентом в этом же ходе, и ты прогоняешь по нему проверки. Переходов ты не
+делаешь — ход заканчивается одним переходом после всей работы. Красное чинишь
+сам, но один круг за заход: поправил, прогнал заново; если после этого всё
+ещё красно, записываешь `kd-state open не-решено Implementation "<что>"` и
+идёшь вперёд. Тесты чужие: красный тест правкой теста не чинится.
+
 Goal: Give `Code Review` — which reads `verification.md` next, in a
     reset context, with no memory of this session — the one thing it
     cannot reconstruct on its own: real evidence that the behaviour
     this task targeted works, not just that the code compiles or that
-    `Implementation` said it does. This role writes no code and no
-    test; what is still red goes back to `Implementation` once, and
-    forward marked unresolved after that.
+    the code said it does. You may fix code here — it is the same turn
+    that wrote it — but never a test: what a failing test says is the
+    point. One repair pass, then forward with what is still red recorded
+    as unresolved.
 Reads: You continue the same session as `Test Authoring` and
     `Implementation`, so what each of them found is already in front
     of you, including `discovery.md`'s «Тесты и проверки». From
@@ -21,8 +29,7 @@ Writes: `verification.md` under `.kandev/artifacts/$KANDEV_TASK_ID/`.
 Done when: the runs you executed are recorded with their literal
     output, the ownership script's result is among them, all four
     sections of `verification.md` are filled, and exactly one
-    transition has been made: `move_task_kandev` back to
-    `Implementation` on a first red attempt, `step_complete_kandev`
+    the turn ends with one transition after everything: `step_complete_kandev`
     otherwise. Never both in one turn.
 
 ## Loading the skills Discovery named
@@ -103,24 +110,19 @@ than it. Each entry in `notes-review-fixes.md` is headed with its time; compare
 the newest entry with your previous file's, and record the reason in
 «Попытка». The number itself comes from `kd-state lap "Verification"`.
 
-Green on every run, including the ownership script: call
-`step_complete_kandev`.
+Green on every run, including the ownership script: nothing more to do here,
+the turn moves on to its single transition.
 
-Red on attempt 1: move the card to `Implementation` as the protocol
-describes — workflow ID and step ID from the lookup, then
-`move_task_kandev` with `task_id`, `workflow_id`, `workflow_step_id`
-and a short `prompt` pointing at `verification.md`. Do not call
-`step_complete_kandev` in that turn: the platform keeps a pending
-signal and would fire it on the next entry to this column. If the move
-fails, call `step_complete_kandev` instead and begin your closing
-message with `Не решено:` naming the failed move.
+Red, and this is the first repair pass of the lap
+(`kd-state lap "Implementation"` gives the lap, and your own previous
+`verification.md` says whether you have already repaired once in it): fix the
+code, run the same commands again, and record both runs. Never touch a test to
+make it pass.
 
-Red on attempt 2: do not loop again. Call `step_complete_kandev` and
-end your turn with a message whose first line starts with `Не решено:`
-followed by what is still red and why the return did not resolve it.
-`Code Review` reads `verification.md` next and marks the red as a
-blocking finding; `Final Verification`'s full run shows it again, and
-`Draft PR` carries that to the human under «Не решено».
+Red after that pass: do not loop again. Record it with
+`kd-state open не-решено Implementation "<что осталось красным>"`, say it
+plainly in «Итог», and let the turn end forward — the reviews and the human
+will see it as «Не решено».
 
 ## Carrying forward «Отклонения от плана»
 
@@ -194,6 +196,6 @@ in this session, not to what a test would probably do or what
 `Implementation` said would happen — where you couldn't establish
 something, write that down instead of filling the gap.
 
-Then make exactly one transition: `move_task_kandev` for a first red
-attempt, otherwise `step_complete_kandev` — with the `Не решено:` line
-when the red survived the return.
+Then the turn ends: one `step_complete_kandev`, with a `Не решено:` line when
+something stayed red through the repair pass. No `move_task_kandev` from here
+— the column you would send the card back to is the one you are standing in.

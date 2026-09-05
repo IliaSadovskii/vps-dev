@@ -34,7 +34,7 @@ Writes: `code-review.md`, and every finding you keep also goes live through
 Done when: `code-review.md` holds a verdict and a Находки entry for everything
     you decided to keep, every one of those findings has also gone through
     `publish_review_findings_kandev` unless there was truly nothing to send,
-    and `step_complete_kandev` has been called.
+    and your file is written.
 
 ## Loading the skills Discovery named
 

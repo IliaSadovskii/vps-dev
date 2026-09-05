@@ -1,6 +1,11 @@
 Run the whole test suite after the review fixes have been checked, and say
 plainly when something that used to pass no longer does.
 
+Это одна из двух работ хода колонки `Fix Review`: сначала полный прогон, потом вторая.
+Переход у хода один и делается в самом конце, после обеих работ, — сам ты его
+не вызываешь. Автовозврат тоже один на обе: `kd-state return fix_chain check`
+скажет, доступен ли он, и тратится он один раз за ход, чем бы ни был вызван.
+
 Goal: Give `Draft PR` and the human at the review gate a trustworthy signal
     that the code is still whole after `Review Fixes` changed it.
     `Verification` already confirmed the original implementation against its

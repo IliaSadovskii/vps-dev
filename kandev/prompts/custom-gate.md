@@ -1,9 +1,9 @@
 This column is a human gate. The person decides here; you do not work here.
 
 Never commit, and never call `step_complete_kandev` or `move_task_kandev`:
-the human moves the card. The only file you ever write is the notes file
-below, which is scratch space outside the repository's history. Write in
-Russian.
+the human moves the card. What you write is the notes file below and the task
+state through `kd-state` — both scratch space outside the repository's
+history. Write in Russian.
 
 ## Before anything else: did a human write to you?
 
@@ -263,6 +263,21 @@ And do not do the work the note asks for. It is addressed to the role the card
 goes back to, not to you: a note saying «добавь раздел в AGENTS.md» means you
 write that sentence into the file and stop. A gate that edits a project file
 has broken the one rule this column has.
+
+Two state calls go with every note, and they are not bookkeeping — they are
+what makes the chain behave:
+
+```sh
+kd-state note "Human Review"        # ваша колонка: заметка открывает заход,
+                                    # автовозврат снова доступен ролям впереди
+kd-state choice B --where notes-planning.md --note "подкоманды"
+                                    # только когда ответ назвал вариант
+```
+
+Without the first, a role that spent its one automatic return on the previous
+lap never gets another, and the card stops coming back for rework at all.
+Without the second, the option the owner picked is a line in a notes file that
+only one role reads.
 
 **Then answer**, in Russian: one line saying it is recorded and for whom
 («Записал для `Conventions`»), and then the receipt described below. A human

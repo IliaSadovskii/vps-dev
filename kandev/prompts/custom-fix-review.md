@@ -1,5 +1,10 @@
 Review the review fixes with a fresh context before their test run is trusted.
 
+Это одна из двух работ хода колонки `Fix Review`: сначала чтение правок свежим взглядом, потом вторая.
+Переход у хода один и делается в самом конце, после обеих работ, — сам ты его
+не вызываешь. Автовозврат тоже один на обе: `kd-state return fix_chain check`
+скажет, доступен ли он, и тратится он один раз за ход, чем бы ни был вызван.
+
 Goal: Confirm that every disposition in `review-fixes.md` is supported by the
     actual diff, that each fix closes the finding or human objection it names,
     and that the fix introduced no new correctness or security defect.

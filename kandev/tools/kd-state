@@ -16,6 +16,8 @@
     kd-state verdict <колонка> <вердикт>
     kd-state return <ключ> spend|check     автовозврат: потратить / спросить
     kd-state open <вид> <колонка> <текст>  нерешённое, отложенное, нужны руки
+    kd-state note <колонка>                заметка человека: новый заход,
+                                           автовозвраты снова доступны
     kd-state gate <колонка> [--decision X] [--to Y]
     kd-state show                          весь файл как есть
     kd-state summary                       что показать человеку и в PR
@@ -24,8 +26,10 @@
 он не ломается от отступа и читается любым инструментом без библиотеки.
 """
 
+import fcntl
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 
@@ -44,7 +48,16 @@ def state_path():
         die("KANDEV_TASK_ID не задан — скрипт зовут из хода роли, там он есть")
     root = os.environ.get("KANDEV_ARTIFACTS")
     if not root:
-        root = os.path.join(".kandev", "artifacts", task)
+        # Корень рабочей копии, а не текущий каталог: иначе вызов из
+        # подкаталога молча заводит второе состояние рядом с первым.
+        try:
+            top = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                capture_output=True, text=True, check=True,
+            ).stdout.strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            die("не в рабочей копии git — задайте KANDEV_ARTIFACTS")
+        root = os.path.join(top, ".kandev", "artifacts", task)
     os.makedirs(root, exist_ok=True)
     return os.path.join(root, "state.json")
 
@@ -52,6 +65,17 @@ def state_path():
 def die(msg):
     print("kd-state: " + msg, file=sys.stderr)
     sys.exit(2)
+
+
+EMPTY = {
+    "laps": {},
+    "notes": [],
+    "choice": None,
+    "verdicts": {},
+    "returns": {},
+    "open": [],
+    "gates": [],
+}
 
 
 def load():
@@ -67,28 +91,52 @@ def load():
             "open": [],
             "gates": [],
         }
-    with open(p, encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(p, encoding="utf-8") as f:
+            s = json.load(f)
+    except json.JSONDecodeError as e:
+        die("%s повреждён (%s) — почините или удалите" % (p, e))
+    # Файл мог быть записан более старой версией: недостающее дополняем,
+    # чужого не трогаем.
+    for k, v in EMPTY.items():
+        s.setdefault(k, json.loads(json.dumps(v)))
+    return s
 
 
 def save(s):
     p = state_path()
     s["updated"] = now()
-    tmp = p + ".tmp"
+    tmp = "%s.%d.tmp" % (p, os.getpid())
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(s, f, ensure_ascii=False, indent=2, sort_keys=False)
         f.write("\n")
     os.replace(tmp, p)
 
 
+class locked:
+    """Весь цикл load→save под замком: колонка Code Review держит два
+    подагента, и без него их записи затирают друг друга."""
+
+    def __enter__(self):
+        p = state_path() + ".lock"
+        self.f = open(p, "a+")
+        fcntl.flock(self.f, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *_):
+        fcntl.flock(self.f, fcntl.LOCK_UN)
+        self.f.close()
+
+
 def cmd_lap(args):
     if not args:
         die("нужна колонка: kd-state lap Planning")
     col = args[0]
-    s = load()
-    n = s["laps"].get(col, 0) + 1
-    s["laps"][col] = n
-    save(s)
+    with locked():
+        s = load()
+        n = s["laps"].get(col, 0) + 1
+        s["laps"][col] = n
+        save(s)
     print(n)
 
 
@@ -134,18 +182,20 @@ def cmd_choice(args):
             note = rest.pop(0) if rest else None
         else:
             die("неизвестный ключ: " + k)
-    s = load()
-    s["choice"] = {"option": opt, "where": where, "note": note, "at": now()}
-    save(s)
+    with locked():
+        s = load()
+        s["choice"] = {"option": opt, "where": where, "note": note, "at": now()}
+        save(s)
     print("выбор записан: %s" % opt)
 
 
 def cmd_verdict(args):
     if len(args) < 2:
         die("нужны колонка и вердикт")
-    s = load()
-    s["verdicts"][args[0]] = {"verdict": " ".join(args[1:]), "at": now()}
-    save(s)
+    with locked():
+        s = load()
+        s["verdicts"][args[0]] = {"verdict": " ".join(args[1:]), "at": now()}
+        save(s)
     print("вердикт записан")
 
 
@@ -153,17 +203,18 @@ def cmd_return(args):
     if len(args) < 2 or args[1] not in ("spend", "check"):
         die("kd-state return <ключ> spend|check")
     key, action = args[0], args[1]
-    s = load()
-    spent = s["returns"].get(key, {}).get("spent", False)
-    if action == "check":
-        print("spent" if spent else "available")
-        return
-    if spent:
-        print("spent")
-        sys.exit(1)
-    s["returns"][key] = {"spent": True, "at": now()}
-    save(s)
-    print("available")
+    with locked():
+        s = load()
+        spent = s["returns"].get(key, {}).get("spent", False)
+        if action == "check":
+            print("spent" if spent else "available")
+            return
+        if spent:
+            print("spent")
+            sys.exit(1)
+        s["returns"][key] = {"spent": True, "at": now()}
+        save(s)
+    print("taken")
 
 
 def cmd_open(args):
@@ -172,12 +223,29 @@ def cmd_open(args):
     kind, by = args[0], args[1]
     if kind not in OPEN_KINDS:
         die("вид должен быть одним из: " + ", ".join(OPEN_KINDS))
-    s = load()
-    s["open"].append(
-        {"kind": kind, "by": by, "text": " ".join(args[2:]), "at": now()}
-    )
-    save(s)
+    with locked():
+        s = load()
+        s["open"].append(
+            {"kind": kind, "by": by, "text": " ".join(args[2:]), "at": now()}
+        )
+        save(s)
     print("записано")
+
+
+def cmd_note(args):
+    """Сообщение человека открывает новый заход.
+
+    Автовозврат даётся один между двумя сообщениями владельца — значит его
+    сбрасывает не время и не чужая проза, а сам факт, что человек написал.
+    Зовут ворота, каждый раз, когда записывают заметку."""
+    if not args:
+        die("нужна колонка ворот: kd-state note 'Human Review'")
+    with locked():
+        s = load()
+        s["returns"] = {}
+        s.setdefault("notes", []).append({"gate": args[0], "at": now()})
+        save(s)
+    print("заход открыт, автовозвраты доступны")
 
 
 def cmd_gate(args):
@@ -194,11 +262,12 @@ def cmd_gate(args):
             to = rest.pop(0) if rest else None
         else:
             die("неизвестный ключ: " + k)
-    s = load()
-    s["gates"].append(
-        {"gate": col, "at": now(), "decision": decision, "to": to}
-    )
-    save(s)
+    with locked():
+        s = load()
+        s["gates"].append(
+            {"gate": col, "at": now(), "decision": decision, "to": to}
+        )
+        save(s)
     print("визит записан")
 
 
@@ -237,6 +306,7 @@ COMMANDS = {
     "verdict": cmd_verdict,
     "return": cmd_return,
     "open": cmd_open,
+    "note": cmd_note,
     "gate": cmd_gate,
     "show": cmd_show,
     "summary": cmd_summary,
