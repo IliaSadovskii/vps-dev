@@ -29,6 +29,13 @@ You are a different session with no stake in the text. Open what it cites.
 Take the file line by line. For each claim, decide whether it is checkable,
 and if it is, check it — do not reason about whether it is likely.
 
+- **Both files, in the right shape.** `AGENTS.md` holds the content and
+  `CLAUDE.md` is exactly the single line `@AGENTS.md` — that is the rule
+  regardless of which file the project had before, because `AGENTS.md` is the
+  only name every agent reads. If content moved out of `CLAUDE.md`, diff the
+  two against the base branch and check nothing was lost or reworded on the
+  way. A repository left with rules only in `CLAUDE.md` is a finding on its
+  own, and a blocking one.
 - **Every `path:line` reference.** The file exists, and that line is the thing
   being cited. Off-by-a-few is a finding: the file is read by agents that jump
   straight to the line.

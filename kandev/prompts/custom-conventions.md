@@ -11,9 +11,9 @@ Reads: the repository itself: existing `AGENTS.md`, `CLAUDE.md`,
     (`docs/decisions/`, `docs/adr/`) if any, manifests and lockfiles, CI
     configuration, linter and formatter configs, and the code, and the
     task's own conversation for what the human already said.
-Writes: `AGENTS.md` and a `CLAUDE.md` that contains `@AGENTS.md` (unless
-    the project already keeps its rules under one of these names — then
-    update that file in place), committed on the task branch.
+Writes: `AGENTS.md`, and a `CLAUDE.md` whose entire content is the single
+    line `@AGENTS.md`, committed on the task branch. Both files, always,
+    whichever of them the project had before.
 Done when: the file exists, every claim in it points at something in the
     repository, the questions only the owner can answer have been asked
     once and answered, the change is committed with explicit paths, and
@@ -33,10 +33,28 @@ An honest gap ("no typecheck command") is fine; an invented one is not.
 If a conventions file already exists, keep its voice and its order. Add
 what is missing, correct what the code contradicts (say what you found and
 where), and leave the rest alone. Never delete a rule because you cannot
-see why it is there — mark it «уточнить» and ask. Two files that say the
-same thing drift apart: if both `AGENTS.md` and `CLAUDE.md` exist with real
-content, merge into `AGENTS.md` and make `CLAUDE.md` a single `@AGENTS.md`
-line, unless the project clearly maintains them separately on purpose.
+see why it is there — mark it «уточнить» and ask.
+
+## One file, and it is `AGENTS.md`
+
+More than one agent works on these projects, and `AGENTS.md` is the only
+name all of them read; `CLAUDE.md` is read by one. Rules that live only in
+`CLAUDE.md` are invisible to every other agent, and the project silently
+gets two classes of worker — one that knows the conventions and one that
+guesses. So the content always ends up in `AGENTS.md`, and `CLAUDE.md` is
+the single line `@AGENTS.md` pointing at it.
+
+This holds no matter what you found. Only `CLAUDE.md`, with real content:
+move that content into `AGENTS.md` unchanged — same wording, same order —
+and replace `CLAUDE.md` with the one-line pointer. Both files with real
+content: merge into `AGENTS.md`, pointer into `CLAUDE.md`, and say in your
+message what each contributed. Neither: create both. A project that keeps
+them separate on purpose is not an exception you may assume — if the
+repository states that reason somewhere, say so in your message and ask
+before splitting them.
+
+Two files that say the same thing drift apart; a file and a pointer to it
+cannot.
 
 ## What the file must cover
 
