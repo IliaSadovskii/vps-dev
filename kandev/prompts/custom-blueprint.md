@@ -265,8 +265,14 @@ into. A human drags it back with notes — below. If it came back with
 neither, it was dragged here without a reason: ask in one line what to
 change, call no transition, and stop.
 
-With notes, read every human message since your last commit and treat
-them together as one telling: the same five steps — read what they
+The human's notes are **not in this conversation**: a gate column runs on
+a different agent profile, so it is a different session. What it shares
+with you is the working copy, and every note written at a gate was
+appended to `.kandev/artifacts/$KANDEV_TASK_ID/notes.md`. Read that file
+first thing on every run.
+
+With the notes from that file, read every entry newer than your last
+commit and treat them together as one telling: the same five steps — read what they
 touch, put the comparison up, ask only contradictions and endings,
 write, list what you assumed — narrowed to what the notes reach. A note
 that overturns something you wrote is the answer, not a contradiction to

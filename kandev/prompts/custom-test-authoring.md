@@ -20,9 +20,8 @@ Reads: The native Kandev Plan via `get_task_plan_kandev`, when the route ran
     task's actions, and `docs/knowledge/actions.md` for the `state:` of
     the actions those scenarios name; your own
     previous `test-authoring.md` when it exists, since that means this is a
-    repeat lap; and the task's own conversation through
-    `get_task_conversation_kandev`, since your context was cleared and
-    anything a human said about this task lives only there.
+    repeat lap; and `notes.md`, since your context was cleared and anything a
+    human said at a gate lives only there.
 Writes: `test-authoring.md` under `.kandev/artifacts/$KANDEV_TASK_ID/`.
 Done when: every test file you wrote has been run, its failure output is
     captured verbatim in `test-authoring.md`, that output shows the test

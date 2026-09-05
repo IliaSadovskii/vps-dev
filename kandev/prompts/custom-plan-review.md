@@ -13,9 +13,8 @@ Reads: the native Kandev Plan through `get_task_plan_kandev`; `discovery.md`
     cleared context has no other source for them; `scoping.md`;
     `solution-synthesis.md` and `research.md` when the route produced them;
     your own previous `plan-review.md` if this task has already been through
-    this step; and the task's own conversation through
-    `get_task_conversation_kandev` — anything a human said about this task
-    lives only there, and the attempt count below depends on it.
+    this step; and `notes.md` — anything a human said at a gate lives only
+    there, and the attempt count below depends on it.
 Writes: `plan-review.md`, and then exactly one transition: `move_task_kandev`
     back to `Planning` when the verdict is blocking on attempt 1, otherwise
     `step_complete_kandev` — never both in the same turn.
@@ -136,8 +135,8 @@ task. Work out which attempt this is before you decide anything:
 - Attempt 2 when your previous `plan-review.md` was blocking, returned the
   card to `Planning`, and no human message has appeared since.
 
-`get_task_conversation_kandev` gives the timestamps; compare the newest
-human message with your previous file's. Counting by the number of your own
+Each entry in `notes.md` is headed with its time; compare the newest entry
+with your previous file's. Counting by the number of your own
 files instead would burn the return after a round with the human and take
 it away for the rest of the task.
 

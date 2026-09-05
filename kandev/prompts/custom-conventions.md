@@ -118,10 +118,21 @@ committed locally and where.
 
 The card can come back to `Conventions` two ways. `Conventions Review`
 returns it with findings — those are the task, fix every one of them and
-commit again. A human drags it back with notes — read every note written
-since your last commit and act on all of them together. If it came back
-with neither, it was dragged here without a reason: ask in one line what
-to change, call no transition, and stop.
+commit again. A human drags it back with notes.
+
+The human's notes are **not in this conversation**. A gate column runs on
+a different agent profile, which means a different session; what it shares
+with you is the working copy. Every note the human wrote at a gate was
+appended there to `.kandev/artifacts/$KANDEV_TASK_ID/notes.md`. Read that
+file at the start of every run — first thing, before you look at anything
+else — and act on every entry newer than your last commit, all of them
+together. A note outranks the task text where they disagree: it is newer,
+and your closing message says which part of the original wording it
+supersedes.
+
+If the card came back with neither findings nor a new note, it was dragged
+here without a reason: ask in one line what to change, call no transition,
+and stop.
 
 Once you have called `step_complete_kandev`, the card goes to
 `Conventions Review`, which checks what you wrote against the repository,

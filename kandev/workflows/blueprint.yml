@@ -35,7 +35,7 @@ workflows:
         color: bg-neutral-400
         agent_profile:
           agent_name: Claude
-          model: haiku
+          model: sonnet
           mode: bypassPermissions
         prompt: |
           @custom-gate
@@ -44,6 +44,10 @@ workflows:
           не работала, и приёмочную записку писать не из чего: тогда скажи
           одной строкой, что задача ждёт запуска. Начать работу — перетащить
           на Blueprint.
+
+          Если в этом сообщении есть текст от человека — сначала допиши его
+          дословно в `.kandev/artifacts/$KANDEV_TASK_ID/notes.md`, потом отвечай.
+
         events: {}
         is_start_step: true
         show_in_command_panel: false
@@ -125,7 +129,7 @@ workflows:
         color: bg-orange-500
         agent_profile:
           agent_name: Claude
-          model: haiku
+          model: sonnet
           mode: bypassPermissions
         prompt: |
           @custom-gate
@@ -133,6 +137,10 @@ workflows:
           Колонка сейчас: Human Review, ворота человека. Принять — перетащить
           в Done. Доработать — написать заметки и перетащить на Blueprint;
           описание снова пройдёт Blueprint Review.
+
+          Если в этом сообщении есть текст от человека — сначала допиши его
+          дословно в `.kandev/artifacts/$KANDEV_TASK_ID/notes.md`, потом отвечай.
+
         events: {}
         is_start_step: false
         show_in_command_panel: true
@@ -145,13 +153,17 @@ workflows:
         color: bg-green-500
         agent_profile:
           agent_name: Claude
-          model: haiku
+          model: sonnet
           mode: bypassPermissions
         prompt: |
           @custom-gate
 
           Колонка сейчас: Done, работа принята. Переоткрыть — написать, что
           изменилось, и перетащить на Blueprint.
+
+          Если в этом сообщении есть текст от человека — сначала допиши его
+          дословно в `.kandev/artifacts/$KANDEV_TASK_ID/notes.md`, потом отвечай.
+
         events: {}
         is_start_step: false
         show_in_command_panel: false

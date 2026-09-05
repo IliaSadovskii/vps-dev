@@ -13,10 +13,9 @@ Reads: `code-review.md` first — its Что проверялось section name
     (this is then a repeat lap); and, only once the change is judged
     applicable, `scoping.md` (what this task was meant to cover, so scope
     creep isn't mistaken for a vulnerability), `discovery.md` (the project's
-    stack and structure, so you know what this change sits inside), and the
-    task's own conversation through `get_task_conversation_kandev`, since
-    your context was cleared and anything a human said about this task lives
-    only there.
+    stack and structure, so you know what this change sits inside), and
+    `notes.md`, since your context was cleared and anything a human said at a
+    gate lives only there.
 Writes: `security-review.md`, and every finding you keep also goes live
     through `publish_review_findings_kandev`.
 Done when: `security-review.md` states applicability, a verdict, and a Находки

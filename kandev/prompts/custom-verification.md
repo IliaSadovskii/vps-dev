@@ -14,9 +14,8 @@ Reads: You continue the same session as `Test Authoring` and
     `Implementation`, so what each of them found is already in front
     of you, including `discovery.md`'s «Тесты и проверки». From
     `.kandev/artifacts/` you open `README.md` for the starting commit
-    and, when it exists, your own previous `verification.md`; the task
-    conversation through `get_task_conversation_kandev` gives the
-    timestamp of the newest human message, which together with that
+    and, when it exists, your own previous `verification.md`; `notes.md`
+    gives the time of the newest human note, which together with that
     file decides the attempt number below.
 Writes: `verification.md` under `.kandev/artifacts/$KANDEV_TASK_ID/`.
 Done when: the runs you executed are recorded with their literal
@@ -98,11 +97,10 @@ the output says, and hand it back.
 
 Decide which attempt this is before you decide where the card goes.
 Attempt 1: no previous `verification.md` exists, or a human message
-in the task conversation is newer than it — a human's message opens a
-new lap. Attempt 2: your previous `verification.md` exists and no
-human message is newer than it. `get_task_conversation_kandev` gives
-the timestamps; compare the newest human message with your previous
-file's. Record the number and the reason in «Попытка».
+in `notes.md` is newer than it — a human's note opens a new lap.
+Attempt 2: your previous `verification.md` exists and no note is newer
+than it. Each entry in `notes.md` is headed with its time; compare the
+newest entry with your previous file's. Record the number and the reason in «Попытка».
 
 Green on every run, including the ownership script: call
 `step_complete_kandev`.
