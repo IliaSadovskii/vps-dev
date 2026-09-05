@@ -10,14 +10,15 @@ Reads: `discovery.md`; when its `Чертёж:` line names records under
     them. Scoping normally runs straight after Discovery in the
     same context, but if the card entered with that step skipped, there is
     no file to read, and you say so rather than filling the gap from your
-    own look at the code. On a return — your own previous `scoping.md`
-    exists — also `notes-scoping.md`: the human dragged the card back here
+    own look at the code. `notes-scoping.md` always, not only on a return: the owner writes there from
+    `Backlog` too, before anything has run. On a return — your own previous
+    `scoping.md` exists — it says: the human dragged the card back here
     because the boundary changed, and the change is in their notes, not
     in the task text.
 Writes: `scoping.md` under `.kandev/artifacts/$KANDEV_TASK_ID/`; when the
     owner agreed to split the task, one card per remaining part in this
     workflow's `Backlog`.
-Done when: `scoping.md` carries all three required sections and you have
+Done when: `scoping.md` carries «Итог» and all three required sections and you have
     called `step_complete_kandev`.
 
 ## When the card came back here
@@ -139,7 +140,9 @@ message instead reaches nobody.
 
 ## Artifact shape
 
-`scoping.md` carries three sections, kept even when short: `Входит`,
+`scoping.md` opens with «Итог» — at most ten lines: the boundary in one
+sentence and what the owner still has to settle. Then three sections, kept
+even when short: `Входит`,
 `Не входит`, `Допущения`. `Входит` and `Не входит` list what's covered and
 what's excluded, the second with a reason wherever the exclusion was your own
 call rather than a given and, when the task was split, the cards created
@@ -182,5 +185,5 @@ Ground every line you draw in `discovery.md`, the task description, or code
 you actually looked at, and cite which of those it came from. Where something
 wasn't covered by any of them, say so instead of guessing at it.
 
-Call `step_complete_kandev` once `scoping.md` holds all three sections, and
+Call `step_complete_kandev` once `scoping.md` holds «Итог» and all three sections, and
 stop there.

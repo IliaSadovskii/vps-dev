@@ -13,7 +13,7 @@ Reads: none — Discovery runs first, before any predecessor artifact exists.
     `docs/knowledge/` are read here like the rest of the repository.
 Writes: `README.md` and `discovery.md` under
     `.kandev/artifacts/$KANDEV_TASK_ID/`.
-Done when: `discovery.md` has all five sections below (filled or explicitly
+Done when: `discovery.md` has «Итог» and all five sections below (filled or explicitly
     marked empty) with a real essential-files list, real test patterns and
     commands, the `Навыки:` line and, when the project has
     `docs/knowledge/`, the `Чертёж:` line, `README.md` carries every
@@ -218,7 +218,9 @@ and let the roles that own that decision reach their own conclusion.
 
 ## Artifact shape
 
-`discovery.md` carries five sections, kept even when short: «Стек и
+`discovery.md` opens with «Итог» — at most ten lines: what this project is,
+what runs its tests, and the one thing a later role most needs to know. Then
+five sections, kept even when short: «Стек и
 структура» (ending with the `Навыки:` line and, when the project has
 `docs/knowledge/`, the `Чертёж:` line), «Правила проекта», «Тесты и
 проверки», «Существенные файлы», «Уверенность и пробелы» — the last one

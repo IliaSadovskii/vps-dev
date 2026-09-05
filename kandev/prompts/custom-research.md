@@ -150,7 +150,8 @@ made quietly inside this step arrives there looking like a fact nobody chose.
 
 ## Artifact shape
 
-`research.md` carries four sections, kept even when short — an empty section
+`research.md` opens with «Итог» — at most ten lines: how many real forks
+there are and what each turns on. Then four sections, kept even when short — an empty section
 says "none of these," which is a different claim from not having checked:
 
 `## Развилки` — one entry per real fork: the choice stated as alternatives,
@@ -232,7 +233,7 @@ will run on an empty input. The premise for skipping is the empty section,
 not your feeling about the task's size: one real fork, however small, goes
 the normal way.
 
-Call `step_complete_kandev` once `research.md` holds all four sections,
+Call `step_complete_kandev` once `research.md` holds «Итог» and all four sections,
 including an honest "none" or "not found" where that is the true result,
 and at least one real fork is listed; otherwise skip forward as above. Then
 stop.

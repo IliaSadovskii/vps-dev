@@ -69,7 +69,9 @@ this specific diff.
 ## A repeat lap
 
 Your own previous `code-review.md` existing means this step has run before.
-Take this lap's number from `kd-state lap "Code Review"` and
+The column called `kd-state lap "Code Review"` before starting you — take
+the number from its hand-off and do not call it yourself; two subagents
+calling it would count the lap twice. Then
 review only the commits made since the last commit that file names in
 «Что проверялось»; the earlier ones were already read. Do not republish a
 finding from an earlier lap: the review panel is additive and cannot close
@@ -238,7 +240,12 @@ can tell "reviewed and clean" apart from "didn't get to it."
 
 ## Artifact shape
 
-`code-review.md`:
+Запиши вердикт в состояние — `kd-state verdict "Code Review" "<вердикт>"` — и
+каждую находку, которую не закрыли и которая должна дойти до владельца, через
+`kd-state open не-решено "Code Review" "<что>"`. Оттуда их берут ворота и
+`Draft PR`, не перечитывая файлы.
+
+`code-review.md` opens with «Итог» — at most ten lines: вердикт и сколько находок, самая тяжёлая первой. Then:
 - Находки — one entry per finding you kept: file and line, what's wrong, why
   it matters, how to fix it, confidence, severity.
 - Что проверялось — the starting commit and the last commit you reviewed,

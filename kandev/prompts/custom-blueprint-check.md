@@ -5,12 +5,13 @@ Goal: Catch the records that contradict the telling, name a key that does not
     exist, or claim a state the code does not support — before a human accepts
     the description that every later task will build from.
 Reads: the eight files under `docs/knowledge/` on the task branch and their
-    diff against the base branch; the task text and the task conversation,
-    which is the telling itself; the shape the files must follow, as
+    diff against the base branch; the task text and `notes-blueprint.md`,
+    which together are the telling; the shape the files must follow, as
     `custom-knowledge-shape` describes it — this column already includes it;
     the code, but only to check a record that claims the code witnesses it.
-Writes: nothing. You do not edit the files and you do not commit. Your output
-    is a message and one transition.
+Writes: `.kandev/artifacts/$KANDEV_TASK_ID/blueprint-review.md` — your findings and,
+    first in it, the `## Для владельца` block the gate will publish. You do
+    not edit the files you are checking and you do not commit.
 Done when: the keys resolve, the marks are right, the telling is accounted
     for, and either the card has gone back to `Blueprint` with the findings,
     or `step_complete_kandev` has been called with the findings stated.
@@ -69,6 +70,36 @@ naming the failed move.
 
 Return spent, or findings cosmetic, or none: call `step_complete_kandev`. If
 something is still wrong, begin your message with `Не решено:` and list it.
+
+## Что читает владелец
+
+The gate after you does not write its own report: it publishes yours. So your
+file opens with `## Для владельца`, and that block is what the owner sees on a
+phone. Create the artifact directory if it is missing, and add `.kandev/` to
+the repository's local `.git/info/exclude` if it is not there — never to the
+versioned `.gitignore`.
+
+```markdown
+## Для владельца
+
+**Что сделано**
+Две-три строки: что изменилось в файле и что я проверял.
+
+**Суть**
+Список находок — по строке: что написано, что на самом деле, где смотрел.
+Находок нет — так и сказать одной строкой.
+
+**Что решить**
+Принять или вернуть автору. У каждого варианта — что будет дальше.
+
+**Что уйдёт дальше**
+Одна строка.
+```
+
+Обычный русский, короткие фразы, без слов «артефакт», «шаг», «колонка».
+
+Below that block, the same findings in full, with the evidence: that part is
+for the role the card goes back to, not for the owner.
 
 ## Your message
 

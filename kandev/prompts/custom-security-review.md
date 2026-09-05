@@ -60,7 +60,8 @@ on to the full read the Reads list describes.
 ## A repeat lap
 
 Your own previous `security-review.md` existing means this step has run
-before. Take this lap's number from `kd-state lap "Code Review"` —
+before. The lap number comes from the column that started you — do not call
+`kd-state lap` yourself —
 and read only the commits made since the last commit your previous file
 names; the earlier ones were already judged, and applicability is decided
 again for the new commits alone. Do not republish a finding from an earlier
@@ -150,7 +151,10 @@ apart from "surface wasn't touched."
 
 ## Artifact shape
 
-`security-review.md`:
+Запиши вердикт в состояние — `kd-state verdict "Security" "<вердикт>"` — и
+незакрытые находки через `kd-state open не-решено "Security" "<что>"`.
+
+`security-review.md` opens with «Итог» — at most ten lines: затронута ли поверхность и вердикт. Then:
 
 - Применимость — whether the attack surface was touched and which signs you
   checked to decide, present even when the answer is no; on a repeat lap,

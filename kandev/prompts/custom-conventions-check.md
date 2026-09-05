@@ -6,9 +6,10 @@ Goal: Catch the claims in the conventions file that are wrong before a human
 Reads: the conventions file on the task branch and its diff against the base
     branch; everything the file cites — manifests, lockfiles, CI
     configuration, linter and formatter configs, the file behind every
-    `path:line`; the task's own conversation for what the owner answered.
-Writes: nothing. You do not edit the file and you do not commit. Your output
-    is a message and one transition.
+    `path:line`; `notes-conventions.md` for what the owner said.
+Writes: `.kandev/artifacts/$KANDEV_TASK_ID/conventions-review.md` — your findings and,
+    first in it, the `## Для владельца` block the gate will publish. You do
+    not edit the file you are checking and you do not commit.
 Done when: every checkable claim has been checked against the repository, and
     either the card has gone back to `Conventions` with the findings, or
     `step_complete_kandev` has been called with the findings stated.
@@ -83,6 +84,36 @@ Return spent, or the findings are cosmetic, or there are none: call
 `step_complete_kandev`. If anything is still wrong, begin your message with
 `Не решено:` and list it, so the human gate passes it on rather than burying
 it.
+
+## Что читает владелец
+
+The gate after you does not write its own report: it publishes yours. So your
+file opens with `## Для владельца`, and that block is what the owner sees on a
+phone. Create the artifact directory if it is missing, and add `.kandev/` to
+the repository's local `.git/info/exclude` if it is not there — never to the
+versioned `.gitignore`.
+
+```markdown
+## Для владельца
+
+**Что сделано**
+Две-три строки: что изменилось в файле и что я проверял.
+
+**Суть**
+Список находок — по строке: что написано, что на самом деле, где смотрел.
+Находок нет — так и сказать одной строкой.
+
+**Что решить**
+Принять или вернуть автору. У каждого варианта — что будет дальше.
+
+**Что уйдёт дальше**
+Одна строка.
+```
+
+Обычный русский, короткие фразы, без слов «артефакт», «шаг», «колонка».
+
+Below that block, the same findings in full, with the evidence: that part is
+for the role the card goes back to, not for the owner.
 
 ## Your message
 

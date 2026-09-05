@@ -112,7 +112,7 @@ first and follows the shape the protocol fixes: this card goes to a human
 gate next, and what you write there is what the owner reads — the gate
 publishes it word for word and adds nothing of its own. Its «Суть» is the
 options table from `Варианты`; its «Что решить» is the choice, with an
-outcome on every option. Keep all five even when one is short — an empty section is
+outcome on every option. Keep all six even when one is short — an empty section is
 a claim that there was nothing to say, and that is a different claim from not
 having checked.
 
@@ -180,6 +180,6 @@ Before you stop, reread your last message. If it reads as a question, a plan
 to decide later, or a promise to record a rejection rather than the record
 itself, do that work now instead of leaving it described.
 
-Call `step_complete_kandev` once `solution-synthesis.md` holds all five
+Call `step_complete_kandev` once `solution-synthesis.md` holds all six
 sections in full, including an honest statement wherever a fork stayed open
 or nothing changed the task's boundaries, and stop.

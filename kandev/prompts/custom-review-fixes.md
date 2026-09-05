@@ -174,7 +174,7 @@ spent, the next failure goes forward to the human as «Не решено».
 
 ## Artifact shape
 
-`review-fixes.md`:
+`review-fixes.md` opens with «Итог» — at most ten lines: что сделано с замечаниями и что осталось. Then:
 
 - По каждому замечанию — one entry per item your caller raised: where it
   came from (which file, or the person), the item restated in one line,

@@ -81,10 +81,12 @@ workflows:
           одной строкой, что задача ждёт запуска. Начать работу — перетащить
           на Discovery.
 
-          Заметку человека — любое его сообщение — дословно допиши в `.kandev/artifacts/$KANDEV_TASK_ID/notes-scoping.md`
-          и скажи, что записал для этой роли.
+          Адресат заметок по умолчанию — `.kandev/artifacts/$KANDEV_TASK_ID/notes-scoping.md`;
+          ответ, назвавший вариант, идёт роли впереди по общему правилу.
 
-        events: {}
+        events:
+          on_enter:
+            - type: auto_start_agent
         is_start_step: true
         show_in_command_panel: false
         allow_manual_move: true
@@ -236,10 +238,15 @@ workflows:
           Synthesis, — когда ни один не подходит: он перепишет разбор вокруг
           заметок и вернёт карточку сюда.
 
-          Заметку человека — любое его сообщение — дословно допиши в `.kandev/artifacts/$KANDEV_TASK_ID/notes-solution-synthesis.md`
-          и скажи, что записал для этой роли.
+          Доклад владельцу лежит в `solution-synthesis.md`, раздел «Для владельца» — опубликуй его
+          дословно. Раздела нет — скажи об этом строкой и собери сам.
 
-        events: {}
+          Адресат заметок по умолчанию — `.kandev/artifacts/$KANDEV_TASK_ID/notes-solution-synthesis.md`;
+          ответ, назвавший вариант, идёт роли впереди по общему правилу.
+
+        events:
+          on_enter:
+            - type: auto_start_agent
         is_start_step: false
         show_in_command_panel: true
         allow_manual_move: false
@@ -325,10 +332,15 @@ workflows:
           единственный владелец нативного Плана, поправит его и отправит
           снова через Plan Review, то есть карточка вернётся сюда.
 
-          Заметку человека — любое его сообщение — дословно допиши в `.kandev/artifacts/$KANDEV_TASK_ID/notes-planning.md`
-          и скажи, что записал для этой роли.
+          Доклад владельцу лежит в `plan-review.md`, раздел «Для владельца» — опубликуй его
+          дословно. Раздела нет — скажи об этом строкой и собери сам.
 
-        events: {}
+          Адресат заметок по умолчанию — `.kandev/artifacts/$KANDEV_TASK_ID/notes-planning.md`;
+          ответ, назвавший вариант, идёт роли впереди по общему правилу.
+
+        events:
+          on_enter:
+            - type: auto_start_agent
         is_start_step: false
         show_in_command_panel: true
         allow_manual_move: false
@@ -597,7 +609,9 @@ workflows:
           текущего адресата и скажи, для кого записал. Адресата называй в
           расписке всегда и там же говори, что его можно сменить словами.
 
-        events: {}
+        events:
+          on_enter:
+            - type: auto_start_agent
         is_start_step: false
         show_in_command_panel: true
         allow_manual_move: false
@@ -618,10 +632,15 @@ workflows:
           изменилось, и перетащить на Review Fixes, тем же путём, что и
           с Human Review.
 
-          Заметку человека — любое его сообщение — дословно допиши в `.kandev/artifacts/$KANDEV_TASK_ID/notes-review-fixes.md`
-          и скажи, что записал для этой роли.
+          Доклад владельцу лежит в `pull-request.md`, раздел «Для владельца» — опубликуй его
+          дословно. Раздела нет — скажи об этом строкой и собери сам.
 
-        events: {}
+          Адресат заметок по умолчанию — `.kandev/artifacts/$KANDEV_TASK_ID/notes-review-fixes.md`;
+          ответ, назвавший вариант, идёт роли впереди по общему правилу.
+
+        events:
+          on_enter:
+            - type: auto_start_agent
         is_start_step: false
         show_in_command_panel: false
         allow_manual_move: true

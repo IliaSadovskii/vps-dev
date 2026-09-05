@@ -207,8 +207,7 @@ in it — the gate writes to the file of the role it sends the card back to,
 so there is nothing in yours meant for somebody else.
 
 Read the entries newer than your own previous artifact. That is the same
-comparison you already make to number your `Заход`: your file's time is the
-cut, everything after it is this lap's, everything before it you have
+comparison you already make elsewhere: your previous file's time is the cut, everything after it is this lap's, everything before it you have
 already acted on. No previous artifact means this is your first lap and all
 of it is new. Nothing is numbered, moved or deleted — the file only grows
 downwards, and time does the separating.

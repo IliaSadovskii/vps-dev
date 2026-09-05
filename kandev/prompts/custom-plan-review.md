@@ -144,10 +144,10 @@ task. Work out which attempt this is before you decide anything:
 - Attempt 2 when your previous `plan-review.md` was blocking, returned the
   card to `Planning`, and no human message has appeared since.
 
-Each entry in `notes-planning.md` is headed with its time; compare the newest entry
-with your previous file's. Counting by the number of your own
-files instead would burn the return after a round with the human and take
-it away for the rest of the task.
+Whether the automatic return to `Planning` is still available you ask the
+state, not a timestamp: `kd-state return plan check` prints `available` or
+`spent`, and taking it is `kd-state return plan spend`. A note from the human
+resets it — that is what opens a new lap.
 
 ## Exactly one transition
 

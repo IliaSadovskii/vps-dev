@@ -195,7 +195,9 @@ is worse than an honest gap: it reads downstream as coverage that isn't there.
 
 ## Artifact shape
 
-`test-authoring.md` carries five sections, kept even when short:
+`test-authoring.md` opens with «Итог» — at most ten lines: what is covered
+now and what a reader must know before touching these tests. Then five
+sections, kept even when short:
 `Какое поведение покрыто`, `Файлы тестов`, `Вывод прогона`, `Допущения`,
 `Заход`.
 `Какое поведение покрыто` names each behaviour a test targets, tied to the

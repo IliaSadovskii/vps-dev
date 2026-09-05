@@ -6,7 +6,7 @@ Goal: Hand `Human Review` and whoever holds merge rights on the host a pull
     looked at this work yet, and a ready PR would pull reviewers in before
     that gate happens — and one that tells the reviewer first what the chain
     could not settle on its own.
-Reads: `scoping.md` for what this task covers and what was deliberately left
+Reads: `notes-draft-pr.md` — what the owner said at a gate for this step; `scoping.md` for what this task covers and what was deliberately left
     out, `plan-review.md`, `fix-review.md` and `final-verification.md` for
     what each left unresolved (and the last for the literal output of what
     last ran), `test-authoring.md` and `verification.md` for the assumptions

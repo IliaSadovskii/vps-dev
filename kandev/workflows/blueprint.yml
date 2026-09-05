@@ -45,10 +45,12 @@ workflows:
           одной строкой, что задача ждёт запуска. Начать работу — перетащить
           на Blueprint.
 
-          Заметку человека — любое его сообщение — дословно допиши в `.kandev/artifacts/$KANDEV_TASK_ID/notes-blueprint.md`
-          и скажи, что записал для этой роли.
+          Адресат заметок по умолчанию — `.kandev/artifacts/$KANDEV_TASK_ID/notes-blueprint.md`;
+          ответ, назвавший вариант, идёт роли впереди по общему правилу.
 
-        events: {}
+        events:
+          on_enter:
+            - type: auto_start_agent
         is_start_step: true
         show_in_command_panel: false
         allow_manual_move: true
@@ -138,10 +140,15 @@ workflows:
           в Done. Доработать — написать заметки и перетащить на Blueprint;
           описание снова пройдёт Blueprint Review.
 
-          Заметку человека — любое его сообщение — дословно допиши в `.kandev/artifacts/$KANDEV_TASK_ID/notes-blueprint.md`
-          и скажи, что записал для этой роли.
+          Доклад владельцу лежит в `blueprint-review.md`, раздел «Для владельца» — опубликуй его
+          дословно. Раздела нет — скажи об этом строкой и собери сам.
 
-        events: {}
+          Адресат заметок по умолчанию — `.kandev/artifacts/$KANDEV_TASK_ID/notes-blueprint.md`;
+          ответ, назвавший вариант, идёт роли впереди по общему правилу.
+
+        events:
+          on_enter:
+            - type: auto_start_agent
         is_start_step: false
         show_in_command_panel: true
         allow_manual_move: false
@@ -161,10 +168,12 @@ workflows:
           Колонка сейчас: Done, работа принята. Переоткрыть — написать, что
           изменилось, и перетащить на Blueprint.
 
-          Заметку человека — любое его сообщение — дословно допиши в `.kandev/artifacts/$KANDEV_TASK_ID/notes-blueprint.md`
-          и скажи, что записал для этой роли.
+          Адресат заметок по умолчанию — `.kandev/artifacts/$KANDEV_TASK_ID/notes-blueprint.md`;
+          ответ, назвавший вариант, идёт роли впереди по общему правилу.
 
-        events: {}
+        events:
+          on_enter:
+            - type: auto_start_agent
         is_start_step: false
         show_in_command_panel: false
         allow_manual_move: true

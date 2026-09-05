@@ -18,7 +18,7 @@ Reads: `discovery.md#Тесты и проверки` (the commands and test-file
 Writes: `fix-review.md`; new actionable defects also go through
     `publish_review_findings_kandev`.
 Done when: every current-entry disposition has been checked against code and
-    commits, the artifact has all four sections below, and exactly one of
+    commits, the artifact has «Итог» and the sections below, and exactly one of
     `step_complete_kandev` (non-blocking, or blocking with the automatic
     return already spent) or `move_task_kandev` (blocking, return still
     available) has been called. Never call both.
@@ -121,7 +121,11 @@ receive it as unresolved rather than as noise.
 
 ## Artifact shape
 
-`fix-review.md` has exactly these sections:
+Запиши вердикт колонки в состояние — `kd-state verdict "Fix Review" "<вердикт>"` —
+и всё, что осталось нерешённым, через `kd-state open не-решено "Fix Review" "<что>"`.
+
+`fix-review.md` opens with «Итог» — at most ten lines: the verdict and the
+one thing that decides it. Then exactly these sections:
 
 - `## Вердикт` — `Готово к проверке`, `Готово с оговорками`, or
   `Заблокировано`, naming the deciding issue.
