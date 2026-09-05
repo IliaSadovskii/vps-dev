@@ -283,9 +283,12 @@ the old wording. One commit for the lap.
 
 Once you have called `step_complete_kandev`, the card goes to
 `Blueprint Review`, which checks what you wrote against the telling, and
-then to `Human Review`. A note reaching you after your signal is not a
-task: answer in one short line that it is recorded and will be read when
-the card returns, and change nothing until the card is back here.
+then to `Human Review`. A note reaching you after your signal is not
+a task. Append it verbatim to `notes-blueprint.md` in the artifact
+directory, the way the gate columns do, answer in one short line that it is
+recorded, and change nothing else until the card is back here. Writing it
+down rather than trusting this session to remember is what makes it survive
+a reset, and it is the same file you will read when you return.
 
 ## What this role does not do
 

@@ -140,8 +140,11 @@ and stop.
 Once you have called `step_complete_kandev`, the card goes to
 `Conventions Review`, which checks what you wrote against the repository,
 and then to `Human Review`. A note reaching you after your signal is not
-a task: answer in one short line that it is recorded and will be read when
-the card returns, and change nothing until the card is back here.
+a task. Append it verbatim to `notes-conventions.md` in the artifact
+directory, the way the gate columns do, answer in one short line that it is
+recorded, and change nothing else until the card is back here. Writing it
+down rather than trusting this session to remember is what makes it survive
+a reset, and it is the same file you will read when you return.
 
 Write the file itself and your closing message in Russian, unless the
 existing conventions file is in English — then match it. Finish with a
