@@ -1,0 +1,218 @@
+# Общий браузер для агентов: Chromium в контейнере, посредник на хосте.
+# См. defaults/main.yml — зачем именно так.
+
+- name: Каталог состояния
+  ansible.builtin.file:
+    path: "{{ browser_state_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Профиль браузера
+  # Владелец — 1001: это pwuser внутри образа Playwright, и писать в
+  # примонтированный каталог он должен уметь. Имени такого на хосте нет,
+  # поэтому числом.
+  ansible.builtin.file:
+    path: "{{ browser_state_dir }}/profile"
+    state: directory
+    owner: '1001'
+    group: '1001'
+    mode: '0755'
+
+- name: Есть ли уже описание контейнера браузера
+  ansible.builtin.stat:
+    path: "{{ browser_state_dir }}/compose.yaml"
+  register: browser_compose_exists
+  check_mode: false
+
+- name: Описание контейнера браузера
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: "{{ browser_state_dir }}/compose.yaml"
+    owner: root
+    group: root
+    mode: '0644'
+  register: browser_compose
+
+- name: Сказать, почему в сухом прогоне не поднимаю браузер
+  ansible.builtin.debug:
+    msg:
+      - "Сухой прогон на ненастроенной машине: подъём браузера пропускаю."
+      - "Описания контейнера ещё нет, а создавать его сухой прогон не должен."
+  when:
+    - ansible_check_mode
+    - not browser_compose_exists.stat.exists
+
+- name: Поднять браузер
+  community.docker.docker_compose_v2:
+    project_src: "{{ browser_state_dir }}"
+    state: present
+    recreate: "{{ 'always' if browser_compose.changed else 'auto' }}"
+    pull: missing
+  when: not (ansible_check_mode and not browser_compose_exists.stat.exists)
+
+# ═══ Посредник ═══════════════════════════════════════════════════════
+
+- name: Есть ли уже npm
+  ansible.builtin.stat:
+    path: /usr/bin/npm
+  register: browser_npm_bin
+  check_mode: false
+  when: ansible_check_mode
+
+- name: Пакет посредника (Playwright MCP)
+  community.general.npm:
+    name: "{{ browser_mcp_package.rpartition('@')[0] }}"
+    version: "{{ browser_mcp_package.rpartition('@')[2] }}"
+    global: true
+    state: present
+  when: not (ansible_check_mode and not (browser_npm_bin.stat.exists | default(false)))
+
+# ═══ Настройка агентов ═══════════════════════════════════════════════
+#
+# У каждого CLI свой способ, но смысл один: инструмент с именем
+# {{ browser_mcp_name }} вызывает посредника, а тот подключается к
+# контейнеру. Настройки — на уровне пользователя, чтобы браузер был
+# доступен в любом проекте.
+
+- name: Аргументы посредника
+  ansible.builtin.set_fact:
+    browser_mcp_args:
+      - "--cdp-endpoint"
+      - "http://{{ browser_cdp_host }}:{{ browser_cdp_port }}"
+
+- name: Что уже прописано у Claude Code
+  ansible.builtin.command:
+    argv: [claude, mcp, list]
+  become: true
+  become_user: "{{ browser_user }}"
+  register: browser_claude_now
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Браузер в Claude Code
+  ansible.builtin.command:
+    argv: "{{ ['claude', 'mcp', 'add', '--scope', 'user', browser_mcp_name, '--', browser_mcp_command] + browser_mcp_args }}"
+  become: true
+  become_user: "{{ browser_user }}"
+  when: browser_mcp_name ~ ':' not in (browser_claude_now.stdout | default(''))
+  changed_when: true
+
+- name: Что уже прописано у Codex
+  ansible.builtin.command:
+    argv: [codex, mcp, list]
+  become: true
+  become_user: "{{ browser_user }}"
+  register: browser_codex_now
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Браузер в Codex
+  ansible.builtin.command:
+    argv: "{{ ['codex', 'mcp', 'add', browser_mcp_name, '--', browser_mcp_command] + browser_mcp_args }}"
+  become: true
+  become_user: "{{ browser_user }}"
+  when: browser_mcp_name not in (browser_codex_now.stdout | default(''))
+  changed_when: true
+
+# Gemini и OpenCode настраиваются файлом. Файлы их собственные (там же
+# тема, вход, права), поэтому читаем, добавляем свой ключ и пишем обратно,
+# а не подменяем целиком.
+
+- name: Есть ли настройки Gemini
+  ansible.builtin.stat:
+    path: "/home/{{ browser_user }}/.gemini/settings.json"
+  register: browser_gemini_file
+
+- name: Прочитать настройки Gemini
+  ansible.builtin.slurp:
+    src: "/home/{{ browser_user }}/.gemini/settings.json"
+  register: browser_gemini_raw
+  when: browser_gemini_file.stat.exists
+
+- name: Настройки Gemini сейчас
+  ansible.builtin.set_fact:
+    browser_gemini_have: "{{ (browser_gemini_raw.content | b64decode | from_json) if browser_gemini_file.stat.exists else {} }}"
+    browser_gemini_entry:
+      command: "{{ browser_mcp_command }}"
+      args: "{{ browser_mcp_args }}"
+
+- name: Браузер в Gemini
+  ansible.builtin.copy:
+    dest: "/home/{{ browser_user }}/.gemini/settings.json"
+    owner: "{{ browser_user }}"
+    group: "{{ browser_user }}"
+    mode: '0644'
+    content: >-
+      {{ browser_gemini_have
+         | combine({'mcpServers': (browser_gemini_have.mcpServers | default({}))
+                    | combine({browser_mcp_name: browser_gemini_entry})})
+         | to_nice_json }}
+  when: (browser_gemini_have.mcpServers | default({})).get(browser_mcp_name) != browser_gemini_entry
+
+- name: Есть ли настройки OpenCode
+  ansible.builtin.stat:
+    path: "/home/{{ browser_user }}/.config/opencode/opencode.json"
+  register: browser_opencode_file
+
+- name: Прочитать настройки OpenCode
+  ansible.builtin.slurp:
+    src: "/home/{{ browser_user }}/.config/opencode/opencode.json"
+  register: browser_opencode_raw
+  when: browser_opencode_file.stat.exists
+
+- name: Настройки OpenCode сейчас
+  # У OpenCode команда — одним списком, и нужен признак «локальный»:
+  # форма другая, смысл тот же.
+  ansible.builtin.set_fact:
+    browser_opencode_have: "{{ (browser_opencode_raw.content | b64decode | from_json) if browser_opencode_file.stat.exists else {} }}"
+    browser_opencode_entry:
+      type: local
+      command: "{{ [browser_mcp_command] + browser_mcp_args }}"
+      enabled: true
+
+- name: Браузер в OpenCode
+  ansible.builtin.copy:
+    dest: "/home/{{ browser_user }}/.config/opencode/opencode.json"
+    owner: "{{ browser_user }}"
+    group: "{{ browser_user }}"
+    mode: '0644'
+    content: >-
+      {{ browser_opencode_have
+         | combine({'mcp': (browser_opencode_have.mcp | default({}))
+                    | combine({browser_mcp_name: browser_opencode_entry})})
+         | to_nice_json }}
+  when: (browser_opencode_have.mcp | default({})).get(browser_mcp_name) != browser_opencode_entry
+
+# ═══ Что агенты об этом знают ════════════════════════════════════════
+
+- name: Есть ли общий промпт агентов
+  ansible.builtin.stat:
+    path: "{{ browser_prompt_file }}"
+  register: browser_prompt_exists
+
+- name: Блок про браузер в общем промпте агентов
+  # Промпт правит человек на странице :8071, поэтому дописываем только
+  # между своими маркерами и ничего вокруг не трогаем. Файла ещё нет —
+  # значит роль style идёт следом и создаст его; блок ляжет следующим
+  # прогоном, и это не повод падать.
+  ansible.builtin.blockinfile:
+    path: "{{ browser_prompt_file }}"
+    marker: "<!-- {mark} vps-dev: браузер -->"
+    block: "{{ lookup('template', 'prompt-block.md.j2') }}"
+    owner: "{{ browser_user }}"
+    group: "{{ browser_user }}"
+    mode: '0644'
+  when: browser_prompt_exists.stat.exists
+
+- name: Куда смотреть
+  ansible.builtin.debug:
+    msg: >-
+      Браузер для агентов: контейнер {{ browser_container }},
+      отладочный протокол http://{{ browser_cdp_host }}:{{ browser_cdp_port }},
+      инструмент «{{ browser_mcp_name }}» у Claude Code, Codex, Gemini и
+      OpenCode. Проверка:
+      curl -s http://{{ browser_cdp_host }}:{{ browser_cdp_port }}/json/version

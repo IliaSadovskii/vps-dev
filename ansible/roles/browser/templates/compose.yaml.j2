@@ -1,0 +1,48 @@
+# Управляется Ansible: roles/browser/templates/compose.yaml.j2
+# Правки здесь переживут ровно до следующей выкатки.
+#
+# Chromium с открытым отладочным протоколом на {{ browser_cdp_host }}:{{ browser_cdp_port }}.
+# К нему подключается Playwright MCP на хосте (агенты) и, при желании,
+# контейнеры проектов — тогда им не нужен свой браузер в образе.
+#
+# Ключи запуска и почему они такие:
+#   --headless=new        экрана нет и не будет
+#   --remote-debugging-*  собственно протокол; адрес 127.0.0.1 задаётся
+#                         здесь, host-сетью и ключом, наружу не торчит
+#   --no-sandbox          песочница Chromium требует прав, которых у
+#                         контейнера нет; изоляцию здесь даёт сам контейнер
+#   --disable-dev-shm-usage вместе с shm_size ниже: без этого Chromium
+#                         падает на страницах с картинками
+name: vps-browser
+
+services:
+  chromium:
+    image: {{ browser_image }}
+    container_name: {{ browser_container }}
+    restart: unless-stopped
+    network_mode: host
+    shm_size: {{ browser_shm_size }}
+    mem_limit: {{ browser_memory_limit }}
+    user: pwuser
+    volumes:
+      - {{ browser_state_dir }}/profile:/home/pwuser/profile
+    # Через sh: точный номер сборки Chromium меняется вместе с образом,
+    # и путь к нему приходится раскрывать шаблоном оболочки. exec — чтобы
+    # сигналы docker доходили до самого браузера, а не до оболочки.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        exec /ms-playwright/chromium-*/chrome-linux*/chrome
+        --headless=new
+        --no-sandbox
+        --disable-dev-shm-usage
+        --disable-gpu
+        --remote-debugging-address={{ browser_cdp_host }}
+        --remote-debugging-port={{ browser_cdp_port }}
+        --user-data-dir=/home/pwuser/profile
+        about:blank
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

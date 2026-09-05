@@ -20,6 +20,18 @@
     mode: '0644'
     force: false
 
+- name: Блок про машину в общем промпте
+  # Дописываем только между своими маркерами: остальной текст пишет
+  # человек на странице :8071. Факты, которые агенту нужны в любом
+  # проекте и которые он иначе выясняет заново каждый раз.
+  ansible.builtin.blockinfile:
+    path: "{{ style_file }}"
+    marker: "<!-- {mark} vps-dev: машина -->"
+    block: "{{ lookup('template', 'prompt-machine.md.j2') }}"
+    owner: "{{ style_user }}"
+    group: "{{ style_user }}"
+    mode: '0644'
+
 # ═══ Ссылки в домашнем каталоге ══════════════════════════════════════
 
 - name: Каталоги CLI, куда ведут ссылки  # noqa: risky-file-permissions
