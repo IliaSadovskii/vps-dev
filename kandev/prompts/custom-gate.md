@@ -100,11 +100,19 @@ description is the one line you already wrote for it. A person reading on a
 phone taps an answer instead of typing one, and you get a choice you cannot
 misread.
 
-Ask once. When the answer arrives, write it into the notes file for the role
-the card goes back to, the way «Заметка человека» describes — the artifact
-recommends, but only this answer records what the owner decided, and the next
-role has no other way to learn it. Then say in one line what is recorded and
-that the card is theirs to move.
+Ask once. When the answer arrives, write it down the way «Заметка человека»
+describes — the artifact recommends, but only this answer records what the
+owner decided, and no role has another way to learn it.
+
+**Address it to the role that will act on the answer, which is not always the
+one you address ordinary notes to.** An answer accepting an option is work
+for the column ahead: the card goes forward and that role builds what was
+chosen, so the note goes to its file — at `Solution Approval` an accepted
+option is a note for `Planning`, not for `Solution Synthesis`. An answer
+rejecting the options, or asking for something else, is work for the column
+behind, and goes to its file as usual. Say which file it went to in your
+one-line confirmation, so a human who then moves the card the other way sees
+the mismatch before it costs a lap.
 
 Do not ask when there is nothing to choose: a gate that produces a question
 per visit teaches the human to dismiss questions. And if the human moves the

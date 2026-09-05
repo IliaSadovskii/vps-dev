@@ -113,6 +113,11 @@ Authoring` в «Допущения»). `Test Authoring` берёт сценар�
   «Возврат с ворот»). Ворота называют её в подтверждении: «записал для
   `Conventions`». Человек, если хотел другую, говорит, и ворота
   перекладывают запись.
+- Исключение — ответ на вопрос самих ворот о выборе варианта. Он адресуется
+  той роли, которая будет по нему работать: принятый вариант — работа
+  колонки впереди (`Solution Approval` → `notes-planning.md`), отказ и
+  «нужно иначе» — колонки позади. Иначе выбор человека не доезжает: артефакт
+  говорит, что рекомендовано, и роль впереди построит рекомендованное.
 - Роль читает `notes-<своя колонка>.md` первым делом на каждом заходе и
   берёт записи новее своего прошлого артефакта — тем же сравнением, каким
   она уже считает «Заход». Своего файла нет — заход первый, читаются все
@@ -152,7 +157,7 @@ Authoring` в «Допущения»). `Test Authoring` берёт сценар�
 | Scoping | продолжает | `discovery.md`; записи из строки `Чертёж:` и их сценарии, если есть; при возврате — свой прошлый `scoping.md` и `notes-scoping.md` | `scoping.md`; если владелец согласился разбить задачу — по карточке на каждую остальную часть в `Backlog` через `create_task_kandev` (`start_agent: false`, `source_task_id` = эта задача) |
 | Research | **сброшен** | `scoping.md`, `discovery.md`, `notes-research.md` при возврате | `research.md` |
 | Solution Synthesis | **сброшен**; заметки — `notes-solution-synthesis.md` | `research.md`, `scoping.md`, `discovery.md`, свой прошлый `solution-synthesis.md` при возврате, `notes-solution-synthesis.md` | `solution-synthesis.md` |
-| Planning | **сброшен**; заметки — `notes-planning.md` | нативный Plan (обязательно до записи), `scoping.md`, `solution-synthesis.md` и `research.md` если есть, `discovery.md` и записи из строки `Чертёж:` если есть, `plan-review.md` если есть, `notes-planning.md` | нативный Kandev Plan, строка в `README.md` |
+| Planning | **сброшен**; заметки — `notes-planning.md` | нативный Plan (обязательно до записи), `scoping.md`, `solution-synthesis.md` и `research.md` если есть, `discovery.md` и записи из строки `Чертёж:` если есть, `plan-review.md` если есть, `notes-planning.md` (запись, называющая вариант, сильнее рекомендации `solution-synthesis.md`) | нативный Kandev Plan, строка в `README.md` |
 | Plan Review | **сброшен** | нативный Plan, `discovery.md`, `scoping.md`, `solution-synthesis.md` и `research.md` если есть, свой прошлый `plan-review.md` | `plan-review.md`; блокирующий вердикт на попытке 1 — возврат на `Planning` |
 | Test Authoring | **сброшен** | нативный Plan если есть, `plan-review.md` если есть («Незаблокирующие замечания» — названные там сценарии тестов), `scoping.md`, `discovery.md` («Тесты и проверки»), `research.md` если есть, `docs/knowledge/scenarios.md` и `actions.md` (состояния) если строка `Чертёж:` называет записи, свой прошлый `test-authoring.md`, `notes-test-authoring.md` | `test-authoring.md`, коммит тестов с трейлером `Kandev-Step: Test Authoring` |
 | Implementation | продолжает Test Authoring | контекст Test Authoring; `research.md` и `solution-synthesis.md` если есть; `verification.md` при возврате | код и коммиты с трейлером `Kandev-Step: Implementation`, файла нет |

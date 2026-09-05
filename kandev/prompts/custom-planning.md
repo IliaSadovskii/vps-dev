@@ -79,6 +79,18 @@ why writing to the Plan is reserved to you alone among the roles on this
 board; every other role hands its result on as a file instead, where a
 second write would just be a second file.
 
+## The option the owner chose
+
+`solution-synthesis.md` says which option it recommends. It does not say which
+one the owner took: they decide at `Solution Approval`, after that file was
+written, and the gate records the answer in `notes-planning.md` — «принял B»,
+or a wording of their own.
+
+An entry there naming an option outranks the recommendation. Plan the option
+the owner named, say in «Источники» that you did and which entry says so, and
+do not argue with it: the trade-offs were laid out for them and they chose. No
+such entry means nobody overrode anything — plan the recommended option.
+
 ## Not reopening what earlier steps settled
 
 By the time you run, any real fork in this task is already closed. When the
