@@ -66,9 +66,10 @@ of this block as where the evidence is.
 build if the card moves forward as it stands. A person about to hand work on
 should be able to see what they are handing.
 
-**Как двинуть карточку** — the two moves, each with its consequence: not «на
-Solution Synthesis», but «на Solution Synthesis — перепишет разбор вокруг
-вашего замечания и вернёт карточку сюда».
+**Как двинуть карточку** — only when you are asking nothing, because a
+question's options already carry the moves. Then: the moves by name, each with
+its consequence — not «на Solution Synthesis», but «на Solution Synthesis —
+перепишет разбор вокруг вашего замечания и вернёт карточку сюда».
 
 ### How it reads
 
