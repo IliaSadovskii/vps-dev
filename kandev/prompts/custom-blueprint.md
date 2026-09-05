@@ -268,12 +268,10 @@ change, call no transition, and stop.
 The human's notes are **not in this conversation**: a gate column runs on
 a different agent profile, so it is a different session. What it shares
 with you is the working copy, and every note written at a gate was
-appended to `.kandev/artifacts/$KANDEV_TASK_ID/notes.md`. Read that file
-first thing on every run. It holds only what nobody has acted on yet, so
-all of it is for you; when you are done, move every entry you acted on to
-`notes-done.md` beside it, each under a line `> взято: Blueprint,
-<время>`. An entry left behind gets acted on twice, an entry moved
-without being acted on is lost.
+appended to `.kandev/artifacts/$KANDEV_TASK_ID/notes-blueprint.md`. Read
+that file first thing on every run — it exists only if the human wrote
+something. Only notes addressed to you are in it; take the entries newer
+than your last commit and treat them together.
 
 With the notes from that file, read every entry newer than your last
 commit and treat them together as one telling: the same five steps — read what they

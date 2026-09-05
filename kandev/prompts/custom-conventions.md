@@ -122,18 +122,14 @@ commit again. A human drags it back with notes.
 
 The human's notes are **not in this conversation**. A gate column runs on
 a different agent profile, which means a different session; what it shares
-with you is the working copy. Every note the human wrote at a gate was
-appended there to `.kandev/artifacts/$KANDEV_TASK_ID/notes.md`. Read that
-file at the start of every run, first thing, before you look at anything
-else.
+with you is the working copy. Every note the human wrote at a gate for you
+was appended to `.kandev/artifacts/$KANDEV_TASK_ID/notes-conventions.md`.
+Read that file first thing on every run — it exists only if the human
+wrote something, and its absence is ordinary.
 
-It holds only what nobody has acted on yet — a queue, not a log. So
-everything in it is for you: read all of it, act on all of it together,
-and when you are done move every entry you acted on to `notes-done.md`
-beside it, each under a line `> взято: Conventions, <время>`. An entry
-left behind is one the next run will act on twice; an entry moved without
-being acted on is one lost. Something you cannot act on stays in
-`notes.md`, and your closing message says why. A note outranks the task text where they disagree: it is newer,
+Only notes addressed to you are in it. Take the entries newer than your
+last commit and act on all of them together; the older ones you already
+did. A note outranks the task text where they disagree — it is newer —
 and your closing message says which part of the original wording it
 supersedes.
 

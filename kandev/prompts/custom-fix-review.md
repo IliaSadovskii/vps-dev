@@ -7,7 +7,7 @@ Reads: `discovery.md` (project rules and its test-file patterns),
     `scoping.md`, `code-review.md`, `security-review.md`, `review-fixes.md`,
     `final-verification.md` when it caused the current rework, the artifact
     `README.md` for the starting commit, your own previous `fix-review.md`
-    when this step has run before, and the human's notes in `notes.md`.
+    when this step has run before, and the human's notes in `notes-review-fixes.md`.
 Writes: `fix-review.md`; new actionable defects also go through
     `publish_review_findings_kandev`.
 Done when: every current-entry disposition has been checked against code and

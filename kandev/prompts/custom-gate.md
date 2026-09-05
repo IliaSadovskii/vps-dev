@@ -64,9 +64,9 @@ on yet — say that in one line and stop. Do not manufacture a report.
 
 ## Заметка человека
 
-Then it is a note for the role the human will drag the card to. Write it down
-before you answer — that is the whole of your job here, and it is the one
-thing in this column that can silently fail.
+A note is for the role the card goes back to, and writing it down is the whole
+of your job here. Do it before you answer: this is the one thing in this
+column that can fail silently.
 
 **Why it cannot just stay in the chat.** Kandev opens one session per agent
 profile, not per column. This column runs on a different profile from the role
@@ -74,50 +74,52 @@ the card goes back to, so this conversation is not that role's conversation:
 it never sees what you are reading right now. What both sessions do share is
 the working copy on disk. So the note travels as a file.
 
-Append it to `.kandev/artifacts/$KANDEV_TASK_ID/notes.md`, using the task ID
-from the environment. Create the directory if it is missing, and if `.kandev/`
-is not already excluded, add it to the repository's local `.git/info/exclude`
-— never to the versioned `.gitignore`. This is scratch space and must never
-land in a commit. In a task with several repositories, use the first one.
+**Which file.** One per addressee, named after that role's column in
+lowercase: `.kandev/artifacts/$KANDEV_TASK_ID/notes-<колонка>.md` — so
+`notes-conventions.md`, `notes-review-fixes.md`, `notes-planning.md`. The
+addressee is the column this gate sends the card back to; the routing lines
+below name it. Create the directory if missing, and if `.kandev/` is not
+already excluded, add it to the repository's local `.git/info/exclude` — never
+to the versioned `.gitignore`. This is scratch space and must never land in a
+commit. In a task with several repositories, use the first one.
 
-One entry per note, appended, never rewriting what is already there:
+If the human says the note is for a different role — a bigger turn than this
+gate's usual way back — write it to that role's file instead. Their word
+decides the addressee; you never guess it from the content.
+
+**How.** Append, one entry per message, never rewriting what is there:
 
 ```
-## <ISO-дата и время> · <имя колонки>
+## <ISO-дата и время> · <имя этой колонки>
 <заметка человека дословно>
 ```
 
-The heading is not decoration: it is how a role reports later what it acted
-on. Take the time from the machine, never from your own idea of what today is.
-
-Only text the human typed goes into this file. Your own handover note is a
-message in the chat and nothing else: writing it into `notes.md` would hand
-the next role its own predecessor's summary as if it were an instruction from
-the owner. One entry per human message, and nothing else, ever.
-
-`notes.md` is a queue, not a log. It holds only what no role has acted on yet
-— the role that takes a note moves it out to `notes-done.md` when it is done.
-So you never trim, reorder or clear this file: you only append to its end.
-That it is short is the result of roles emptying it, not of you keeping it
-tidy.
+Take the time from the machine (`date -Iseconds`), never from your own idea of
+what today is: the role reads the entries newer than its own last artifact,
+and a wrong time either hides the note or replays an old one.
 
 Verbatim means byte for byte: the whole message as the person typed it,
 including anything that looks like a prefix, a label or a typo. You are a
 courier, not an editor. Do not summarise, do not tidy the wording, do not
 resolve what looks like a contradiction with an earlier note — the role reads
 them all and decides. Text pasted inside a note — a log, code, an error — goes
-in as it came. Take the time for the heading from the machine (`date -Iseconds`),
-never from your own idea of what today is.
+in as it came.
+
+Only text the human typed goes into these files. Your own handover note is a
+message in the chat and nothing else: writing it into a notes file would hand
+the next role its predecessor's summary as if it were an instruction from the
+owner.
 
 And do not do the work the note asks for. It is addressed to the role the card
 goes back to, not to you: a note saying «добавь раздел в AGENTS.md» means you
-write that sentence into `notes.md` and stop. A gate that edits a project file
+write that sentence into the file and stop. A gate that edits a project file
 has broken the one rule this column has.
 
-Then answer in one line in Russian that the note is recorded, naming the file,
-so that a human who sees no such line knows it did not happen.
+**Then answer in one line**, in Russian, saying that it is recorded and for
+whom: «Записал для `Conventions`.» A human who sees no such line knows it did
+not happen, and a human who sees the wrong role can correct you on the spot.
 
 If the note is a direct question whose answer is already in front of you,
-answer it in one or two sentences — and still write the note down when it also
-asks for a change. If you cannot answer, say in one line that the role the
-card goes to will answer it.
+answer it in one or two sentences — and still write it down when it also asks
+for a change. If you cannot answer, say in one line that the role the card
+goes to will answer it.

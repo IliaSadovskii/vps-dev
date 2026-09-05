@@ -11,7 +11,7 @@ Reads: `discovery.md`; when its `Чертёж:` line names records under
     same context, but if the card entered with that step skipped, there is
     no file to read, and you say so rather than filling the gap from your
     own look at the code. On a return — your own previous `scoping.md`
-    exists — also `notes.md`: the human dragged the card back here
+    exists — also `notes-scoping.md`: the human dragged the card back here
     because the boundary changed, and the change is in their notes, not
     in the task text.
 Writes: `scoping.md` under `.kandev/artifacts/$KANDEV_TASK_ID/`; when the

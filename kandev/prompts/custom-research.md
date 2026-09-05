@@ -11,7 +11,7 @@ Goal: Hand `Solution Synthesis` and the human at `Solution Approval` a short
 Reads: Your context is cleared on entry — Discovery's reading of the
     repository reaches you only through its file. `scoping.md`,
     `discovery.md`; on a return — your own previous
-    `research.md` exists — also that file and `notes.md`, for the notes
+    `research.md` exists — also that file and `notes-research.md`, for the notes
     the human left before dragging the card back: they name what the last round missed,
     and they outrank the task text where the two disagree.
 Writes: `research.md` under `.kandev/artifacts/$KANDEV_TASK_ID/`.

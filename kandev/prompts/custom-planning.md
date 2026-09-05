@@ -55,7 +55,7 @@ The card returns here from two places, and they arrive differently.
 From `Plan Approval`, a human who disagrees writes one or more notes at
 the gate — each answered there with a bare acknowledgement — and drags the
 card back here when they are done. Your context is cleared on entry, and
-the notes are not in any conversation you can see: read `notes.md` and take
+the notes are not in any conversation you can see: read `notes-planning.md` and take
 every entry newer than the last time the Plan was saved; treat them together as one change request — find
 what in the saved Plan they argue with, change that, and leave the rest.
 If the human edited the Plan in the UI as well, `get_task_plan_kandev`

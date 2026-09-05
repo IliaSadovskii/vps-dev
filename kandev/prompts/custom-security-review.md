@@ -14,7 +14,7 @@ Reads: `code-review.md` first — its Что проверялось section name
     applicable, `scoping.md` (what this task was meant to cover, so scope
     creep isn't mistaken for a vulnerability), `discovery.md` (the project's
     stack and structure, so you know what this change sits inside), and
-    `notes.md`, since your context was cleared and anything a human said at a
+    `notes-review-fixes.md`, since your context was cleared and anything a human said at a
     gate lives only there.
 Writes: `security-review.md`, and every finding you keep also goes live
     through `publish_review_findings_kandev`.

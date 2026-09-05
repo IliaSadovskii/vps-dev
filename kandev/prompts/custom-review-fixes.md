@@ -13,7 +13,7 @@ Reads: `code-review.md` and `security-review.md` — file, line, what's wrong,
     here and a cleared context has no other source for them; your own
     previous `review-fixes.md`, if this task has already been through this
     step, so you know which entry this is and what was already closed; and
-    `notes.md` — a human's own objection reaches you through nothing else. The same findings also sit in Kandev's review
+    `notes-review-fixes.md` — a human's own objection reaches you through nothing else. The same findings also sit in Kandev's review
     panel, anchored by file and line through `publish_review_findings_kandev`
     — that's the same content built for a human glancing at the diff, not a
     second source; the files carry the reasoning, so read those.
@@ -48,7 +48,7 @@ exists: someone at `Human Review` or `Done` wrote one or more notes there
 — possibly minutes apart, each answered at the gate with a bare
 acknowledgement — and dragged the card back here when they were done. Your
 context was cleared on entry, and the notes are not in any conversation you
-can see: read every entry in `notes.md` newer than your previous
+can see: read every entry in `notes-review-fixes.md` newer than your previous
 `review-fixes.md`; treat them
 together as one request. The work is what the person wrote, and nothing
 else: the two review files were answered in an earlier entry, and reopening

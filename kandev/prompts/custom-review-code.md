@@ -22,7 +22,7 @@ Reads: `README.md` (the starting commit every diff here is taken from),
     one exists (to check the change against what was actually approved,
     including the documentation its «Источники» names), your own previous
     `code-review.md` when it exists (this is then a repeat lap), and
-    `notes.md` — your context was cleared, and what a human already objected
+    `notes-review-fixes.md` — your context was cleared, and what a human already objected
     to or asked you to look at lives only there.
 Writes: `code-review.md`, and every finding you keep also goes live through
     `publish_review_findings_kandev`.
