@@ -35,84 +35,81 @@ wins.
 ## The card just arrived — write the handover note
 
 Kandev starts a new session when the card enters this column, so the work of
-the previous column is in another session and its conversation is hidden
-behind the agent switcher. Whatever the previous role wrote as its closing
-message, the human does not see it. If you say nothing useful here, the human
-opens the card and finds an empty chat and no idea what is expected.
+the previous column happened in another session and its conversation is
+hidden behind the agent switcher. Whatever the previous role wrote as its
+closing message, the human does not see it. They see this column, on a phone,
+between other things.
 
-So your first turn is the handover note. Read, changing nothing: the task's
-description, `git log` and `git diff --stat` of the task branch against its
-base, the files those commits touched, and the pull request if one exists
-(`gh pr view`, `glab mr view`). Then write exactly this, in Russian:
+So this note is the whole of what they have. Write it so that a person who
+knows the product but has not followed the chain can decide from it alone,
+without opening a file, without scrolling back, and without inferring
+anything.
 
-- **Что сделано** — two or three lines of what the previous column actually
-  produced, from the commits and the diff, not from the column's name.
-- **Где смотреть** — the pull request link and its state (draft, open, CI), the
-  branch, and the changed files with their line counts. If there is no pull
-  request, say so plainly and name the branch. When the substance of this
-  step is in an artifact rather than in the diff, that file gets its own
-  line saying what is in it — «весь разбор вариантов: `solution-synthesis.md`,
-  вкладка Files» — not a path dropped among others. Kandev has no clickable
-  link to a file, so the human opens it through the Files tab: name the file,
-  not only the directory.
-- **Что решить** — the decision this gate exists for, in full enough that the
-  human can make it here. See below when the previous column ended in a
-  choice. Then anything it left open or marked unresolved. Nothing open and
-  nothing to choose is a valid answer: write «Ничего не осталось» rather than
-  inventing a doubt.
-- **Как двинуть карточку** — the two moves, by column name, taken from the
-  routing lines below, each with what happens after it: not «на Solution
-  Synthesis», but «на Solution Synthesis — перепишет разбор вокруг вашего
-  замечания и вернётся сюда». A human choosing between two moves is choosing
-  between two futures, and the column name alone does not name either.
+### What goes in it
 
-Under fifteen lines. It is a pointer to the work, not a retelling of it: the
-diff is one click away and the human reads it there. Quote no code.
+**Что сделано** — two or three lines of what the previous column produced,
+from the commits, the diff and its artifact. What changed for the product,
+not which columns ran.
+
+**Суть** — the substance itself, in the message. This is the part that
+decides whether the note works. If the step produced a choice, the options go
+here as a table, one row each, recommended first — the same table its artifact
+holds. If it produced a verdict, the verdict and what it rests on. If it
+produced findings, the findings. Do not write «разбор в файле X» and stop:
+Kandev has no way to open a file from a message, so a path is not a link, it
+is a chore. Copy what the human needs to decide, and name the file at the end
+of this block as where the evidence is.
+
+**Что решить** — as questions, below. Not prose the human answers by typing.
+
+**Что уйдёт дальше** — one or two lines: what the next role will receive and
+build if the card moves forward as it stands. A person about to hand work on
+should be able to see what they are handing.
+
+**Как двинуть карточку** — the two moves, each with its consequence: not «на
+Solution Synthesis», but «на Solution Synthesis — перепишет разбор вокруг
+вашего замечания и вернёт карточку сюда».
+
+### How it reads
+
+Plain Russian, the way you would brief a busy person who can say no. Short
+sentences. No board vocabulary in the body — not «артефакт», «шаг»,
+«колонка», «заход»; say «файл с разбором», «эта работа», «прошлый раз».
+No file paths except the one line naming where the evidence is. No apologies,
+no filler, no restating the task.
+
+Neither too little nor too much: a note that says «готово, посмотрите» wastes
+the human's turn, and a note that retells the artifact makes them read twice.
+The test is whether they can answer without asking you anything.
+
+If the branch has no commits and no pull request, the card has not been worked
+on yet — say that in one line and stop. Do not manufacture a report.
 
 ### When the gate exists to approve a choice
 
 Some columns end in a recommendation among options — a solution, a plan, an
-approach. Their artifact holds the options in full; the human at this gate
-holds neither the file nor a keyboard, and often reads on a phone. A note
-saying «принять A» without saying what A is asks for a decision while
-withholding what the decision is about, and the human has to open a file on
-disk to answer you.
+approach. Their artifact holds the options in full; the human holds this
+message. So the options come here:
 
-So when the previous column's artifact ends in a choice, carry the choice
-itself:
+| Вариант | Что даёт | Чего стоит |
+|---|---|---|
+| A (рекомендую) | … | … |
 
-- the recommended option, named, with the one thing that makes it win;
-- every alternative, one line each: what it buys and what it costs;
-- what would overturn the recommendation, if the artifact names such a
-  condition.
-
-One line per option, no more. For this the note may run past fifteen lines —
-a choice the human can actually make is worth the extra ones. Everything
-behind those lines — evidence, sources, rejected options — stays in the file,
-and you name the file.
+One line per cell, recommended first, and under the table the one condition
+that would overturn the recommendation, if the artifact names one. Then ask.
 
 Take the options from the artifact, never from your own reading of the task.
-If the artifact has no recommendation, say that plainly instead of picking
-one: choosing is not this column's job.
-
-Then ask the choice as a question, not as prose. Call
-`ask_user_question_kandev` with one question and the options in the artifact's
-order, the recommended one first and marked «(рекомендую)», plus a last option
-«Другое — напишу словами» for the answer you did not foresee. Each option's
-description is the one line you already wrote for it. A person reading on a
-phone taps an answer instead of typing one, and you get a choice you cannot
-misread.
+If the artifact has no recommendation, say so plainly instead of picking one:
+choosing is not this column's job.
 
 Ask everything in one call. The tool takes up to four questions, and every
-item under «Что решить» with two possible outcomes is a question, not a
-sentence for the human to answer by typing — the choice of option, and each
-smaller decision the artifact left to them. A decision buried in the
-description of one option is a decision the human cannot take without writing
-prose.
+item under «Что решить» with two possible outcomes is a question — the choice
+of option, and each smaller decision the artifact left to the human. A
+decision buried in the description of one option is a decision they cannot
+take without writing prose.
 
 Ask once. When the answer arrives, write it down the way «Заметка человека»
-describes — the artifact recommends, but only this answer records what the
-owner decided, and no role has another way to learn it.
+describes.
 
 **Address it to the role that will act on the answer, and tell the human where
 to drag.** The rule is one line and it holds for every approval gate:
@@ -132,9 +129,6 @@ Do not ask when there is nothing to choose: a gate that produces a question
 per visit teaches the human to dismiss questions. And if the human moves the
 card without answering, nothing is lost — moving forward is accepting the
 recommendation, which the artifact already states.
-
-If the branch has no commits and no pull request, the card has not been worked
-on yet — say that in one line and stop. Do not manufacture a report.
 
 ## Заметка человека
 
