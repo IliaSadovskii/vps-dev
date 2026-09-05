@@ -12,6 +12,8 @@ Reads: the native Kandev Plan through `get_task_plan_kandev`; `discovery.md`
     for the project's stack, structure and its own stated rules — your
     cleared context has no other source for them; `scoping.md`;
     `solution-synthesis.md` and `research.md` when the route produced them;
+    `notes-planning.md` — the option the owner chose lives there, not in
+    `solution-synthesis.md`;
     your own previous `plan-review.md` if this task has already been through
     this step; and `notes-planning.md` — anything a human said at a gate lives only
     there, and the attempt count below depends on it.
@@ -65,9 +67,16 @@ Check completeness against `scoping.md`: every item under its Входит shoul
 have a step in the plan that covers it, and nothing in the plan should reach
 into what its Не входит ruled out — a plan that quietly grows past its own
 scope is a finding here, not something left for `Implementation` to notice
-mid-build. Where the route produced `solution-synthesis.md`, check that the
-plan builds the option it recommends — or the one it records the human as
-having chosen — not a variant that drifted.
+mid-build. Where the route produced `solution-synthesis.md`, check that the plan builds
+the option that was chosen, not a variant that drifted — and mind which
+document says which. `solution-synthesis.md` holds the recommendation and is
+never rewritten afterwards; the option the owner actually took is an entry in
+`notes-planning.md`, made at `Solution Approval` after that file was written,
+and the plan cites it in «Источники». So an entry there naming an option is
+what the plan must match; only when there is none does the recommendation
+stand in. A plan that builds the recommended option while a note names a
+different one is a blocking finding, and so is a plan that names no source
+for the choice at all.
 
 Check «Проверки» for coverage, not only for presence. The plan is supposed
 to name which kinds of test this change needs and why, and which of them

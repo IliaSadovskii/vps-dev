@@ -102,7 +102,17 @@ it, a status the code sets that the entity does not list, something a
 code cannot take — record it under «Уверенность и пробелы» as a line
 beginning `Расхождение с чертежом:`, quoting the record's key and the
 `path:line` that contradicts it, exactly as for `AGENTS.md`. `Draft PR`
-carries those lines to the owner. Do not repair the description yourself,
+carries those lines to the owner.
+
+Both markers are matched literally, so the shape is fixed and not a style
+you may improve on: the line starts at the beginning of the line, in
+«Уверенность и пробелы» and nowhere else, and reads exactly
+`Расхождение с чертежом: <ключ> — <в чём>` or
+`Расхождение с AGENTS.md: <утверждение> — <в чём>`. A colon right after the
+word, no parenthesis before it, no wording of your own in its place. The
+same rule as the `Навыки:` line, for the same reason: a reader further down
+the chain finds these by the prefix, and a line that only reads like a
+marker is a finding nobody receives. Do not repair the description yourself,
 and do not treat it as wrong because the code differs: only `Blueprint`
 writes it, and which side is right is the owner's decision.
 

@@ -61,7 +61,10 @@ base, the files those commits touched, and the pull request if one exists
   nothing to choose is a valid answer: write «Ничего не осталось» rather than
   inventing a doubt.
 - **Как двинуть карточку** — the two moves, by column name, taken from the
-  routing lines below.
+  routing lines below, each with what happens after it: not «на Solution
+  Synthesis», but «на Solution Synthesis — перепишет разбор вокруг вашего
+  замечания и вернётся сюда». A human choosing between two moves is choosing
+  between two futures, and the column name alone does not name either.
 
 Under fifteen lines. It is a pointer to the work, not a retelling of it: the
 diff is one click away and the human reads it there. Quote no code.
@@ -100,19 +103,30 @@ description is the one line you already wrote for it. A person reading on a
 phone taps an answer instead of typing one, and you get a choice you cannot
 misread.
 
+Ask everything in one call. The tool takes up to four questions, and every
+item under «Что решить» with two possible outcomes is a question, not a
+sentence for the human to answer by typing — the choice of option, and each
+smaller decision the artifact left to them. A decision buried in the
+description of one option is a decision the human cannot take without writing
+prose.
+
 Ask once. When the answer arrives, write it down the way «Заметка человека»
 describes — the artifact recommends, but only this answer records what the
 owner decided, and no role has another way to learn it.
 
-**Address it to the role that will act on the answer, which is not always the
-one you address ordinary notes to.** An answer accepting an option is work
-for the column ahead: the card goes forward and that role builds what was
-chosen, so the note goes to its file — at `Solution Approval` an accepted
-option is a note for `Planning`, not for `Solution Synthesis`. An answer
-rejecting the options, or asking for something else, is work for the column
-behind, and goes to its file as usual. Say which file it went to in your
-one-line confirmation, so a human who then moves the card the other way sees
-the mismatch before it costs a lap.
+**Address it to the role that will act on the answer, and tell the human where
+to drag.** The rule is one line and it holds for every approval gate:
+
+> any option from the list — including the ones you did not recommend — is
+> accepted work and goes forward; «Другое», an objection, or a note asking for
+> a different direction goes back.
+
+So an answer naming an option is a note for the column ahead (`Solution
+Approval` → `notes-planning.md`), and anything else is a note for the column
+behind. Confirm in one line with both facts — the file and the move: «Записал
+для `Planning` — перетащите на `Planning`». Without the second half the human
+reads «выбрал не рекомендованное» as «возразил» and drags backwards, and the
+card does a lap for nothing.
 
 Do not ask when there is nothing to choose: a gate that produces a question
 per visit teaches the human to dismiss questions. And if the human moves the
