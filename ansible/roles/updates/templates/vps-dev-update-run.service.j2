@@ -17,7 +17,7 @@ Environment=UPDATES_STATE_DIR={{ updates_state_dir }}
 Environment=UPDATES_OVERRIDES_FILE={{ updates_overrides_file }}
 Environment=UPDATES_REPO_DIR={{ updates_repo_dir }}
 Environment=UPDATES_USER={{ updates_user }}
-# Прогон роли kandev или aoe занимает минуты, но не десятки: если
+# Прогон роли aoe или orch занимает минуты, но не десятки: если
 # застряли — лучше оборвать и показать это в журнале, чем висеть вечно.
 TimeoutStartSec=1800
 ExecStart={{ updates_install_dir }}/vps-dev-update-run

@@ -1,6 +1,7 @@
 # Параметры шага цепочки
 
-Собрано 2026-09-05 из: Kandev (11 триггеров, поля шага — `kandev/research/
+Собрано 2026-09-05 из: Kandev, пока он был на машине (11 триггеров, поля
+шага — `kandev/research/
 PLATFORM-CAPABILITIES.md`), OpenAI Symphony (`WORKFLOW.md`: `max_turns`,
 `turn_timeout_ms`, `stall_timeout_ms`, хуки рабочего пространства,
 concurrency по состояниям, retry с backoff), сабагентов Claude Code

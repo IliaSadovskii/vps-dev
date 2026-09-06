@@ -212,7 +212,7 @@
         msg: >-
           Веб-панель aoe: https://{{ aoe_tailnet_host | default('<машина>.ts.net', true) }}:{{ aoe_web_port }}
           — только из частной сети, ссылка на дашборде. Пароля нет:
-          границу держит Tailscale, как и у Kandev.
+          границу держит Tailscale, как и у прочих служб машины.
 
 - name: Веб-панель выключена
   ansible.builtin.debug:
@@ -223,4 +223,4 @@
   ansible.builtin.debug:
     msg: >-
       TUI: команда `aoe` по SSH. Сессии — те же CLI агентов и тот же вход,
-      что видит Kandev (общий $HOME пользователя {{ base_deploy_user }}).
+      что видит терминал (общий $HOME пользователя {{ base_deploy_user }}).

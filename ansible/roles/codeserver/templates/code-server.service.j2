@@ -5,7 +5,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-# Тот же пользователь, что у Kandev, aoe и терминала: общий $HOME, общий
+# Тот же пользователь, что у aoe и терминала: общий $HOME, общий
 # вход в CLI агентов, файлы проектов принадлежат ему.
 User={{ base_deploy_user }}
 WorkingDirectory={{ codeserver_workspace }}

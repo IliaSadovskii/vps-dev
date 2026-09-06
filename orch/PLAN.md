@@ -5,8 +5,10 @@
 `research/STEP-PARAMETERS.md` (откуда параметры шага),
 `research/RISKS.md` (узкие места и тесты), `research/DB-NOTES.md` (база).
 Роли и цепочки уже написаны под этот формат: `prompts/README.md`,
-`chains/*.yml`. Исходный материал лежал в `../kandev/`; Kandev не трогать,
-пока orch не проведёт одну задачу Deep целиком.
+`chains/*.yml`. Исходный материал лежал в `../kandev/`: доска Kandev с её
+ролями и цепочками. Условие «не трогать, пока orch не проведёт одну задачу
+Deep целиком» выполнено 2026-09-06, и Kandev снят с машины и из репозитория
+вместе с ролями `kandev` и `seed`. Исходный материал ищите в истории git.
 
 ## 1. Что это
 
@@ -389,8 +391,9 @@ done/ask/whoami/note/push, log, stats, doctor). Цепочка `smoke`
 владельца с комментарием). Затем **настоящая задача** — авторизация в
 `/projects/listate-crm` по `FIRST-TASK.md`: разработчик играет владельца,
 доводит задачу до PR, сравнивает с ожиданиями, пишет `FIRST-TASK-REPORT.md`.
-Надзор за промптами на обеих. Сравнение с
-`../kandev/research/TRIAL-2026-09-04.md`.
+Надзор за промптами на обеих. Сравнение с прогоном Kandev от 2026-09-04
+(`kandev/research/TRIAL-2026-09-04.md` в истории git: каталог снят вместе
+с доской).
 
 **5. Выкатка.** Роль Ansible `orch`: venv, `pip install -e`,
 `aoe plugin install`, `rate_limit_auto_resume = true`, `smart_rename = false`,

@@ -1,6 +1,6 @@
 # База оркестратора: что взято у Kandev и Fusion
 
-Смотрено 2026-09-06: Kandev — живая база `/var/lib/kandev/data/kandev.db`
+Смотрено 2026-09-06, пока Kandev был жив: его база `/var/lib/kandev/data/kandev.db`
 (SQLite, 182 таблицы), Fusion — `packages/core/src/postgres/schema/project.ts`
 (PostgreSQL, drizzle) и `docs/workflow-steps.md`.
 

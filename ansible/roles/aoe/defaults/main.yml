@@ -21,5 +21,5 @@ aoe_install_dir: /usr/local/bin
 aoe_web_enabled: true
 
 # Порт — из общего реестра инфраструктурных портов машины (см. README
-# vps-dev и roles/kandev/defaults): 8064 занят Kandev, 8065 — aoe.
+# vps-dev и roles/ports/files/ports): 8065 — aoe.
 aoe_web_port: 8065

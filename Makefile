@@ -69,12 +69,6 @@ ssh: image ## Зайти на сервер
 reboot: image ## Перезагрузить машину и дождаться возвращения
 	@scripts/reboot.sh $(h)
 
-##@ На самой машине
-
-.PHONY: board
-board: ## Обновить доску Kandev из репозитория. Запускать НА сервере
-	@scripts/board.sh
-
 ##@ Служебное
 
 .PHONY: image

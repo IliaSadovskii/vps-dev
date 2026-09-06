@@ -26,7 +26,7 @@ heartbeat_interval: "5min"
 heartbeat_disk_free_min_percent: 10
 
 # Ключевые службы, без которых машина фактически не работает по назначению.
-# docker держит все контейнеры (kandev, aoe, дашборд и так далее), tailscaled —
+# docker держит все контейнеры (дашборд, почта и так далее), tailscaled —
 # единственный вход на машину: наружу не смотрит ничего, кроме частной сети
 # (см. ansible/site.yml).
 heartbeat_watched_services:

@@ -174,17 +174,25 @@
     group: "{{ base_deploy_user }}"
     mode: '0750'
 
-- name: Ежедневный бэкап базы задач рядом с настройками aoe
-  # `sqlite3 .backup` вместо копирования файла: база в WAL, копия файла на
-  # ходу может оказаться нецелой.
+- name: Скрипт снимка базы задач
+  # Отдельным файлом, а не строкой в cron: этот же скрипт зовёт страница
+  # обновлений перед сменой версии службы (`updates_services[].backup`),
+  # и в двух местах он должен быть один.
+  ansible.builtin.copy:
+    src: orch-backup.sh
+    dest: "{{ orch_bin_dir }}/orch-backup.sh"
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Ежедневный снимок базы задач вместе с настройками aoe
   ansible.builtin.cron:
-    name: "orch: бэкап базы задач"
+    name: "orch: снимок базы задач"
     user: "{{ base_deploy_user }}"
     minute: "17"
     hour: "4"
     job: >-
-      sqlite3 {{ orch_state_dir }}/orch.db
-      ".backup '{{ orch_backup_dir }}/orch-$(date +\%F).db'"
-      && tar czf {{ orch_backup_dir }}/aoe-config-$(date +\%F).tgz
-      -C /home/{{ base_deploy_user }}/.config agent-of-empires
-      && find {{ orch_backup_dir }} -type f -mtime +{{ orch_backup_keep }} -delete
+      ORCH_STATE_DIR={{ orch_state_dir }}
+      ORCH_BACKUP_DIR={{ orch_backup_dir }}
+      ORCH_BACKUP_KEEP={{ orch_backup_keep }}
+      {{ orch_bin_dir }}/orch-backup.sh

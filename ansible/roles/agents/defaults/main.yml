@@ -7,7 +7,7 @@
 # Имя в dev_agent_clis -> npm-пакет, который его ставит.
 #
 # Добавить провайдера — дописать строку. Ничего в tasks/ трогать не надо:
-# Kandev говорит со всеми CLI агентов через ACP одинаково, и обвязке
+# Agent of Empires говорит со всеми CLI агентов через ACP одинаково, и обвязке
 # не важно, чей это пакет.
 #
 # Имена пакетов подтверждены `npm view <имя> version` 2026-09-02:
@@ -30,7 +30,7 @@ agents_acp_adapters:
   claude: "@agentclientprotocol/claude-agent-acp"
   codex: "@agentclientprotocol/codex-acp"
 
-# Версии пакетов НЕ закрепляем, в отличие от Kandev. У Kandev риск —
+# Версии пакетов НЕ закрепляем, в отличие от служб машины. У службы риск —
 # автомигрирующая база, которую нельзя откатить; у этих CLI локального
 # состояния с миграциями нет, а разработчик, наоборот, хочет свежую
 # версию своего же инструмента. state: latest — повторный прогон
@@ -59,7 +59,7 @@ agents_codex_auto_compact_token_limit: 900000
 #               (github.com/google-gemini/gemini-cli)
 #   opencode -> `opencode auth login`             (opencode.ai/docs/cli)
 agents_login_commands:
-  gh: "gh auth login   # GitHub: нужен агентам для PR и Kandev для входа «через gh»"
+  gh: "gh auth login   # GitHub: нужен агентам и роли PR оркестратора"
   claude: "claude auth login"
   codex: "codex   # в меню выбрать «Sign in with ChatGPT»"
   gemini: "gemini   # в меню выбрать «Sign in with Google»"

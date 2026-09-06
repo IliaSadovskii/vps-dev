@@ -38,7 +38,7 @@ SERVICES_FILE = os.path.join(STATE_DIR, "services.json")
 QUEUE_DIR = os.path.join(STATE_DIR, "queue")
 LOG_DIR = os.path.join(STATE_DIR, "logs")
 STATE_FILE = os.path.join(STATE_DIR, "state.json")
-KANDEV_BACKUP = "/usr/local/bin/kandev-backup.sh"
+BACKUP_CMD = "/usr/local/bin/orch-backup.sh"
 
 
 def read_json(path, default):
@@ -157,9 +157,9 @@ def do_update(job, svc, out):
     before = chosen.get(var) or defaults.get(var, "")
     out.write(f"Служба: {svc['name']}\nБыло: {before or '—'}\nСтавим: {value}\n\n")
 
-    if svc.get("backup") and os.path.exists(KANDEV_BACKUP):
+    if svc.get("backup") and os.path.exists(BACKUP_CMD):
         out.write("Снимок базы перед обновлением:\n")
-        if run([KANDEV_BACKUP], out) != 0:
+        if run([BACKUP_CMD], out) != 0:
             out.write("\nСнимок не снялся — обновление отменено, версия не менялась.\n")
             return 1
         out.write("\n")

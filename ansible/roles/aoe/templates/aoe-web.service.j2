@@ -6,7 +6,7 @@ After=network-online.target
 [Service]
 Type=simple
 # Тот же пользователь, что логинится в CLI агентов (roles/agents) и что
-# запускает Kandev (roles/kandev): aoe открывает их же tmux-сессии,
+# запускает от того же пользователя: aoe открывает его tmux-сессии,
 # и без общего логина ему было бы нечем говорить с провайдерами.
 User={{ base_deploy_user }}
 # Каталог проектов: диалог новой сессии предлагает путь относительно него,
@@ -16,12 +16,12 @@ WorkingDirectory={{ base_projects_dir }}
 # как и остальные службы машины.
 #
 # --auth none: границу держит Tailscale, а не пароль, — ровно так же, как
-# у Kandev, Dozzle и DbGate на этой машине. Встроенный режим по умолчанию
+# у Dozzle и DbGate на этой машине. Встроенный режим по умолчанию
 # (--auth token) печатает разовую ссылку в журнал, и с дашборда панель
 # не открывалась бы без похода в journalctl. Sam aoe предупреждает: «Anyone
 # with network access to this port can control your agent sessions» —
 # на этой машине сетевой доступ к порту есть только у участников частной
-# сети, и у них он и так есть через Kandev.
+# сети.
 #
 # За обратным прокси (tailscale serve → vps-proxy → сюда): TLS терминирует
 # tailscale, поэтому --behind-proxy (доверять X-Forwarded-For с loopback,
