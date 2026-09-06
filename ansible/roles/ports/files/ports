@@ -109,9 +109,36 @@ cmd_claim(){
   [[ "$name" =~ ^[A-Za-z0-9-]+$ ]] || die "Имя: только буквы, цифры и дефис."
   exec 9>"$PORTS_DIR/.lock"; flock 9    # атомарность: два проекта не займут один блок
 
+  # Имена переменных выясняем до брони: если образца нет или compose не
+  # читается, лучше не занять блок вовсе, чем занять пустым — такой блок
+  # застолблён, но бесполезен, а повторный claim скажет «уже есть».
+  local vars=()
+  if [[ -n "$like" ]]; then
+    local lf="$PORTS_DIR/$like.env"
+    [[ -f "$lf" ]] || die "У образца '$like' нет блока (ports claim $like)."
+    mapfile -t vars < <(port_lines "$lf" | cut -d= -f1 | grep -v '^BASE_PORT$')
+    [[ ${#vars[@]} -gt 0 ]] || die "У образца '$like' в блоке нет ни одного порта — впиши их сначала ему."
+  elif [[ -n "$from_compose" ]]; then
+    [[ -f "$compose_file" ]] || die "Нет $compose_file в $(pwd) — нечего читать."
+    mapfile -t vars < <(compose_vars "$compose_file")
+    [[ ${#vars[@]} -gt 0 ]] || die "В $compose_file не нашлось портов вида \${APP_PORT:-8090}."
+  fi
+  if (( ${#vars[@]} > 10 )); then
+    die "Нужно ${#vars[@]} портов, а блок — десять. Возьми второй блок отдельным именем ('$name-2') и раздели сервисы."
+  fi
+
   local f="$PORTS_DIR/$name.env" base
   if [[ -f "$f" ]]; then
     base="$(file_base "$f")"; base="${base:-?}"
+    # Блок уже есть, но пустой (так бывает после старого claim без имён) —
+    # дописываем набор, раз его наконец знаем.
+    local have; have="$(port_lines "$f" | cut -d= -f1 | grep -vx 'BASE_PORT' | wc -l)"
+    if (( ${#vars[@]} && have == 0 )); then
+      local i=0 v
+      for v in "${vars[@]}"; do echo "$v=$((base + i))" >> "$f"; i=$((i+1)); done
+      echo "${c_g}✔ Блок ${base}-$((base+9)) был застолблён, но пуст — порты вписаны: $(printf '%s ' "${vars[@]}")${c_0}"
+      return 0
+    fi
     echo "${c_g}✔ У '$name' уже есть блок ${base}-$((base+9)).${c_0} Порты бери только из него."
     return 0
   fi
@@ -135,22 +162,7 @@ cmd_claim(){
 BASE_PORT=$base
 EOF
 
-  # Имена переменных: из блока проекта-образца (--like) или из compose
-  # (--from-compose). Так арендатору не приходится вписывать их руками, а
-  # блок задачи получает ровно тот же набор, что у её проекта.
-  local vars=() v i=0
-  if [[ -n "$like" ]]; then
-    local lf="$PORTS_DIR/$like.env"
-    [[ -f "$lf" ]] || die "У образца '$like' нет блока (ports claim $like)."
-    mapfile -t vars < <(port_lines "$lf" | cut -d= -f1 | grep -v '^BASE_PORT$')
-  elif [[ -n "$from_compose" ]]; then
-    mapfile -t vars < <(compose_vars "$compose_file")
-    [[ ${#vars[@]} -gt 0 ]] || die "В $compose_file не нашлось портов вида \${APP_PORT:-8090}."
-  fi
-  if (( ${#vars[@]} > 10 )); then
-    rm -f "$f"
-    die "Проекту нужно ${#vars[@]} портов, а блок — десять. Возьми второй блок отдельным именем ('$name-2') и раздели сервисы."
-  fi
+  local v i=0
   for v in "${vars[@]}"; do
     echo "$v=$((base + i))" >> "$f"
     i=$((i+1))
