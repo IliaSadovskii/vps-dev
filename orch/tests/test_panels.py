@@ -362,3 +362,28 @@ def test_рабочие_копии_задач_не_считаются_проек
     )
     assert _is_project_root(str(root))
     assert not _is_project_root(str(copy))
+
+
+def test_панель_показывает_три_состояния_стенда(engine, fake, repo, monkeypatch):
+    """Кнопка, «поднимается», адрес — и причина, если сорвалось."""
+    from orch import stand as stands
+
+    monkeypatch.setattr(stands, "claim", lambda task: (stands.name_of(task), ""))
+    monkeypatch.setattr(stands, "ports_of", lambda name: {"APP_PORT": 8020})
+    task_id = start(engine, repo)
+    task = engine.db.task(task_id)
+    строки = json.dumps(panels.task_pane(engine.db, task, "s9", "http://x"), ensure_ascii=False)
+    assert "Поднять стенд" in строки
+
+    engine.button(task_id, task["revision"], "stand")
+    task = engine.db.task(task_id)
+    assert "поднимается" in blocks_text(panels.task_pane(engine.db, task, "s9", "http://x"))
+
+    engine.stand_result(task_id, None, "нет docker-compose.yml")
+    task = engine.db.task(task_id)
+    текст = blocks_text(panels.task_pane(engine.db, task, "s9", "http://x"))
+    assert "не поднялся" in текст and "docker-compose" in текст
+
+    engine.stand_result(task_id, 8020, None)
+    task = engine.db.task(task_id)
+    assert ":8020/" in blocks_text(panels.task_pane(engine.db, task, "s9", "http://x"))

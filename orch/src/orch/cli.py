@@ -162,6 +162,7 @@ def cmd_task_new(args: argparse.Namespace) -> int:
         "preset": args.preset,
         "sheet_edits": sheet_edits,
         "backlog": bool(args.backlog),
+        "stand": bool(getattr(args, "stand", False)),
         "from_backlog": getattr(args, "from_backlog", None),
         "at": signals.now(),
     }
@@ -472,6 +473,33 @@ def cmd_task_edit(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_stand(args: argparse.Namespace) -> int:
+    """Роль «Стенд» сообщает, чем кончилось: адрес или причина."""
+    task = find_task()
+    request = {
+        "id": uuid.uuid4().hex[:12],
+        "kind": "stand",
+        "task": task.task_id,
+        "at": signals.now(),
+    }
+    if args.action == "ready":
+        if not args.port:
+            raise Refused("назовите порт: orch stand ready 8020")
+        request["port"] = int(args.port)
+        message = f"стенд задачи {task.task_id} на порту {args.port}"
+    else:
+        if not args.reason:
+            raise Refused('скажите, что мешает: orch stand failed "нет .env.example"')
+        request["error"] = args.reason
+        message = f"стенд задачи {task.task_id} не поднялся"
+    INBOX.mkdir(parents=True, exist_ok=True)
+    (INBOX / f"{request['id']}.json").write_text(
+        json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(f"{message}: владелец увидит это в панели задачи")
+    return 0
+
+
 def cmd_gc(args: argparse.Namespace) -> int:
     """Сироты на диске: рабочие копии, которым не соответствует живая задача.
 
@@ -677,6 +705,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ask", action="append", metavar="ШАГ=on|off")
     p.add_argument("--backlog", action="store_true")
     p.add_argument(
+        "--stand",
+        action="store_true",
+        help="владелец придёт смотреть работу: поднять стенд задачи к первым воротам",
+    )
+    p.add_argument(
         "--branch",
         help="работать в этой ветке вместо новой: так задача садится на уже открытый PR",
     )
@@ -717,6 +750,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("branches", help="ветки проекта и кто их занял")
     p.add_argument("--project")
     p.set_defaults(func=cmd_branches)
+
+    p = sub.add_parser(
+        "stand",
+        help="роль «Стенд»: сообщить адрес поднятого окружения или причину отказа",
+    )
+    p.add_argument("action", choices=["ready", "failed"])
+    p.add_argument("port", nargs="?", type=int, help="порт для «ready»")
+    p.add_argument("--reason", help="одной строкой, что мешает (для «failed»)")
+    p.set_defaults(func=cmd_stand)
 
     p = sub.add_parser("gc", help="рабочие копии, которым не соответствует живая задача")
     p.add_argument("--yes", action="store_true", help="убрать найденное, а не только показать")

@@ -154,6 +154,10 @@ class Engine:
                         request.get("comment"),
                     )
                     self.db.event(request["task"], "button_from_cli", {"answer": answer})
+                elif kind == "stand":
+                    self.stand_result(
+                        request["task"], request.get("port"), request.get("error")
+                    )
                 elif kind == "edit_text":
                     self.edit_text(request["task"], request["text"])
                 elif kind == "wizard":
@@ -174,6 +178,7 @@ class Engine:
                         base=request.get("base"),
                         author=request.get("author"),
                         from_backlog=request.get("from_backlog"),
+                        stand=bool(request.get("stand")),
                     )
                     self.db.event(task_id, "task_created", {"from": "inbox", "file": path.name})
             except (ChainError, KeyError, OSError) as exc:
@@ -401,6 +406,7 @@ class Engine:
         base: str | None = None,
         author: str | None = None,
         from_backlog: str | None = None,
+        stand: bool = False,
     ) -> str:
         """Завести задачу.
 
@@ -430,8 +436,8 @@ class Engine:
         with self.db.tx():
             self.db.conn.execute(
                 "INSERT INTO task (id, chain, chain_yaml, title, text, project_path, branch, "
-                "group_path, step, status, human_sheet, base_branch, author, revision, created_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)",
+                "group_path, step, status, human_sheet, base_branch, author, stand_wanted, "
+                "revision, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)",
                 (
                     task_id,
                     chain.name,
@@ -446,6 +452,7 @@ class Engine:
                     json.dumps(sheet, ensure_ascii=False),
                     base or None,
                     author or None,
+                    1 if stand else 0,
                     now(),
                 ),
             )
@@ -961,6 +968,11 @@ class Engine:
                     )
         if gated:
             self.mark_stopped(task, session.id)
+            row = self.db.task(task["id"])
+            if row["stand_wanted"] and not row["stand_session"]:
+                # Владелец сказал мастеру, что придёт смотреть: к воротам
+                # стенд должен быть готов, а не подниматься с его кнопки.
+                self.raise_stand(row)
         else:
             row = self.db.task(task["id"])
             self.aoe.set_color(session.id, "green" if row["status"] == ST_DONE else "amber")
@@ -1041,26 +1053,93 @@ class Engine:
         return handler(task, chain, target, comment)
 
     def _btn_stand(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
-        """Поднять стенд задачи: свой блок портов, свои контейнеры.
+        """Поднять стенд задачи — руками роли, а не движка.
 
-        По кнопке, а не при каждом старте: контейнеры нужны, когда владелец
-        хочет посмотреть глазами, а не на каждом ходе роли.
+        Проекты поднимаются по-разному: одному хватает `docker compose up`,
+        другому нужен `.env`, миграции и сборка фронта, третий вообще не
+        дописан. Движок этого не знает и знать не должен, поэтому он делает
+        единственное, чего роль не может сама — берёт блок портов, — а
+        дальше зовёт роль «Стенд» в отдельной сессии.
         """
+        return self.raise_stand(task)
+
+    def raise_stand(self, task) -> str:
+        """Занять блок портов и посадить роль «Стенд» поднимать окружение."""
+        from .chain import prompts_dir
+
         if not task["worktree_path"]:
             return "рабочей копии ещё нет"
+        if task["stand_session"]:
+            return "стенд уже поднимает роль в своей сессии"
         name, error = stands.claim(task)
         if error:
             self.db.event(task["id"], "stand_failed", {"stage": "claim", "error": error})
             return f"не смог занять порты: {error[:200]}"
-        error = stands.up(task, name)
-        if error:
-            self.db.event(task["id"], "stand_failed", {"stage": "up", "error": error})
-            return f"стенд не поднялся: {error[:200]}"
-        port = stands.web_port(name)
+        try:
+            session = self.aoe.create(
+                path=task["worktree_path"],
+                agent="claude",
+                model="sonnet",
+                effort=None,
+                title=f"{task['id']} · стенд",
+                group=task["group_path"] or f"{GROUP_ROOT}/{task['id']}",
+                idempotency_key=f"{task['id']}@{task['created_at']}/stand/{uuid.uuid4().hex[:8]}",
+            )
+        except AoeError as exc:
+            self.db.event(task["id"], "stand_failed", {"stage": "session", "error": str(exc)})
+            return f"сессия стенда не создалась: {exc}"
+        self.aoe.apply_model(session.id, "sonnet")
+        prompt = prompts_dir() / "role-stand.md"
+        text = prompt.read_text(encoding="utf-8") if prompt.exists() else ""
+        text += "\n\n" + self.stand_context(task, name)
+        try:
+            self.aoe.prompt(session.id, text)
+        except AoeError as exc:
+            self.db.event(task["id"], "stand_failed", {"stage": "prompt", "error": str(exc)})
         with self.db.tx():
-            self.db.bump(task["id"], stand=name, stand_port=port)
-            self.db.event(task["id"], "stand_up", {"name": name, "port": port})
-        return f"стенд поднят на {port}"
+            self.db.bump(task["id"], stand=name, stand_session=session.id, stand_wanted=1)
+            self.db.event(
+                task["id"], "stand_started", {"name": name, "session": session.id}
+            )
+        return "роль «Стенд» поднимает окружение"
+
+    def stand_context(self, task, name: str) -> str:
+        """Блок задачи для роли «Стенд»: где, чем и под каким именем."""
+        ports = stands.ports_of(name)
+        lines = [
+            "# Блок задачи",
+            "",
+            f"Задача {task['id']}: {task['title']}",
+            f"Проект: `{task['project_path']}`",
+            f"Рабочая копия, в ней и работай: `{task['worktree_path']}`",
+            f"Ветка задачи: `{task['branch']}`",
+            "",
+            f"Имя твоего блока портов: `{name}`",
+        ]
+        if ports:
+            lines.append("Выданные порты:")
+            for key, value in sorted(ports.items(), key=lambda kv: kv[1]):
+                lines.append(f"- `{key}` = {value}")
+        lines += [
+            "",
+            f"Записку положи в `{Path(task['worktree_path']) / '.orch' / task['id'] / 'artifacts' / 'stand.md'}`.",
+            "Закончи ход `orch stand ready <порт>` — или `orch stand failed \"причина\"`,",
+            "если поднять не вышло.",
+        ]
+        return "\n".join(lines)
+
+    def stand_result(self, task_id: str, port: int | None, error: str | None) -> None:
+        """Что роль «Стенд» сообщила: адрес или причину, почему не вышло."""
+        task = self.db.task(task_id)
+        if task is None:
+            return
+        with self.db.tx():
+            if error:
+                self.db.bump(task_id, stand_port=None)
+                self.db.event(task_id, "stand_failed", {"stage": "role", "error": error[:400]})
+            else:
+                self.db.bump(task_id, stand_port=int(port) if port else None)
+                self.db.event(task_id, "stand_ready", {"port": port})
 
     def drop_stand(self, task) -> None:
         """Погасить стенд задачи и вернуть блок портов.
@@ -1074,7 +1153,7 @@ class Engine:
             return
         error = stands.down(task, name)
         with self.db.tx():
-            self.db.bump(task["id"], stand=None, stand_port=None)
+            self.db.bump(task["id"], stand=None, stand_port=None, stand_session=None)
             self.db.event(task["id"], "stand_down", {"name": name, "error": error[:300]})
 
     def _btn_accept(self, task, chain: Chain, target: str | None, comment: str | None) -> str:

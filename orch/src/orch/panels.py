@@ -375,7 +375,7 @@ def task_pane(
             }
         )
 
-    blocks.append(_stand_row(task))
+    blocks.append(_stand_row(db, task))
 
     wizard = task["wizard_session"] if "wizard_session" in task.keys() else None
     if wizard:
@@ -591,14 +591,15 @@ def _what_to_decide(db: Db, task) -> str:
     return f"Шаг {step} ждёт вас."
 
 
-def _stand_row(task) -> dict:
-    """Стенд задачи: ссылка, если поднят, кнопка — если нет.
+def _stand_row(db: Db, task) -> dict:
+    """Стенд задачи: ссылка, «поднимается» или кнопка.
 
-    Кнопкой, а не сама: контейнеры нужны, когда владелец хочет посмотреть
-    глазами, а не на каждом ходе роли (`UX-PLAN.md`).
+    Поднимает окружение роль «Стенд», а не движок: у каждого проекта свой
+    способ, и знает его проект, а не оркестратор (`UX-PLAN.md`).
     """
     stand = task["stand"] if "stand" in task.keys() else None
     port = task["stand_port"] if "stand_port" in task.keys() else None
+    session = task["stand_session"] if "stand_session" in task.keys() else None
     if stand and port:
         return {
             "kind": "row",
@@ -609,14 +610,44 @@ def _stand_row(task) -> dict:
             "mono": True,
             "href": f"https://{HOST}:{port}/",
         }
+    if session:
+        failed = _last_stand_error(db, task)
+        if failed:
+            return {
+                "kind": "row",
+                "label": "стенд",
+                "sublabel": failed[:200],
+                "value": "не поднялся",
+                "value_tone": "danger",
+            }
+        return {
+            "kind": "row",
+            "label": "стенд",
+            "sublabel": "роль «Стенд» поднимает окружение — смотрите её сессию",
+            "value": "поднимается",
+            "value_tone": "warn",
+        }
     return {
         "kind": "action",
         "label": "Поднять стенд",
         "method": "orch.stand",
         "icon": "play",
-        "tooltip": "свой блок портов и свои контейнеры — посмотреть работу глазами",
+        "tooltip": "роль поднимет окружение задачи на своих портах",
         "params": {"task": task["id"], "revision": task["revision"]},
     }
+
+
+def _last_stand_error(db: Db, task) -> str | None:
+    """Последнее слово про стенд: сорвалось или ещё поднимается."""
+    for event in db.events(task["id"], limit=20):
+        if event["kind"] == "stand_ready":
+            return None
+        if event["kind"] == "stand_failed":
+            try:
+                return json.loads(event["payload"] or "{}").get("error") or "не поднялся"
+            except json.JSONDecodeError:
+                return "не поднялся"
+    return None
 
 
 def _branch_busy_text(db: Db, task) -> str:

@@ -857,27 +857,66 @@ def test_копия_снимается_даже_под_другим_путём(e
     assert not copy.exists()
 
 
-def test_стенд_задачи_поднимается_кнопкой_и_гаснет_с_задачей(engine, fake, repo, monkeypatch):
-    """Порты стенда выдаёт `ports`, движок только помнит имя аренды."""
+def test_стенд_поднимает_роль_а_движок_даёт_ей_порты(engine, fake, repo, monkeypatch):
+    """Проекты поднимаются по-разному, движок этого не знает — зовём роль."""
     from orch import stand as stands
 
-    calls = []
     monkeypatch.setattr(stands, "claim", lambda task: (stands.name_of(task), ""))
-    monkeypatch.setattr(stands, "up", lambda task, name: calls.append(("up", name)) or "")
-    monkeypatch.setattr(stands, "web_port", lambda name: 8030)
-    monkeypatch.setattr(stands, "down", lambda task, name: calls.append(("down", name)) or "")
+    monkeypatch.setattr(stands, "ports_of", lambda name: {"APP_PORT": 8020})
+    downs = []
+    monkeypatch.setattr(stands, "down", lambda task, name: downs.append(name) or "")
 
     task_id = start(engine, repo)
     task = engine.db.task(task_id)
-    assert engine.button(task_id, task["revision"], "stand") == "стенд поднят на 8030"
+    assert engine.button(task_id, task["revision"], "stand") == "роль «Стенд» поднимает окружение"
     task = engine.db.task(task_id)
-    assert task["stand"].endswith(task_id.lower()) and task["stand_port"] == 8030
+    sid = task["stand_session"]
+    assert sid and fake.rows[sid]["title"] == f"{task_id} · стенд"
+    prompt = [t for target, t in fake.prompts if target == sid][0]
+    assert "# Стенд" in prompt and task["stand"] in prompt and "8020" in prompt
+
+    # Роль сообщила адрес — он виден в панели ссылкой.
+    engine.stand_result(task_id, 8020, None)
+    task = engine.db.task(task_id)
+    assert task["stand_port"] == 8020
 
     from orch import panels
 
-    pane = panels.task_pane(engine.db, task, "s9", "http://x")
-    assert "8030" in json.dumps(pane, ensure_ascii=False)
+    assert "8020" in json.dumps(panels.task_pane(engine.db, task, "s9", "http://x"), ensure_ascii=False)
 
     engine.button(task_id, task["revision"], "close")
-    assert ("down", task["stand"]) in calls
+    assert downs == [task["stand"]]
     assert engine.db.task(task_id)["stand"] is None
+
+
+def test_роль_стенда_сообщает_о_неудаче(engine, fake, repo, monkeypatch):
+    """«Не поднялся» должно быть видно владельцу, а не молча пропасть."""
+    from orch import stand as stands
+
+    monkeypatch.setattr(stands, "claim", lambda task: (stands.name_of(task), ""))
+    monkeypatch.setattr(stands, "ports_of", lambda name: {})
+    task_id = start(engine, repo)
+    task = engine.db.task(task_id)
+    engine.button(task_id, task["revision"], "stand")
+    engine.stand_result(task_id, None, "нет docker-compose.yml")
+    kinds = [(e["kind"], e["payload"]) for e in engine.db.events(task_id, limit=5)]
+    assert any(k == "stand_failed" and "docker-compose" in (p or "") for k, p in kinds)
+    assert engine.db.task(task_id)["stand_port"] is None
+
+
+def test_заказанный_стенд_поднимается_к_воротам(engine, fake, repo, monkeypatch):
+    """«Приду смотреть» значит, что к остановке стенд уже готов."""
+    from orch import stand as stands
+
+    monkeypatch.setattr(stands, "claim", lambda task: (stands.name_of(task), ""))
+    monkeypatch.setattr(stands, "ports_of", lambda name: {"APP_PORT": 8020})
+    monkey_chain(engine)
+    task_id = engine.create_task(
+        chain_name="t", project_path=str(repo), text="посмотреть глазами",
+        sheet_edits={"one.after": True}, stand=True,
+    )
+    engine.reconcile()
+    turn(engine, fake, task_id, "one", 1, None)     # шаг сдан, задача на воротах
+    task = engine.db.task(task_id)
+    assert task["status"] == "waiting" and task["wait_reason"] == "gate"
+    assert task["stand_session"], "к воротам стенд должен уже подниматься"
