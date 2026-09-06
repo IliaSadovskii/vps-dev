@@ -371,6 +371,20 @@ def task_pane(
             }
         )
 
+    wizard = task["wizard_session"] if "wizard_session" in task.keys() else None
+    if wizard:
+        # Разговор, в котором задачу заводили: сама сессия в архиве, но
+        # прочитать постановку и переписку с мастером бывает нужно.
+        blocks.append(
+            {
+                "kind": "row",
+                "label": "постановка",
+                "sublabel": "разговор с мастером, где задачу заводили",
+                "value": "открыть",
+                "href": f"{base_url}/session/{wizard}",
+            }
+        )
+
     links = _artifact_links(db, task, chain, session_id, base_url)
     if links:
         blocks.append({"kind": "section", "title": "Файлы ролей", "children": links})

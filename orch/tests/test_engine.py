@@ -791,14 +791,21 @@ def test_ветку_берём_второй_копией_если_старую_�
     assert Path(task["worktree_path"]).is_dir()
 
 
-def test_мастер_переезжает_в_группу_своей_задачи(engine, fake, repo):
-    """Иначе разговор о постановке висит отдельной ненужной строкой."""
+def test_мастер_уходит_в_архив_заведя_задачу(engine, fake, repo):
+    """Рядом с ходами его строку не поставить, а вечная строка в стороне — сор."""
     monkey_chain(engine)
     sid = engine.open_wizard(str(repo))
     assert fake.rows[sid]["group_path"] == "orch/мастер"
     task_id = engine.create_task(chain_name="t", project_path=str(repo), text="новая")
-    assert fake.rows[sid]["group_path"].startswith(f"orch/{task_id}")
+    assert sid in fake.archived
     assert fake.titles[sid] == f"{task_id} · постановка"
+    assert engine.db.task(task_id)["wizard_session"] == sid
+
+    from orch import panels
+
+    pane = panels.task_pane(engine.db, engine.db.task(task_id), "s9", "http://x")
+    assert "постановка" in json.dumps(pane, ensure_ascii=False)
+    assert f"http://x/session/{sid}" in json.dumps(pane, ensure_ascii=False)
 
 
 def test_следующая_задача_получает_нового_мастера(engine, fake, repo):
