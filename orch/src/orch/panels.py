@@ -34,6 +34,7 @@ BUTTONS_BY_REASON = {
     "error": ("again", "back"),
     "ask": (),
     "no_worker": ("again",),
+    "branch_busy": ("again", "back"),
     "abandoned": (),
     "chain_broken": (),
     "path_mismatch": (),
@@ -563,9 +564,44 @@ def _what_to_decide(db: Db, task) -> str:
         return f"Шаг {step} назвал исход, которого нет в цепочке."
     if reason == "error":
         return f"Сессия шага {step} в ошибке."
+    if reason == "branch_busy":
+        return _branch_busy_text(db, task)
     if reason == "no_worker":
         return f"У сессии шага {step} не поднялся агент. Ещё заход заведёт новую сессию."
     return f"Шаг {step} ждёт вас."
+
+
+def _branch_busy_text(db: Db, task) -> str:
+    """Кто держит ветку и что с этим делать — из журнала, без догадок."""
+    branch = task["branch"] or "—"
+    for event in db.events(task["id"], limit=20):
+        if event["kind"] not in (
+            "branch_held", "branch_dirty", "branch_in_project", "branch_release_failed"
+        ):
+            continue
+        try:
+            payload = json.loads(event["payload"] or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        path = payload.get("path", "?")
+        if event["kind"] == "branch_held":
+            return (
+                f"Ветку {branch} уже держит задача {payload.get('by')} "
+                f"({path}). Закройте ту задачу или заведите эту на другой ветке."
+            )
+        if event["kind"] == "branch_dirty":
+            return (
+                f"Ветка {branch} вычекана в {path}, и там есть несохранённая "
+                "работа — сама я её не трону. Разберитесь с ней и нажмите "
+                "«Ещё заход»."
+            )
+        if event["kind"] == "branch_in_project":
+            return (
+                f"Ветка {branch} вычекана в самом проекте ({path}). "
+                "Переключите его на другую ветку и нажмите «Ещё заход»."
+            )
+        return f"Не смогла освободить ветку {branch}: {path}."
+    return f"Ветку {branch} держит другая рабочая копия."
 
 
 def _buttons(db: Db, task) -> list[dict]:

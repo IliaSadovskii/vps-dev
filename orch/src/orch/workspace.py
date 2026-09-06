@@ -142,6 +142,46 @@ def worktree_path(project: Path | str, branch: str) -> Path:
     return project.parent / f"{project.name}-orch" / branch
 
 
+# Служебные каталоги, которые роли и инструменты оставляют в рабочей копии.
+# Их наличие не делает копию «занятой работой»: это не то, что человек
+# побоится потерять.
+JUNK = (".orch/", ".playwright-mcp/", ".pytest_cache/", "__pycache__/")
+
+
+def worktree_holder(project: Path | str, branch: str) -> Path | None:
+    """Каталог, в котором ветка уже вычекана, или None.
+
+    Git не даёт вычекать одну ветку в двух копиях, поэтому знать держателя
+    надо до `worktree add`: иначе задача встаёт с невнятной ошибкой git.
+    """
+    out = git(project, "worktree", "list", "--porcelain")
+    path: Path | None = None
+    for line in out.splitlines():
+        if line.startswith("worktree "):
+            path = Path(line[len("worktree "):].strip())
+        elif line.startswith("branch ") and path is not None:
+            ref = line[len("branch "):].strip()
+            if ref in (f"refs/heads/{branch}", branch):
+                return path
+    return None
+
+
+def has_work(path: Path | str) -> bool:
+    """Есть ли в копии работа, которую страшно потерять.
+
+    Изменения отслеживаемых файлов — да. Неотслеживаемый служебный сор —
+    нет: `.orch/` роли пишут сами, и он восстановим.
+    """
+    out = git(path, "status", "--porcelain")
+    for line in out.splitlines():
+        name = line[3:].strip().strip('"')
+        if line.startswith("??") and name.startswith(JUNK):
+            continue
+        if line.strip():
+            return True
+    return False
+
+
 def create_worktree(project: Path | str, branch: str, base: str = "") -> tuple[Path, str]:
     """Создать рабочую копию задачи. Возвращает (путь, ошибка или '').
 
@@ -156,6 +196,14 @@ def create_worktree(project: Path | str, branch: str, base: str = "") -> tuple[P
     base = base or default_branch(project)
     if branch_exists(project, branch):
         code, out = git_try(project, "worktree", "add", str(path), branch)
+        if code != 0 and "already used by worktree" in out or (
+            code != 0 and "already checked out" in out
+        ):
+            # Ветку держит копия, которую не удалось снять (случается, когда
+            # каталог проекта доступен под двумя путями: git сверяет строки и
+            # отказывается её убирать). Работы там нет — движок проверил до
+            # вызова, — поэтому берём ветку второй копией.
+            code, out = git_try(project, "worktree", "add", "--force", str(path), branch)
     else:
         # Ответвляемся от свежей базовой ветки, а не от того, что лежало на
         # диске с прошлой недели: иначе задача начинается в устаревшем коде.

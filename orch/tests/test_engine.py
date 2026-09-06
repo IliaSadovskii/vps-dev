@@ -703,3 +703,89 @@ def test_обычная_сессия_владельца_не_трогается(
     engine.reconcile()
     assert fake.rows[session.id]["group_path"] == ""
     assert not [t for target, t in fake.prompts if target == session.id]
+
+
+def _worktree(repo, branch: str):
+    """Чужая рабочая копия ветки: так выглядит наследие прошлой задачи."""
+    import subprocess
+
+    path = repo.parent / f"{repo.name}-worktrees" / branch
+    subprocess.run(
+        ["git", "worktree", "add", "-q", str(path), "-b", branch],
+        cwd=repo, check=True, capture_output=True,
+    )
+    return path
+
+
+def test_брошенная_копия_ветки_освобождается(engine, fake, repo):
+    """Задача на ветке открытого PR: копию под неё оставила прошлая задача."""
+    monkey_chain(engine)
+    старая = _worktree(repo, "feature/pr")
+    (старая / ".orch").mkdir()          # служебный сор работой не считается
+    task_id = engine.create_task(
+        chain_name="t", project_path=str(repo), text="доработка PR", branch="feature/pr"
+    )
+    engine.reconcile()
+    task = engine.db.task(task_id)
+    assert task["status"] == "running", task["wait_reason"]
+    assert not старая.exists()
+    assert Path(task["worktree_path"]).is_dir()
+
+
+def test_копия_с_работой_не_трогается(engine, fake, repo):
+    """Незакоммиченные правки чужой задачи — не наше дело: решает владелец."""
+    monkey_chain(engine)
+    старая = _worktree(repo, "feature/dirty")
+    (старая / "черновик.py").write_text("важное", encoding="utf-8")
+    import subprocess
+
+    subprocess.run(["git", "add", "черновик.py"], cwd=старая, check=True)
+    task_id = engine.create_task(
+        chain_name="t", project_path=str(repo), text="доработка", branch="feature/dirty"
+    )
+    engine.reconcile()
+    task = engine.db.task(task_id)
+    assert task["status"] == "waiting" and task["wait_reason"] == "branch_busy"
+    assert старая.exists() and (старая / "черновик.py").exists()
+    from orch import panels
+
+    assert "несохранённая работа" in panels._what_to_decide(engine.db, task)
+
+
+def test_ветку_живой_задачи_не_отбираем(engine, fake, repo):
+    """Две задачи в одной ветке писали бы `.orch/` в один каталог."""
+    monkey_chain(engine)
+    первая = start(engine, repo)
+    ветка = engine.db.task(первая)["branch"]
+    with engine.db.tx():
+        engine.db.bump(первая, status="waiting", wait_reason="gate")
+    вторая = engine.db.conn.execute(
+        "INSERT INTO task (id, chain, chain_yaml, title, text, project_path, branch, "
+        "group_path, status, human_sheet, revision, created_at) "
+        "VALUES ('T99','t',?, 'вторая','вторая',?,?,'orch/T99','queued','{}',1,?)",
+        (engine.db.task(первая)["chain_yaml"], str(repo), ветка, "2026-09-06T00:00:00Z"),
+    )
+    engine.db.conn.commit()
+    engine.reconcile()
+    task = engine.db.task("T99")
+    assert task["wait_reason"] == "branch_busy"
+    from orch import panels
+
+    assert первая in panels._what_to_decide(engine.db, task)
+
+
+def test_ветку_берём_второй_копией_если_старую_не_снять(engine, fake, repo, monkeypatch):
+    """Git сверяет путь строкой, и снять чужую копию удаётся не всегда."""
+    from orch import engine as mod
+
+    monkey_chain(engine)
+    старая = _worktree(repo, "feature/stuck")
+    monkeypatch.setattr(mod, "remove_worktree", lambda *a, **k: "fatal: validation failed")
+    task_id = engine.create_task(
+        chain_name="t", project_path=str(repo), text="доработка", branch="feature/stuck"
+    )
+    engine.reconcile()
+    task = engine.db.task(task_id)
+    assert task["status"] == "running", task["wait_reason"]
+    assert старая.exists(), "чужую копию не трогаем, раз снять её не вышло"
+    assert Path(task["worktree_path"]).is_dir()

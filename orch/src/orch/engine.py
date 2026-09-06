@@ -21,7 +21,14 @@ from . import promptbuild, signals
 from .aoe import ERROR, IDLE, RUNNING, STARTING, STOPPED, WAITING, Aoe, AoeError, Session
 from .chain import DONE, Chain, ChainError, Step, chains_dir, load as load_chain, parse as parse_chain
 from .db import ABANDONED, BACKLOG, DONE as ST_DONE, LIVE, QUEUED, RUNNING as ST_RUNNING, WAITING as ST_WAITING, Db, now
-from .workspace import Workspace, create_worktree, git, remove_worktree
+from .workspace import (
+    Workspace,
+    create_worktree,
+    git,
+    has_work,
+    remove_worktree,
+    worktree_holder,
+)
 
 INBOX = Path.home() / ".local" / "share" / "orch" / "inbox"
 GROUP_ROOT = "orch"
@@ -39,6 +46,7 @@ WAIT_REASONS = {
     "path_mismatch": "рабочая копия сессии не совпала с задачей",
     "no_worker": "у сессии не поднялся воркер агента",
     "no_worktree": "не удалось создать рабочую копию задачи",
+    "branch_busy": "ветку задачи держит другая рабочая копия",
     "artifact": "роль сдала ход, но её файла нет или он не той формы",
     "abandoned": "сессия задачи исчезла",
 }
@@ -558,6 +566,8 @@ class Engine:
         """
         if task["worktree_path"] and Path(task["worktree_path"]).is_dir():
             return True
+        if not self.free_branch(task):
+            return False
         path, error = create_worktree(
             task["project_path"], task["branch"], base=task["base_branch"] or ""
         )
@@ -570,6 +580,54 @@ class Engine:
         with self.db.tx():
             self.db.bump(task["id"], worktree_path=str(path))
             self.db.event(task["id"], "worktree_created", {"path": str(path)})
+        return True
+
+    def free_branch(self, task) -> bool:
+        """Освободить ветку задачи, если её держит брошенная копия.
+
+        Git не даёт вычекать одну ветку дважды, а ветка задачи вполне может
+        быть занята: так дорабатывают уже открытый PR, копию под который
+        оставила прошлая задача. Разбираем три случая, ничего не гадая:
+        держит живая задача — стоп с её номером; в копии есть работа — стоп
+        с путём, решать владельцу; копия брошена и чиста — снимаем её и
+        забираем ветку себе.
+        """
+        holder = worktree_holder(task["project_path"], task["branch"])
+        if holder is None:
+            return True
+        want = Path(task["project_path"]).resolve()
+        if holder.resolve() == want:
+            # Ветка вычекана в самом проекте: своей копии из неё не сделать,
+            # а переключать чужой рабочий каталог мы не вправе.
+            self.db.event(task["id"], "branch_in_project", {"path": str(holder)})
+            self.stop(task["id"], "branch_busy")
+            return False
+        busy = self.db.conn.execute(
+            "SELECT id FROM task WHERE worktree_path = ? AND status IN "
+            "('queued','running','waiting')",
+            (str(holder),),
+        ).fetchone()
+        if busy:
+            self.db.event(
+                task["id"], "branch_held", {"by": busy["id"], "path": str(holder)}
+            )
+            self.stop(task["id"], "branch_busy")
+            return False
+        if has_work(holder):
+            self.db.event(task["id"], "branch_dirty", {"path": str(holder)})
+            self.stop(task["id"], "branch_busy")
+            return False
+        error = remove_worktree(task["project_path"], holder)
+        if error:
+            # Снять копию не всегда можно: git сверяет путь строкой, а каталог
+            # проекта бывает доступен под двумя (например, `/projects` и
+            # `~/projects` — один и тот же каталог). Работы в копии нет, так
+            # что берём ветку второй копией: это делает `create_worktree`.
+            self.db.event(
+                task["id"], "branch_release_failed", {"path": str(holder), "error": error[:300]}
+            )
+            return True
+        self.db.event(task["id"], "branch_released", {"path": str(holder)})
         return True
 
     def attach_session(self, task, chain: Chain, step: Step, run) -> Session | None:
