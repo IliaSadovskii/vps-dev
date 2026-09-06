@@ -558,10 +558,16 @@ def new_task_pane(draft: dict) -> dict:
         {"kind": "action", "label": "Отмена", "method": "orch.cancel_new"},
     ]
     return {
-        "title": "orch",
+        "title": "orch · новая задача",
         "default_location": "right",
         "icon": "plus",
         "blocks": blocks,
+        "footer": {
+            "text": "лист новой задачи",
+            "value": "не запущена",
+            "tone": "warn",
+            "icon": "plus",
+        },
     }
 
 

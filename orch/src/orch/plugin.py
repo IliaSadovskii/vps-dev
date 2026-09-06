@@ -158,7 +158,10 @@ class Worker:
             self.draft["session_id"] = session_id
             if not self.draft.get("project_path"):
                 self.draft["project_path"] = self._project_of_session(session_id) or ""
-            self.notify("orch", "текст задачи взят, теперь «Запустить»")
+            self.notify(
+                "orch: текст задачи взят",
+                "лист задачи — в панели orch этой сессии, там «Запустить»",
+            )
             self.clear_composer(session_id)
             return
         task = self._task_of_session(session_id)
@@ -175,6 +178,9 @@ class Worker:
             "теперь выберите движение кнопкой в панели",
         )
         self.clear_composer(session_id)
+
+    def open_pane_hint(self) -> None:
+        """Сказать, где искать лист, если он не на глазах."""
 
     def btn_new_task(self, session_id, params) -> None:
         """Открыть лист автономии новой задачи."""
@@ -195,6 +201,10 @@ class Worker:
             "sheet": chain.default_sheet(),
             "session_id": session_id,
         }
+        self.notify(
+            "orch: лист новой задачи открыт",
+            "он в панели orch этой сессии — переключатели и «Запустить» там",
+        )
 
     def btn_pick_branch(self, session_id, params) -> None:
         """Строка «ветка»: попросить ссылку, либо снять уже выбранную."""
@@ -212,6 +222,7 @@ class Worker:
             "orch: жду ссылку на ветку",
             "вставьте в поле ввода ссылку на ветку или на PR и нажмите кнопку у поля",
         )
+        self.open_pane_hint()
 
     def take_branch(self, session_id: str, text: str) -> None:
         """Ссылка из поля ввода стала веткой задачи."""
@@ -387,8 +398,25 @@ class Worker:
             None,
             force,
         )
+        # Лист новой задачи рисуется и в сессии, из которой его открыли:
+        # кнопка у поля стоит здесь, значит и «Запустить» должна быть здесь.
+        # Раньше лист жил только в общей панели на обзоре, и человек,
+        # нажавший кнопку внутри сессии, оставался ни с чем.
+        draft_session = (draft or {}).get("session_id")
+        if draft and draft_session:
+            self._push_if_changed(
+                ("pane", draft_session),
+                panels.new_task_pane(draft),
+                "pane",
+                "task",
+                draft_session,
+                force,
+            )
+
         self._refresh_session_map(db)
         for session_id, task_id in self.session_of_task.items():
+            if session_id == draft_session:
+                continue
             task = db.task(task_id)
             if task is None:
                 continue

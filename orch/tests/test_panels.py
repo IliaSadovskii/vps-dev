@@ -312,3 +312,45 @@ def test_занятая_ветка_не_даёт_запустить(engine):
     for a in _actions(pane):
         if a["method"] in ("orch.launch", "orch.backlog"):
             assert a["disabled"] is True
+
+
+def test_лист_новой_задачи_рисуется_в_сессии_где_его_открыли(engine, fake, repo):
+    """Кнопка у поля стоит в сессии — значит и «Запустить» должна быть там.
+
+    Пока лист жил только в общей панели на обзоре, человек, нажавший кнопку
+    внутри сессии, видел уведомление «теперь Запустить» и пустой экран.
+    """
+    import orch.plugin as mod
+
+    worker = mod.Worker.__new__(mod.Worker)
+    worker.engine = engine
+    worker.draft = _draft(session_id="s42")
+    worker.drawn = {}
+    worker.settings = {}
+    worker.session_of_task = {}
+    worker.clear_ops = {}
+    pushed = []
+    worker.ui_set = lambda slot, ident, payload, session_id=None: pushed.append(
+        (slot, session_id, payload)
+    )
+    worker.sessions_now = lambda: [{"id": "s42"}]
+    worker._push_if_changed = mod.Worker._push_if_changed.__get__(worker)
+    worker._refresh_session_map = mod.Worker._refresh_session_map.__get__(worker)
+    worker._clear_op = mod.Worker._clear_op.__get__(worker)
+    worker.settings = {"aoe_url": "http://x"}
+    mod.Worker.push_all(worker, force=True)
+
+    panes = [(sid, p) for slot, sid, p in pushed if slot == "pane"]
+    assert panes, "лист не попал в панель сессии"
+    sid, payload = panes[0]
+    assert sid == "s42"
+    assert payload["title"] == "orch · новая задача"
+    assert any(b.get("method") == "orch.launch" for b in _flat(payload["blocks"]))
+
+
+def _flat(blocks):
+    for b in blocks:
+        yield b
+        for key in ("children",):
+            if isinstance(b.get(key), list):
+                yield from _flat(b[key])
