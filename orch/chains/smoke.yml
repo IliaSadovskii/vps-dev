@@ -1,0 +1,35 @@
+# Smoke — цепочка для проверки механики оркестратора, не для работы.
+# Три шага на дешёвой модели, роли-заглушки: читают названные файлы, пишут
+# артефакт из двух строк, сдают ход. Проверяет создание сессий, сигнал,
+# ворота, возврат, комментарий владельца, автономию, предел заходов.
+name: smoke
+includes: [common-protocol]
+
+steps:
+  - id: one
+    run: { agent: claude, model: haiku }
+    context: fresh
+    prompt: { file: test-smoke-one }
+    artifact: [one.md]
+    next: two
+
+  - id: two
+    run: { agent: claude, model: haiku }
+    context: fresh
+    prompt: { file: test-smoke-two, reads: [one.md] }
+    artifact: [two.md]
+    next:
+      ok: three
+      back: one
+    human:
+      after: true
+      ask: false
+      moves: [one]
+    limits: { max_runs: 2 }
+
+  - id: three
+    run: { agent: claude, model: haiku }
+    context: continue
+    prompt: { file: test-smoke-three, reads: [one.md, two.md] }
+    artifact: [three.md]
+    next: done

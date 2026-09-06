@@ -1,0 +1,33 @@
+# Blueprint — описание продукта в репозитории проекта (docs/knowledge/):
+# продукт, акторы, сущности, действия, экраны, интеграции, сценарии, стек.
+#
+# Владелец надиктовывает рассказ о продукте в текст задачи; роль показывает,
+# что рассказ меняет в записанном, спрашивает одним пакетом только о
+# противоречиях и концовках сценариев, раскладывает остальное по файлам и
+# перечисляет, что решила сама. Сверка читает разложенное против рассказа.
+# Владелец принимает. Описание необязательно: без него Deep работает как
+# прежде; с ним роли Deep читают его наравне с AGENTS.md и в него не пишут.
+name: blueprint
+includes: [common-protocol, common-git-safety, common-knowledge-shape]
+
+steps:
+  - id: blueprint
+    run: { agent: claude, model: "opus[1m]", effort: high }
+    context: fresh
+    artifact: [blueprint.md]
+    next: blueprint-check
+    human: { ask: true }         # противоречия и концовки сценариев
+
+  - id: blueprint-check
+    run: { agent: claude, model: "opus[1m]", effort: high }
+    context: fresh
+    prompt: { reads: [blueprint.md] }
+    artifact: [blueprint-review.md]
+    next:
+      ok: done
+      rework: blueprint
+    human:
+      after: [ok]
+      ask: false
+      moves: [blueprint]
+    limits: { max_runs: 3 }

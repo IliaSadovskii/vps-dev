@@ -1,0 +1,32 @@
+# Conventions — завести или обновить файл соглашений проекта для агентов
+# (AGENTS.md, CLAUDE.md = @AGENTS.md). Прогнать до первой задачи Deep по
+# проекту: роли Deep читают этот файл первым.
+#
+# Автор собирает соглашения по коду и спрашивает владельца о том, чего в коде
+# нет; сверка открывает всё, что автор процитировал; владелец читает и
+# принимает. Сверка продолжает сессию автора? Нет: память свежая нарочно, автор
+# только что держал весь репозиторий в голове и свою строку не перечитает.
+name: conventions
+includes: [common-protocol, common-git-safety]
+
+steps:
+  - id: conventions
+    run: { agent: claude, model: sonnet, effort: high }
+    context: fresh
+    artifact: [conventions.md]
+    next: conventions-check
+    human: { ask: true }         # приоритеты и границы знает только владелец
+
+  - id: conventions-check
+    run: { agent: claude, model: "opus[1m]", effort: high }
+    context: fresh
+    prompt: { reads: [conventions.md] }
+    artifact: [conventions-review.md]
+    next:
+      ok: done
+      rework: conventions
+    human:
+      after: [ok]
+      ask: false
+      moves: [conventions]
+    limits: { max_runs: 3 }

@@ -1,0 +1,97 @@
+# Deep — полная дорожка разработки: разведка, выбор решения, план с
+# независимым ревью, реализация тест-первой, два чтения ревью кода, правки,
+# черновик PR. Три остановки на владельце: выбор решения (только если выбор
+# есть), утверждение плана, приёмка PR.
+#
+# Формат — orch/PLAN.md §4. Роль шага — orch/prompts/role-<id>.md,
+# подагенты — sub-*.md, общие правила — common-*.md, навыки — skill-*.md.
+name: deep
+includes: [common-protocol, common-git-safety, common-test-ownership]
+
+# Листы автономии: пресет заполняет переключатели задачи, дальше их можно
+# менять в панели по ходу. По умолчанию — как записано в шагах.
+presets:
+  hands-off: { plan-review.after: false }            # план принимается сам
+  quiet:     { scoping.ask: false, solution.ask: false, plan.ask: false }
+  auto:      { "*.after": false, "*.ask": false, pr.after: true }
+
+steps:
+  - id: scoping
+    run: { agent: claude, model: sonnet, effort: high }
+    context: fresh
+    artifact: [scoping.md]
+    next: solution
+    human: { ask: true }
+
+  - id: solution
+    run: { agent: claude, model: "opus[1m]", effort: xhigh }
+    context: fresh
+    prompt: { reads: [scoping.md] }
+    artifact: [solution.md]
+    next:
+      choice: plan
+      single: plan
+    human:
+      after: [choice]            # ворота только когда есть из чего выбирать
+      ask: true
+      moves: [scoping]
+
+  - id: plan
+    run: { agent: claude, model: "opus[1m]", effort: xhigh }
+    context: fresh
+    prompt: { reads: [scoping.md, solution.md] }
+    artifact: [plan.md]
+    next: plan-review
+    human: { ask: true }         # инструмент тестов, которого нет в проекте
+
+  - id: plan-review
+    run: { agent: codex, model: gpt-5.6-sol, effort: high }
+    context: fresh
+    prompt: { reads: [plan.md, scoping.md, solution.md] }
+    artifact: [plan-review.md]
+    next:
+      ok: implementation
+      rework: plan
+    human:
+      after: [ok]                # утверждение плана владельцем
+      ask: false
+      moves: [plan, scoping]
+    limits: { max_runs: 3 }
+
+  - id: implementation
+    run: { agent: claude, model: sonnet, effort: high }
+    context: fresh
+    prompt: { reads: [plan.md, plan-review.md, scoping.md, solution.md] }
+    artifact: [implementation.md]
+    next: code-review
+    human: { ask: false }        # вопрос здесь — признак плохого плана: в «Не решено»
+
+  - id: code-review
+    run: { agent: claude, model: "opus[1m]", effort: high }
+    context: fresh
+    prompt: { reads: [scoping.md, implementation.md] }
+    artifact: [review.md, review-defects.md, review-security.md]
+    next:
+      findings: review-fixes
+      clean: pr
+    human: { ask: false }
+    limits: { max_runs: 3 }
+
+  - id: review-fixes
+    run: { agent: claude, model: sonnet, effort: high }
+    context: fresh
+    prompt: { reads: [review.md, review-defects.md, review-security.md, scoping.md] }
+    artifact: [review-fixes.md]
+    next: code-review
+    human: { ask: false }
+
+  - id: pr
+    run: { agent: claude, model: haiku }
+    context: fresh
+    prompt: { reads: [scoping.md, plan.md, plan-review.md, implementation.md, review.md, review-fixes.md] }
+    artifact: [pull-request.md]
+    next: done
+    human:
+      after: true                # приёмка; выключается только пресетом или руками
+      ask: false
+      moves: [review-fixes, implementation, plan, scoping]
