@@ -54,8 +54,17 @@
   запущенный Kandev. Роль Ansible `orch` добавь по образцу
   `ansible/roles/aoe`, в `site.yml` после `aoe`; не запускай `make apply`.
 - Демон `aoe serve`, в котором ты сам работаешь, — тот же, куда ставится
-  плагин. `aoe plugin install ./orch` безопасен; `aoe serve --restart` не
-  делай — он оборвёт и твою сессию.
+  плагин. `aoe plugin install --yes ./orch` безопасен; `aoe serve --restart`
+  и `aoe killall` не делай — они оборвут и твою сессию.
+- PATH демона и всех сессий агентов: `/usr/local/sbin:/usr/local/bin:
+  /usr/sbin:/usr/bin:/snap/bin`, без `~/.local/bin`. Поэтому `orch` и
+  `orch-plugin` из venv положи симлинками в `/usr/local/bin` (`sudo` без
+  пароля есть); в манифесте плагина `command = ["orch-plugin"]` с
+  `system = true`. Так правки кода действуют после `aoe plugin disable` /
+  `enable` без переустановки плагина, а роли зовут `orch` по имени.
+- Сессии для тестов создавай через API с `trust_hooks: true`: у репозитория
+  могут быть хуки `.agent-of-empires/config.toml`, без доверия создание
+  вернёт `hooks_need_trust`.
 
 ## Модели на пробный период
 
