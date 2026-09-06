@@ -124,9 +124,17 @@ def home_pane(db: Db, draft: dict | None = None, cost_warn: float = 5.0) -> dict
                     {
                         "kind": "row",
                         "label": f"{t['id']} · {t['title']}",
+                        "sublabel": f"ветка {t['branch']}" if t["branch"] else "",
                         "value": "Запустить",
                         "method": "orch.start",
                         "params": {"task": t["id"], "revision": t["revision"]},
+                        "badges": [
+                            {
+                                "text": "закрыть",
+                                "tone": "neutral",
+                                "tooltip": "снять заявку и освободить её ветку",
+                            }
+                        ],
                     }
                     for t in backlog[:MAX_TASKS]
                 ],

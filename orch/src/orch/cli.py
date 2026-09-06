@@ -470,7 +470,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = task_sub.add_parser("move", help="нажать кнопку из терминала")
     p.add_argument("task")
-    p.add_argument("action", choices=["accept", "back", "again", "start"])
+    p.add_argument("action", choices=["accept", "back", "again", "start", "close"])
     p.add_argument("--target", help="шаг для accept/back")
     p.add_argument("--comment", help="комментарий владельца адресату")
     p.set_defaults(func=cmd_task_move)

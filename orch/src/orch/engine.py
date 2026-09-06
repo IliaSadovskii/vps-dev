@@ -704,6 +704,7 @@ class Engine:
             "continue": self._btn_again,
             "start": self._btn_start,
             "accept_as_is": self._btn_accept,
+            "close": self._btn_close,
         }.get(action)
         if handler is None:
             return f"неизвестное действие {action}"
@@ -768,6 +769,23 @@ class Engine:
                 task["id"], "button", {"action": "again", "step": step.id, "grant": grant}
             )
         return "ещё заход" + (" (предел поднят)" if grant else "")
+
+    def _btn_close(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
+        """Закрыть задачу, не доводя до конца.
+
+        Роли заводят заявки в бэклог сами, и часть из них никогда не поедет.
+        Пока такую задачу нельзя закрыть, она держит свою ветку и мешает
+        завести на ней новую.
+        """
+        with self.db.tx():
+            revision = self.db.bump(
+                task["id"], status=ST_DONE, step=None, closed_at=now(), wait_reason=None
+            )
+            self.db.move(
+                task["id"], task["step"], DONE, "human", "button", revision, comment=comment
+            )
+            self.db.event(task["id"], "closed", {"comment": comment})
+        return "закрыта"
 
     def _btn_start(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
         if task["status"] not in (BACKLOG, QUEUED):

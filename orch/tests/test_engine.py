@@ -569,3 +569,19 @@ def test_база_ответвления_запоминается(engine, repo):
         chain_name="t", project_path=str(repo), text="от релиза", base="release/1.2"
     )
     assert engine.db.task(task_id)["base_branch"] == "release/1.2"
+
+
+def test_задачу_можно_закрыть_и_она_отпускает_ветку(engine, repo):
+    """Заявка из бэклога, которая никогда не поедет, не должна держать ветку."""
+    monkey_chain(engine)
+    first = engine.create_task(
+        chain_name="t", project_path=str(repo), text="заявка", branch="общая", backlog=True
+    )
+    task = engine.db.task(first)
+    assert engine.button(first, task["revision"], "close") == "закрыта"
+    assert engine.db.task(first)["status"] == "done"
+    # Ветка свободна: на ней можно завести новую задачу.
+    second = engine.create_task(
+        chain_name="t", project_path=str(repo), text="новая", branch="общая"
+    )
+    assert engine.db.task(second)["branch"] == "общая"
