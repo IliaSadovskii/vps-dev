@@ -14,6 +14,8 @@ import threading
 import time
 from pathlib import Path
 
+from .db import Db
+from .engine import Engine, Settings
 from .rpc import Rpc, RpcError, log
 
 PLUGIN_ID = "dev.sadovskii.orch"
@@ -32,6 +34,7 @@ class Worker:
         # `composer-action`). Хост не сообщает о появлении сессии, поэтому
         # список наполняется проходом движка и кликами.
         self.session_slots: set[str] = set()
+        self.engine: Engine | None = None
 
     # ── входящие вызовы хоста ────────────────────────────────────────────
     def handle(self, method: str, params: dict):
@@ -187,6 +190,7 @@ class Worker:
         reader = threading.Thread(target=self.rpc.serve, name="orch-rpc", daemon=True)
         reader.start()
         self.read_settings()
+        self.start_engine()
         self.push_all()
         while not self.rpc.stopped.wait(timeout=self.poll_secs):
             self.tick()
@@ -201,10 +205,53 @@ class Worker:
             return 5.0
 
     def tick(self) -> None:
-        """Проход движка. Заполняется на этапе 1."""
+        """Проход движка: одно действие на задачу, дальше перерисовка панелей."""
+        if self.engine is None:
+            return
+        try:
+            self.engine.reconcile()
+        except Exception as exc:  # noqa: BLE001 — воркер не падает от одной задачи
+            log(f"orch-plugin: проход движка упал: {exc!r}")
+        self.push_all()
+
+    def start_engine(self) -> None:
+        self.engine = Engine(
+            Db(),
+            settings=Settings(
+                poll_secs=self.poll_secs,
+                max_running=int(self.settings.get("max_running", 3)),
+                cost_warn_usd=float(self.settings.get("cost_warn_usd", 5)),
+                default_chain=str(self.settings.get("default_chain", "deep")),
+            ),
+        )
+
+
+def run_standalone(poll_secs: float) -> int:
+    """Движок без плагина: пока панель не поставлена в рабочий демон.
+
+    Тот же `reconcile`, что и в воркере, — отдельного кода нет.
+    """
+    engine = Engine(Db())
+    log(f"orch-plugin: движок без панели, опрос {poll_secs} с")
+    try:
+        while True:
+            engine.reconcile()
+            time.sleep(poll_secs)
+    except KeyboardInterrupt:
+        return 0
 
 
 def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if "--once" in args:
+        Engine(Db()).reconcile()
+        return 0
+    if "--no-rpc" in args:
+        secs = 5.0
+        for a in args:
+            if a.startswith("--poll="):
+                secs = float(a.split("=", 1)[1])
+        return run_standalone(secs)
     return Worker().run()
 
 

@@ -19,6 +19,9 @@ orch-plugin = "orch.plugin:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+orch = ["migrations/*.sql"]
+
 [tool.pytest.ini_options]
 markers = ["live: ходит в живой Agent of Empires на 127.0.0.1:8065"]
 testpaths = ["tests"]

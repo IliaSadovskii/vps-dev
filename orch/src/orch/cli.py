@@ -18,10 +18,11 @@ import uuid
 from pathlib import Path
 
 from . import artifacts, signals
-from .chain import DONE, ChainError, load as load_chain
+from .chain import ChainError, load as load_chain
 from .taskdir import NotInTask, TaskDir, find_task
 
 INBOX = Path.home() / ".local" / "share" / "orch" / "inbox"
+DB_PATH = Path.home() / ".local" / "share" / "orch" / "orch.db"
 
 
 class Refused(Exception):
@@ -162,6 +163,214 @@ def cmd_task_new(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── команды владельца: чтение базы ───────────────────────────────────────
+def _ro_db():
+    """База только на чтение: единственный писатель — движок."""
+    import sqlite3
+
+    if not DB_PATH.exists():
+        raise Refused(f"базы нет: {DB_PATH}. Движок ещё ни разу не запускался?")
+    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=10)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def cmd_task_list(args: argparse.Namespace) -> int:
+    conn = _ro_db()
+    rows = list(conn.execute("SELECT * FROM task ORDER BY status, created_at"))
+    if not rows:
+        print("задач нет")
+        return 0
+    for row in rows:
+        wait = f" — {row['wait_reason']}" if row["wait_reason"] else ""
+        step = row["step"] or "—"
+        print(f"{row['id']:>5}  {row['status']:<9} {step:<16} {row['title']}{wait}")
+    return 0
+
+
+def cmd_task_show(args: argparse.Namespace) -> int:
+    conn = _ro_db()
+    row = conn.execute("SELECT * FROM task WHERE id = ?", (args.task,)).fetchone()
+    if row is None:
+        raise Refused(f"нет задачи {args.task}")
+    print(f"{row['id']}  {row['title']}")
+    print(f"цепочка: {row['chain']}   статус: {row['status']}   шаг: {row['step'] or '—'}")
+    if row["wait_reason"]:
+        print(f"ждёт: {row['wait_reason']}")
+    print(f"проект: {row['project_path']}")
+    print(f"копия:  {row['worktree_path'] or '—'}   ветка: {row['branch'] or '—'}")
+    print(f"ревизия: {row['revision']}")
+    print("\nлист автономии:")
+    for step, knobs in json.loads(row["human_sheet"]).items():
+        print(f"  {step:<18} ворота {knobs.get('after')!s:<12} вопросы {knobs.get('ask')}")
+    print("\nзаходы:")
+    for run in conn.execute(
+        "SELECT * FROM run WHERE task_id = ? ORDER BY id", (args.task,)
+    ):
+        outcome = run["outcome"] or ("нет сигнала" if run["ended_at"] else "идёт")
+        cost = f"  ${run['cost_usd']:.2f}" if run["cost_usd"] else ""
+        dur = f"  {run['duration_s']:.0f} с" if run["duration_s"] else ""
+        print(f"  {run['step']:<18} заход {run['n']}  {outcome}{dur}{cost}")
+    print("\nдвижения:")
+    for move in list(conn.execute(
+        "SELECT * FROM move WHERE task_id = ? ORDER BY id DESC LIMIT 10", (args.task,)
+    ))[::-1]:
+        comment = f'  «{move["comment"]}»' if move["comment"] else ""
+        print(
+            f"  {move['at']}  {move['from_step'] or '—'} → {move['to_step'] or '—'}"
+            f"  {move['actor']}/{move['trigger']}{comment}"
+        )
+    return 0
+
+
+def cmd_log(args: argparse.Namespace) -> int:
+    conn = _ro_db()
+    seen = 0
+
+    def show(limit: int, after: int) -> int:
+        nonlocal seen
+        sql = "SELECT * FROM event WHERE seq > ?"
+        params: list = [after]
+        if args.task:
+            sql += " AND task_id = ?"
+            params.append(args.task)
+        sql += " ORDER BY seq LIMIT ?"
+        params.append(limit)
+        last = after
+        for row in conn.execute(sql, params):
+            payload = row["payload"] or "{}"
+            if payload == "{}":
+                payload = ""
+            print(f"{row['at']}  {row['task_id'] or '—':<5} {row['kind']:<20} {payload}")
+            last = row["seq"]
+        return last
+
+    start = conn.execute("SELECT COALESCE(MAX(seq),0) - ? m FROM event", (args.tail,)).fetchone()["m"]
+    seen = show(args.tail, max(0, start))
+    if not args.follow:
+        return 0
+    try:
+        while True:
+            time.sleep(2)
+            seen = show(200, seen) or seen
+    except KeyboardInterrupt:
+        return 0
+
+
+def cmd_stats(args: argparse.Namespace) -> int:
+    """По шагам: заходов на задачу, доля «нет сигнала», медиана хода, вопросы."""
+    conn = _ro_db()
+    tasks = [
+        r["id"]
+        for r in conn.execute(
+            "SELECT id FROM task ORDER BY created_at DESC LIMIT ?", (args.last,)
+        )
+    ]
+    if not tasks:
+        print("задач нет")
+        return 0
+    marks = ",".join("?" * len(tasks))
+    rows = list(conn.execute(f"SELECT * FROM run WHERE task_id IN ({marks})", tasks))
+    by_step: dict[str, list] = {}
+    for run in rows:
+        by_step.setdefault(run["step"], []).append(run)
+    asks = {}
+    for row in conn.execute(
+        f"SELECT task_id, payload FROM event WHERE kind = 'stopped' AND task_id IN ({marks})",
+        tasks,
+    ):
+        if '"ask"' in (row["payload"] or ""):
+            asks[row["task_id"]] = asks.get(row["task_id"], 0) + 1
+
+    print(f"{'шаг':<18} {'заходов/задачу':>15} {'нет сигнала':>12} {'медиана хода':>14}")
+    for step, runs in sorted(by_step.items()):
+        with_task = len({r["task_id"] for r in runs})
+        per_task = len(runs) / max(1, with_task)
+        silent = sum(1 for r in runs if r["ended_at"] and not r["outcome"])
+        share = silent / max(1, len(runs))
+        durations = sorted(r["duration_s"] for r in runs if r["duration_s"])
+        median = durations[len(durations) // 2] if durations else 0
+        print(f"{step:<18} {per_task:>15.1f} {share:>11.0%} {median:>13.0f}с")
+    print(f"\nвопросов владельцу: {sum(asks.values())} на {len(tasks)} задач")
+    return 0
+
+
+def cmd_task_move(args: argparse.Namespace) -> int:
+    """Кнопка из терминала. Заявка в `inbox/`: писатель базы один — движок."""
+    conn = _ro_db()
+    row = conn.execute("SELECT revision FROM task WHERE id = ?", (args.task,)).fetchone()
+    if row is None:
+        raise Refused(f"нет задачи {args.task}")
+    request = {
+        "id": uuid.uuid4().hex[:12],
+        "kind": "button",
+        "task": args.task,
+        "revision": row["revision"],
+        "action": args.action,
+        "target": args.target,
+        "comment": args.comment,
+        "at": signals.now(),
+    }
+    INBOX.mkdir(parents=True, exist_ok=True)
+    path = INBOX / f"{request['id']}.json"
+    path.write_text(json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"кнопка «{args.action}» поставлена в очередь движку: {path}")
+    return 0
+
+
+def cmd_inbox(args: argparse.Namespace) -> int:
+    """Завести сессию Inbox проекта: заявка движку."""
+    project = Path(args.project).resolve()
+    request = {
+        "id": uuid.uuid4().hex[:12],
+        "kind": "inbox_session",
+        "project_path": str(project),
+        "at": signals.now(),
+    }
+    INBOX.mkdir(parents=True, exist_ok=True)
+    (INBOX / f"{request['id']}.json").write_text(
+        json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(f"сессия Inbox для {project} будет создана на следующем проходе")
+    return 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Что должно работать, чтобы движок ехал."""
+    import shutil
+    import urllib.error
+    import urllib.request
+
+    ok = True
+
+    def check(name: str, good: bool, detail: str = "") -> None:
+        nonlocal ok
+        ok = ok and good
+        print(f"  {'ok  ' if good else 'ПЛОХО'} {name}{'  ' + detail if detail else ''}")
+
+    print("orch doctor:")
+    check("база", DB_PATH.exists(), str(DB_PATH))
+    check("inbox", INBOX.parent.is_dir(), str(INBOX))
+    for name in ("orch", "orch-plugin"):
+        path = shutil.which(name, path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin")
+        check(f"{name} в PATH демона", bool(path), path or "нет симлинка в /usr/local/bin")
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8065/api/sessions?state=live", timeout=5) as r:
+            live = len(json.loads(r.read().decode()).get("sessions", []))
+        check("демон AoE", True, f"живых сессий {live}")
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+        check("демон AoE", False, str(exc))
+    from .chain import chains_dir
+
+    for path in sorted(chains_dir().glob("*.yml")):
+        try:
+            load_chain(path)
+            check(f"цепочка {path.stem}", True)
+        except ChainError as exc:
+            check(f"цепочка {path.stem}", False, str(exc))
+    return 0 if ok else 1
+
+
 # ── вспомогательное ──────────────────────────────────────────────────────
 def _flag(value: str) -> bool:
     v = value.strip().lower()
@@ -245,6 +454,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_task = sub.add_parser("task", help="задачи")
     task_sub = p_task.add_subparsers(dest="task_command", required=True)
 
+    p = task_sub.add_parser("list", help="все задачи одной строкой")
+    p.set_defaults(func=cmd_task_list)
+
+    p = task_sub.add_parser("show", help="задача целиком: заходы, движения, лист")
+    p.add_argument("task")
+    p.set_defaults(func=cmd_task_show)
+
+    p = task_sub.add_parser("move", help="нажать кнопку из терминала")
+    p.add_argument("task")
+    p.add_argument("action", choices=["accept", "back", "again", "start"])
+    p.add_argument("--target", help="шаг для accept/back")
+    p.add_argument("--comment", help="комментарий владельца адресату")
+    p.set_defaults(func=cmd_task_move)
+
     p = task_sub.add_parser("new", help="заявка на новую задачу")
     p.add_argument("text")
     p.add_argument("--chain", default="deep")
@@ -254,6 +477,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ask", action="append", metavar="ШАГ=on|off")
     p.add_argument("--backlog", action="store_true")
     p.set_defaults(func=cmd_task_new)
+
+    p = sub.add_parser("log", help="журнал событий")
+    p.add_argument("task", nargs="?")
+    p.add_argument("--follow", action="store_true")
+    p.add_argument("--tail", type=int, default=20)
+    p.set_defaults(func=cmd_log)
+
+    p = sub.add_parser("stats", help="качество промптов по шагам")
+    p.add_argument("--last", type=int, default=20)
+    p.set_defaults(func=cmd_stats)
+
+    p = sub.add_parser("inbox", help="сессия Inbox проекта")
+    p.add_argument("project")
+    p.set_defaults(func=cmd_inbox)
+
+    p = sub.add_parser("doctor", help="проверить окружение")
+    p.set_defaults(func=cmd_doctor)
 
     return parser
 
