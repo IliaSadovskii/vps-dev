@@ -209,47 +209,53 @@ def home_pane(db: Db, projects: list[str] | None = None, cost_warn: float = 5.0)
 
 
 def _new_task_blocks(projects: list[str]) -> list[dict]:
-    """Заведение задачи: кнопка на проект.
+    """Заведение задачи: строка на проект плюс «другой проект».
 
-    Клик по общей панели приходит без сессии, а мастеру нужен проект. Один
-    проект — одна кнопка; несколько — строка на каждый, чтобы не гадать.
+    Клик по общей панели приходит без сессии, а мастеру нужен проект, поэтому
+    проект выбирается сразу строкой. Список — все репозитории каталога
+    проектов, а не только те, где уже шла работа: иначе в новом проекте
+    задачу нельзя было бы завести, не открыв там сессию руками.
     """
-    if len(projects) == 1:
-        return [
-            {
-                "kind": "action",
-                "label": "Новая задача",
-                "method": "orch.wizard",
-                "variant": "primary",
-                "icon": "plus",
-                "params": {"project": projects[0]},
-            }
-        ]
-    if not projects:
-        return [
-            {
-                "kind": "note",
-                "tone": "warn",
-                "text": "Проектов не видно: заведите задачу командой "
-                "`orch task new --project <путь> \"текст\"`.",
-            }
-        ]
+    rows = [
+        {
+            "kind": "row",
+            "label": Path(p).name,
+            "sublabel": p,
+            "value": "завести",
+            "mono": True,
+            "method": "orch.wizard",
+            "params": {"project": p},
+        }
+        for p in projects[:MAX_TASKS]
+    ]
+    rows.append(
+        {
+            "kind": "row",
+            "label": "другой проект",
+            "sublabel": "мастер спросит путь в чате",
+            "value": "завести",
+            "method": "orch.wizard",
+            "params": {},
+        }
+    )
+    rows.append(
+        {
+            "kind": "note",
+            "text": "То же самое без панели: в обычной «New session» напишите "
+            "orch в поле Group или в названии сессии — она сама станет "
+            "мастером. Из открытой сессии проекта — Ctrl+K, «orch: новая "
+            "задача».",
+        }
+    )
     return [
         {
             "kind": "section",
             "title": "Новая задача",
-            "children": [
-                {
-                    "kind": "row",
-                    "label": Path(p).name,
-                    "sublabel": p,
-                    "value": "завести",
-                    "mono": True,
-                    "method": "orch.wizard",
-                    "params": {"project": p},
-                }
-                for p in projects[:MAX_TASKS]
-            ],
+            "icon": "plus",
+            "badges": [{"text": str(len(projects))}],
+            "collapsible": True,
+            "collapsed": len(projects) > 6,
+            "children": rows,
         }
     ]
 
@@ -288,8 +294,6 @@ def _waiting_row(db: Db, task) -> dict:
         "value": _ago(_state_since(db, task)),
         "tone": "danger",
         "badges": [{"text": task["step"] or "—"}],
-        "method": "orch.focus",
-        "params": {"task": task["id"], "revision": task["revision"]},
     }
 
 
@@ -433,8 +437,27 @@ def task_pane(
 # Хост сам подсвечивает строку, когда сессия `Waiting`/`Error` или на ней
 # флаг `urgent` (движок его ставит на каждой остановке). Подсветка говорит
 # «посмотри сюда», а бейдж — зачем: ворота, вопрос, какой шаг из скольких.
-def row_badge(db: Db, task, step_no: int | None = None, steps: int | None = None) -> dict:
-    """Слот `row-badge`: одна короткая пометка на строке сессии шага."""
+def row_badge(db: Db, task, session_id: str, chain: Chain | None = None) -> dict:
+    """Слот `row-badge`: пометка на строке **этой** сессии, а не задачи.
+
+    У задачи много сессий — по одной на заход, и все они висят в сайдбаре.
+    Пометка «ворота» на строке позапрошлого шага соврала бы: этот заход
+    давно закончен и своим исходом. Поэтому бейдж строится по заходу,
+    которому принадлежит сессия, и только текущий заход говорит о задаче.
+    """
+    run = db.conn.execute(
+        "SELECT * FROM run WHERE task_id = ? AND session_id = ? ORDER BY id DESC LIMIT 1",
+        (task["id"], session_id),
+    ).fetchone()
+    if run is None:
+        return {"text": task["id"], "tone": "neutral"}
+    if run["ended_at"] and run["step"] != task["step"]:
+        outcome = run["outcome"] or ("сдан" if run["signalled"] else "без сигнала")
+        return {
+            "text": f"{run['step']} → {outcome}",
+            "tone": "neutral",
+            "tooltip": f"{task['id']} · заход {run['n']} закончен",
+        }
     status = task["status"]
     if status == WAITING:
         reason = task["wait_reason"] or ""
@@ -448,9 +471,8 @@ def row_badge(db: Db, task, step_no: int | None = None, steps: int | None = None
             "error": "ошибка",
             "no_worker": "агент не поднялся",
         }.get(reason, "ждёт вас")
-        step = task["step"]
         return {
-            "text": f"{text} · {step}" if step else text,
+            "text": f"{text} · {run['step']}",
             "tone": "danger",
             "icon": "hand",
             "tooltip": _what_to_decide(db, task),
@@ -461,9 +483,12 @@ def row_badge(db: Db, task, step_no: int | None = None, steps: int | None = None
         return {"text": "сессия потеряна", "tone": "danger"}
     if status == QUEUED:
         return {"text": "в очереди", "tone": "neutral"}
-    place = f" {step_no}/{steps}" if step_no and steps else ""
+    place = ""
+    n, total = step_place(task, chain)
+    if n and total:
+        place = f" {n}/{total}"
     return {
-        "text": f"{task['step'] or 'едет'}{place}",
+        "text": f"{run['step']}{place}",
         "tone": "info",
         "tooltip": f"{task['id']} · {task['title']}",
     }

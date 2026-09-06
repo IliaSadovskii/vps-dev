@@ -75,6 +75,7 @@ class FakeAoe:
             "status": IDLE,
             "title": title,
             "project_path": project,
+            "group_path": group or "",
             "acp_worker_state": "running",
             "idle_entered_at": None,
             # Модель адаптер получает не при создании: движок ставит её
@@ -107,7 +108,7 @@ class FakeAoe:
 
     # оформление
     def set_title(self, sid, title): self.titles[sid] = title
-    def set_group(self, sid, group): pass
+    def set_group(self, sid, group): self.rows[sid]["group_path"] = group
     def set_color(self, sid, color): self.colors[sid] = color
     def set_notify(self, sid, on_idle): self.notify[sid] = on_idle
     def set_urgent(self, sid, urgent): self.urgent[sid] = urgent

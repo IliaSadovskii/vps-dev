@@ -59,6 +59,7 @@ class Session:
     status: str
     title: str
     project_path: str
+    group: str
     worker_state: str
     idle_entered_at: str | None
     raw: dict
@@ -70,6 +71,7 @@ class Session:
             status=raw.get("status", "Unknown"),
             title=raw.get("title") or "",
             project_path=raw.get("project_path") or "",
+            group=(raw.get("group_path") or "").strip(),
             worker_state=raw.get("acp_worker_state") or "",
             idle_entered_at=raw.get("idle_entered_at"),
             raw=raw,

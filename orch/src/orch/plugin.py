@@ -52,7 +52,14 @@ class Worker:
             self.read_settings()
             self.push_all(force=True)
             return {}
+        if tail == "new":
+            self.on_action("wizard", {"session_id": params.get("session_id") or ""})
+            return {"ok": True, "message": "мастер задачи открывается"}
         if method == "plugin.command.invoke" or tail == "status":
+            command = str(params.get("command") or "")
+            if command.endswith("new"):
+                self.on_action("wizard", {"session_id": params.get("session_id") or ""})
+                return {"ok": True, "message": "мастер задачи открывается"}
             return {"ok": True, "message": self.status_line()}
         if method.startswith("orch."):
             self.on_action(tail, params)
@@ -146,12 +153,19 @@ class Worker:
             if task is None or int(params.get("revision", -1)) != int(task["revision"]):
                 return
             project = task["project_path"]
+        mode = params.get("mode") or "start"
         if not project:
             project = self._project_of_session(session_id)
         if not project:
-            self.notify("orch", "не понял, в каком проекте задача", tone="warn")
-            return
-        sid = self.engine.open_wizard(project, task_id, params.get("mode") or "start")
+            # «Другой проект»: мастера сажаем в первый попавшийся репозиторий
+            # (сессии нужен каталог), а проект он спросит в чате и передаст
+            # команде флагом `--project`.
+            known = self.projects_on_disk()
+            if not known:
+                self.notify("orch", "не нашёл ни одного проекта", tone="warn")
+                return
+            project, mode = known[0], "pick"
+        sid = self.engine.open_wizard(project, task_id, mode)
         if sid is None:
             self.notify("orch", "мастер не открылся, смотрите журнал", tone="danger")
             return
@@ -159,9 +173,6 @@ class Worker:
             "orch: мастер задачи открыт",
             "он в сайдбаре, группа «orch/мастер» — отвечайте ему в чате",
         )
-
-    def btn_focus(self, session_id, params) -> None:
-        """Строка ждущей задачи в общей панели: ничего не меняет, только жест."""
 
     # ── кнопка у поля ввода ──────────────────────────────────────────────
     # ── исходящие вызовы хоста ───────────────────────────────────────────
@@ -171,6 +182,7 @@ class Worker:
         "cost_warn_usd": 5,
         "default_chain": "deep",
         "aoe_url": "",
+        "projects_dir": "/projects",
     }
 
     def read_settings(self) -> None:
@@ -194,6 +206,7 @@ class Worker:
             cost_warn_usd=float(self.settings.get("cost_warn_usd", 5)),
             default_chain=str(self.settings.get("default_chain", "deep")),
             aoe_url=str(self.settings.get("aoe_url") or ""),
+            projects_dir=str(self.settings.get("projects_dir") or "/projects"),
         )
 
     @property
@@ -255,10 +268,9 @@ class Worker:
             # Бейдж на строке сессии: подсветку «сюда посмотри» хост рисует
             # сам по `urgent`, а зачем смотреть — знаем только мы.
             chain = self.engine.chain_of(task)
-            place = panels.step_place(task, chain)
             self._push_if_changed(
                 ("row-badge", session_id),
-                panels.row_badge(db, task, *place),
+                panels.row_badge(db, task, session_id, chain),
                 "row-badge",
                 "step",
                 session_id,
@@ -284,12 +296,17 @@ class Worker:
         }
 
     def known_projects(self) -> list[str]:
-        """Проекты, в которых есть задачи или живые сессии.
+        """Все проекты машины, а не только те, где уже что-то шло.
 
         Кнопке «Новая задача» нужен проект, а клик по общей панели приходит
-        без сессии, поэтому выбор показываем строками (`panels._new_task_blocks`).
+        без сессии, поэтому выбор показываем строками. Брать только проекты
+        с задачами и живыми сессиями было мало: чтобы завести задачу в новом
+        проекте, пришлось бы сперва открыть в нём сессию руками. Поэтому
+        читаем ещё каталог проектов (настройка `projects_dir`).
         """
         out: list[str] = []
+        for root in self.projects_on_disk():
+            out.append(root)
         if self.engine is not None:
             for row in self.engine.db.conn.execute(
                 "SELECT DISTINCT project_path FROM task WHERE project_path IS NOT NULL"
@@ -301,6 +318,22 @@ class Worker:
             if path and path not in out and _is_project_root(path):
                 out.append(path)
         return sorted(out)
+
+    def projects_on_disk(self) -> list[str]:
+        """Репозитории первого уровня в каталоге проектов.
+
+        Рабочие копии задач (`<repo>-orch`, `<repo>-worktrees`) отсеиваются
+        сами: у них `.git` — файл, а не каталог.
+        """
+        base = Path(str(self.settings.get("projects_dir") or "")).expanduser()
+        if not base.is_dir():
+            return []
+        try:
+            items = sorted(base.iterdir())
+        except OSError as exc:
+            log(f"orch-plugin: каталог проектов {base} не читается: {exc!r}")
+            return []
+        return [str(p) for p in items if p.is_dir() and _is_project_root(str(p))]
 
     def _project_of_session(self, session_id: str) -> str | None:
         for row in self.sessions_now():

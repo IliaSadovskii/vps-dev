@@ -651,3 +651,55 @@ def test_титул_без_разметки(engine):
     )
     assert _title_from("# Заголовок\nтекст") == "Заголовок"
     assert _title_from("") == "задача"
+
+
+def test_сессия_с_группой_orch_становится_мастером(engine, fake, repo):
+    """Второй вход: штатная модалка «New session», в поле Group — `orch`."""
+    session = fake.create(
+        path=str(repo),
+        agent="claude",
+        model="sonnet",
+        effort=None,
+        title="Malay",
+        group="orch",
+        idempotency_key="ручная",
+    )
+    engine.reconcile()
+    assert fake.rows[session.id]["group_path"] == "orch/мастер"
+    assert fake.titles[session.id].startswith("Мастер · ")
+    text = [t for target, t in fake.prompts if target == session.id][0]
+    assert "Мастер задачи" in text and "Цепочки:" in text
+    # Второй проход не шлёт промпт снова: группа уже не метка.
+    engine.reconcile()
+    assert len([1 for target, _ in fake.prompts if target == session.id]) == 1
+
+
+def test_сессии_задач_не_путаются_с_меткой(engine, fake, repo):
+    """У сессии шага группа `orch/T5 · …` — усыновлять её нельзя."""
+    task_id = start(engine, repo)
+    sid = session_of(engine, task_id)
+    before = len(fake.prompts)
+    engine.adopt_wizards(fake.sessions())
+    assert len(fake.prompts) == before
+
+
+def test_метка_orch_читается_и_из_титула(engine, fake, repo):
+    """Поле «дополнительные аргументы» плагину не видно — метим титулом."""
+    session = fake.create(
+        path=str(repo), agent="claude", model="sonnet", effort=None,
+        title="orch правки в списке", group="", idempotency_key="титул",
+    )
+    engine.reconcile()
+    assert fake.rows[session.id]["group_path"] == "orch/мастер"
+    assert [t for target, t in fake.prompts if target == session.id]
+
+
+def test_обычная_сессия_владельца_не_трогается(engine, fake, repo):
+    """Слово orch внутри титула — не метка: метка стоит в начале."""
+    session = fake.create(
+        path=str(repo), agent="claude", model="sonnet", effort=None,
+        title="читаю про orch", group="", idempotency_key="чужая",
+    )
+    engine.reconcile()
+    assert fake.rows[session.id]["group_path"] == ""
+    assert not [t for target, t in fake.prompts if target == session.id]

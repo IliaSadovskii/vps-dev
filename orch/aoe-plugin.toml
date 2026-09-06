@@ -30,6 +30,13 @@ id = "task"
 slot = "row-badge"
 id = "step"
 
+# Третий вход в мастера: палитра (Ctrl+K) из любой сессии проекта — проект
+# берётся из этой сессии, вписывать ничего не надо.
+[[commands]]
+id = "new"
+title = "orch: новая задача"
+description = "Открыть мастера задачи для проекта этой сессии."
+
 [[commands]]
 id = "status"
 title = "orch: состояние"
@@ -66,6 +73,13 @@ description = "Куда движок ходит за сессиями. Меня�
 type = "string"
 default = "http://127.0.0.1:8065"
 advanced = true
+
+[[settings]]
+key = "projects_dir"
+label = "Каталог проектов"
+description = "Где искать репозитории для кнопки «Новая задача». Проекты вне его тоже можно назвать мастеру словами."
+type = "string"
+default = "/projects"
 
 [[settings]]
 key = "default_chain"

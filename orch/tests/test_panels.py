@@ -36,18 +36,32 @@ def test_бейдж_строки_сессии_говорит_зачем_смот
     task_id = start(engine, repo)
     task = engine.db.task(task_id)
     chain = engine.chain_of(task)
-    badge = panels.row_badge(engine.db, task, *panels.step_place(task, chain))
+    sid = session_of(engine, task_id)
+    badge = panels.row_badge(engine.db, task, sid, chain)
     assert badge["text"] == "one 1/3" and badge["tone"] == "info"
 
-    sid = session_of(engine, task_id)
     fake.finish_turn(sid)
     engine.reconcile()
     fake.finish_turn(sid)
     engine.reconcile()          # встала без сигнала
     task = engine.db.task(task_id)
-    badge = panels.row_badge(engine.db, task)
+    badge = panels.row_badge(engine.db, task, sid, chain)
     assert badge["tone"] == "danger"
     assert "нет сигнала" in badge["text"] and "one" in badge["text"]
+
+
+def test_бейдж_прошлого_шага_не_врёт_про_ворота(engine, fake, repo):
+    """У задачи много сессий: пометка «ворота» на строке прошлого шага — ложь."""
+    task_id = start(engine, repo)
+    первая = session_of(engine, task_id)
+    turn(engine, fake, task_id, "one", 1, None)     # шаг сдан, задача на шаге two
+    task = engine.db.task(task_id)
+    chain = engine.chain_of(task)
+    прошлая = panels.row_badge(engine.db, task, первая, chain)
+    assert прошлая["text"].startswith("one →")
+    assert прошлая["tone"] == "neutral"
+    текущая = panels.row_badge(engine.db, task, session_of(engine, task_id), chain)
+    assert текущая["text"].startswith("two")
 
 
 def test_ждущая_задача_первой_и_с_кнопками(engine, fake, repo):
@@ -94,7 +108,25 @@ def test_вопрос_роли_не_даёт_кнопок_а_зовёт_в_ча�
     pane = panels.home_pane(engine.db, [str(repo)])
     assert "ответьте ей в чате" in blocks_text(pane)
     # Кроме вечной «Новой задачи», решать тут нечем: отвечают в чате.
-    assert [a["method"] for a in _actions(pane)] == ["orch.wizard"]
+    методы = {b.get("method") for b in _flat(pane["blocks"]) if b.get("method")}
+    assert методы == {"orch.wizard"}
+    assert not _actions(pane)
+
+
+def test_строка_ждущей_задачи_ничего_не_нажимает(engine, fake, repo):
+    """Строка была кликабельной впустую: метод ничего не делал."""
+    task_id = start(engine, repo)
+    sid = session_of(engine, task_id)
+    fake.finish_turn(sid)
+    engine.reconcile()
+    fake.finish_turn(sid)
+    engine.reconcile()
+    строки = [
+        b
+        for b in _flat(panels.home_pane(engine.db)["blocks"])
+        if b.get("kind") == "row" and task_id in str(b.get("label"))
+    ]
+    assert строки and all("method" not in r for r in строки)
 
 
 def test_панель_задачи_показывает_путь_файлы_и_лист(engine, fake, repo):

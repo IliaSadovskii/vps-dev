@@ -56,6 +56,7 @@ class Settings:
     cost_warn_usd: float = 5.0
     default_chain: str = "deep"
     aoe_url: str = ""
+    projects_dir: str = "/projects"
 
 
 class Engine:
@@ -76,6 +77,7 @@ class Engine:
         except AoeError as exc:
             self.db.event(None, "aoe_unreachable", {"error": str(exc)})
             return
+        self.adopt_wizards(sessions)
         for row in self.db.tasks(LIVE):
             try:
                 self.step_task(row, sessions)
@@ -182,6 +184,66 @@ class Engine:
             self.db.event(task_id, "text_edited", {"len": len(text)})
         return f"{task_id}: ТЗ переписано"
 
+    # Слово, которым владелец в штатной модалке «New session» помечает, что
+    # сессия заводится под оркестратор: поле Group = `orch`.
+    WIZARD_MARK = "orch"
+
+    def marked_for_orch(self, session: Session) -> bool:
+        """Владелец пометил сессию как заявку на задачу.
+
+        Метка — слово `orch` в поле Group штатной модалки «New session» или
+        в титуле сессии. Поле «дополнительные аргументы» для метки не годится:
+        `GET /api/sessions` его не отдаёт вовсе, плагин его не увидит.
+        """
+        if session.group.strip().lower() == self.WIZARD_MARK:
+            return True
+        title = session.title.strip().lower()
+        return title == self.WIZARD_MARK or title.startswith(f"{self.WIZARD_MARK} ")
+
+    def adopt_wizards(self, sessions: dict[str, Session]) -> list[str]:
+        """Сессия с группой `orch` становится мастером задачи.
+
+        Кнопка в панели знает проект, но не знает всех проектов машины, а
+        владелец и так заводит сессии штатной модалкой, где проект
+        выбирается привычно. Поэтому второй вход: в поле Group написать
+        `orch` — и движок сам пошлёт в эту сессию промпт мастера. Группа
+        сразу меняется на `orch/мастер`, поэтому дважды одну сессию не
+        усыновим.
+        """
+        from .chain import catalog
+
+        adopted = []
+        for session in sessions.values():
+            if not self.marked_for_orch(session):
+                continue
+            if not session.project_path:
+                continue
+            self.aoe.set_group(session.id, f"{GROUP_ROOT}/мастер")
+            self.aoe.set_title(session.id, f"Мастер · {Path(session.project_path).name}")
+            # Модель ставится вызовом: `agent_model` до адаптера не доезжает,
+            # и мастер молча уходил бы на Opus.
+            self.aoe.apply_model(session.id, "sonnet")
+            self.db.event(
+                None,
+                "wizard_adopted",
+                {"session": session.id, "project": session.project_path},
+            )
+            self.send_wizard_prompt(session.id, session.project_path, None, "start")
+            adopted.append(session.id)
+        return adopted
+
+    def send_wizard_prompt(self, sid: str, project: str, task, mode: str) -> None:
+        """Промпт мастера с каталогом цепочек и контекстом заявки."""
+        from .chain import catalog, prompts_dir
+
+        prompt_file = prompts_dir() / "role-wizard.md"
+        text = prompt_file.read_text(encoding="utf-8") if prompt_file.exists() else ""
+        text += "\n\n" + self.wizard_context(project, catalog(), task, mode)
+        try:
+            self.aoe.prompt(sid, text)
+        except AoeError as exc:
+            self.db.event(None, "wizard_prompt_failed", {"session": sid, "error": str(exc)})
+
     def open_wizard(
         self,
         project_path: str,
@@ -195,11 +257,8 @@ class Engine:
         сама зовёт `orch task new`. Сессия одна на проект: мастер дешёвый, и
         плодить их на каждую заявку незачем.
         """
-        from .chain import catalog, prompts_dir
-
         project = str(Path(project_path).resolve())
         task = self.db.task(task_id) if task_id else None
-        prompt_file = prompts_dir() / "role-wizard.md"
         try:
             session = self.aoe.create(
                 path=project,
@@ -225,18 +284,24 @@ class Engine:
                 "wizard_model_not_applied",
                 {"session": session.id, "got": self.aoe.model_now(session.id)},
             )
-        text = prompt_file.read_text(encoding="utf-8") if prompt_file.exists() else ""
-        text += "\n\n" + self.wizard_context(project, catalog(), task, mode)
-        try:
-            self.aoe.prompt(session.id, text)
-        except AoeError as exc:
-            self.db.event(None, "wizard_prompt_failed", {"project": project, "error": str(exc)})
+        self.send_wizard_prompt(session.id, project, task, mode)
         self.db.event(
             task_id,
             "wizard_opened",
             {"project": project, "session": session.id, "mode": mode},
         )
         return session.id
+
+    def projects_on_disk(self) -> list[str]:
+        """Репозитории каталога проектов — мастеру, когда проект ещё не выбран."""
+        base = Path(self.settings.projects_dir or "/projects").expanduser()
+        if not base.is_dir():
+            return []
+        try:
+            items = sorted(base.iterdir())
+        except OSError:
+            return []
+        return [str(p) for p in items if p.is_dir() and (p / ".git").is_dir()]
 
     def wizard_context(self, project: str, chains: list[dict], task, mode: str) -> str:
         """Блок «чем располагаешь» для мастера: цепочки, проект, заявка."""
@@ -277,6 +342,19 @@ class Engine:
                     "ветку и автономию, и заведи задачу вызовом `orch task new` с "
                     f"`--from-backlog {task['id']}` — заявка закроется сама."
                 )
+        elif mode == "pick":
+            names = ", ".join(f"`{p}`" for p in self.projects_on_disk()) or "не нашёл"
+            lines += [
+                "",
+                "## Новая задача в другом проекте",
+                "",
+                "Владелец нажал «другой проект»: он ещё не сказал, в каком "
+                "проекте работать. Спроси вариантами. Проекты машины: " + names + ".",
+                "",
+                "Путь, который он назовёт, передай команде флагом `--project`. "
+                "Каталог этой сессии к делу не относится: она заведена, чтобы "
+                "было где разговаривать.",
+            ]
         else:
             lines += [
                 "",
