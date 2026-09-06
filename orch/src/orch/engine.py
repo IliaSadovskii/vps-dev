@@ -54,6 +54,7 @@ class Settings:
     max_running: int = 3
     cost_warn_usd: float = 5.0
     default_chain: str = "deep"
+    aoe_url: str = ""
 
 
 class Engine:
@@ -248,7 +249,7 @@ class Engine:
     def begin_run(self, task, chain: Chain) -> None:
         step = chain.step(task["step"])
         done_runs = self.db.runs_of_step(task["id"], step.id)
-        if len(done_runs) >= step.max_runs:
+        if len(done_runs) >= self.runs_allowed(task, step):
             self.stop(task["id"], "max_runs")
             return
 
@@ -656,12 +657,30 @@ class Engine:
         return f"вернул на {target}"
 
     def _btn_again(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
+        """«Ещё заход» / «Продолжай».
+
+        Если задача встала на пределе заходов, кнопка обязана этот предел
+        поднять: иначе движок тут же остановит её снова, и владелец будет
+        нажимать в пустоту.
+        """
         step = chain.step(task["step"])
+        grant = task["wait_reason"] == "max_runs"
         with self.db.tx():
             revision = self.db.bump(task["id"], status=ST_RUNNING, wait_reason=None)
-            self.db.move(task["id"], step.id, step.id, "human", "button", revision, comment=comment)
-            self.db.event(task["id"], "button", {"action": "again", "step": step.id})
-        return "ещё заход"
+            if grant:
+                self.db.move(
+                    task["id"], step.id, step.id, "human", "grant_run", revision,
+                    comment=comment,
+                )
+            else:
+                self.db.move(
+                    task["id"], step.id, step.id, "human", "button", revision,
+                    comment=comment,
+                )
+            self.db.event(
+                task["id"], "button", {"action": "again", "step": step.id, "grant": grant}
+            )
+        return "ещё заход" + (" (предел поднят)" if grant else "")
 
     def _btn_start(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
         if task["status"] not in (BACKLOG, QUEUED):
@@ -691,6 +710,20 @@ class Engine:
     def ask_allowed(self, task, step: Step) -> bool:
         entry = self.sheet(task).get(step.id) or {}
         return bool(entry.get("ask", step.human_ask))
+
+    def runs_allowed(self, task, step: Step) -> int:
+        """Предел заходов плюс те, что владелец добавил кнопкой «Ещё заход».
+
+        Счётчика нет: добавленные заходы считаются по движениям с триггером
+        `grant_run` — так же, как сами заходы считаются по строкам `run`
+        (`research/DB-NOTES.md`, правило 1).
+        """
+        granted = self.db.conn.execute(
+            "SELECT COUNT(*) c FROM move WHERE task_id = ? AND to_step = ? "
+            "AND trigger = 'grant_run'",
+            (task["id"], step.id),
+        ).fetchone()["c"]
+        return step.max_runs + granted
 
     def gates_on(self, task, step: Step, outcome: str | None) -> bool:
         entry = self.sheet(task).get(step.id)

@@ -59,6 +59,14 @@ min = 0
 max = 1000
 
 [[settings]]
+key = "aoe_url"
+label = "Адрес демона AoE"
+description = "Куда движок ходит за сессиями. Меняется только при своём порту демона."
+type = "string"
+default = "http://127.0.0.1:8065"
+advanced = true
+
+[[settings]]
 key = "default_chain"
 label = "Цепочка по умолчанию"
 type = "string"

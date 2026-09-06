@@ -1,84 +1,247 @@
 """Воркер плагина AoE: движок оркестратора и панели.
 
-Пока — каркас: протокол, слоты, приём кликов. Движок и содержимое панелей
-приходят на этапах 1–2 (`orch/PLAN.md` §5, §8). Каркас нужен раньше, чтобы
-спайк 4 проверил живьём: панель рисуется, клик доходит до воркера с
-`session_id`, `composer.read` отдаёт черновик поля ввода.
+Один процесс, две обязанности: проход движка раз в `poll_secs` и перерисовка
+панелей из состояния базы. Панели — чистые функции (`panels.py`), кнопки
+несут ревизию задачи; всё, что кнопка меняет, идёт через `Engine.button`,
+поэтому писатель базы остаётся один.
 """
 
 from __future__ import annotations
 
 import json
+import queue
 import sys
 import threading
 import time
 from pathlib import Path
 
+from . import panels
+from .chain import ChainError, chains_dir, load as load_chain
 from .db import Db, EngineLock
 from .engine import Engine, Settings
 from .rpc import Rpc, RpcError, log
 
 PLUGIN_ID = "dev.sadovskii.orch"
 STATE_DIR = Path.home() / ".local" / "share" / "orch"
-# Журнал кликов: короткая память для панели и материал для спайка 4.
-ACTIONS = STATE_DIR / "plugin-actions.jsonl"
 
 
 class Worker:
     def __init__(self) -> None:
         self.rpc = Rpc(self.handle)
-        self.last_action: dict | None = None
         self.started = time.time()
         self.settings: dict = {}
-        # Сессии, которым уже нарисованы слоты на сессию (`pane`,
-        # `composer-action`). Хост не сообщает о появлении сессии, поэтому
-        # список наполняется проходом движка и кликами.
-        self.session_slots: set[str] = set()
         self.engine: Engine | None = None
+        self.lock: EngineLock | None = None
+        # Черновик новой задачи: лист автономии, который владелец щёлкает до
+        # запуска. Один на весь плагин, потому что общая панель одна и
+        # session_id в её кликах пустой; в черновике помним, из какой сессии
+        # он заведён — оттуда берётся проект и туда возвращается очистка поля.
+        self.draft: dict | None = None
+        # Что уже нарисовано: перерисовываем только при смене ревизии, чтобы
+        # не гонять 64 КиБ каждые пять секунд.
+        self.drawn: dict[tuple[str, str], str] = {}
+        self.session_of_task: dict[str, str] = {}
+        # Клик приходит в своём потоке (иначе воркер запирает сам себя на
+        # ответе хоста), а соединение SQLite привязано к потоку, в котором
+        # создано. Поэтому всё, что трогает базу, кладётся в очередь и
+        # исполняется в потоке движка; `wake` будит его сразу, без ожидания
+        # следующего опроса.
+        self.pending: queue.Queue[tuple[str, str, dict]] = queue.Queue()
+        self.wake = threading.Event()
+        # Просьба очистить поле ввода: держится в полезной нагрузке кнопки,
+        # пока не устареет. Ключ — сессия, значение — операция и время.
+        self.clear_ops: dict[str, tuple[dict, float]] = {}
+        # Комментарий владельца, прикреплённый к следующему движению задачи.
+        # Клик по кнопке панели черновика поля ввода не несёт — его отдают
+        # только кнопке у поля, — поэтому текст приходит отдельно и ждёт
+        # здесь, пока владелец выберет движение.
+        self.comments: dict[str, str] = {}
 
     # ── входящие вызовы хоста ────────────────────────────────────────────
     def handle(self, method: str, params: dict):
-        tail = method.rsplit(".", 1)[-1] if method.startswith("plugin.") else method
+        tail = method.rsplit(".", 1)[-1]
         if method == "plugin.settings.changed":
             self.read_settings()
-            self.push_all()
+            self.push_all(force=True)
             return {}
-        if tail == "status":
-            return {
-                "ok": True,
-                "message": f"orch: воркер жив {int(time.time() - self.started)} с",
-            }
+        if method == "plugin.command.invoke" or tail == "status":
+            return {"ok": True, "message": self.status_line()}
         if method.startswith("orch."):
-            self.on_action(method, params)
+            self.on_action(tail, params)
             return {}
         log(f"orch-plugin: неизвестный метод {method}")
         return NotImplemented
 
-    def on_action(self, method: str, params: dict) -> None:
-        """Клик по кнопке панели или по кнопке у поля ввода."""
-        record = {
-            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "method": method,
-            "session_id": params.get("session_id"),
-            "params": {k: v for k, v in params.items() if k != "session_id"},
+    def status_line(self) -> str:
+        if self.engine is None:
+            return "orch: панели рисую, задачи двигает другой процесс"
+        db = self.engine.db
+        return (
+            f"orch: ждут вас {len(db.tasks(('waiting',)))}, "
+            f"едут {len(db.tasks(('running',)))}, "
+            f"в очереди {len(db.tasks(('queued',)))}"
+        )
+
+    def on_action(self, action: str, params: dict) -> None:
+        session_id = params.get("session_id") or ""
+        log(f"orch-plugin: кнопка {action} {json.dumps(params, ensure_ascii=False)[:300]}")
+        if getattr(self, f"btn_{action}", None) is None:
+            log(f"orch-plugin: кнопки {action} нет")
+            return
+        self.pending.put((action, session_id, params))
+        self.wake.set()
+
+    def drain_actions(self) -> bool:
+        """Исполнить накопленные клики в потоке движка. True — что-то было."""
+        did = False
+        while True:
+            try:
+                action, session_id, params = self.pending.get_nowait()
+            except queue.Empty:
+                return did
+            did = True
+            try:
+                getattr(self, f"btn_{action}")(session_id, params)
+            except Exception as exc:  # noqa: BLE001 — клик не роняет воркер
+                log(f"orch-plugin: кнопка {action} упала: {exc!r}")
+                self.notify("orch", f"кнопка не сработала: {exc}", tone="danger")
+
+    # ── кнопки задачи ────────────────────────────────────────────────────
+    def _move(self, params: dict, action: str) -> None:
+        if self.engine is None:
+            self.notify("orch", "движок ведёт другой процесс", tone="warn")
+            return
+        task_id = params["task"]
+        comment = params.get("comment") or self.comments.pop(task_id, None)
+        answer = self.engine.button(
+            task_id, params["revision"], action, params.get("target"), comment
+        )
+        self.notify(f"{task_id}: {answer}", comment[:120] if comment else None)
+
+    def btn_accept(self, session_id, params): self._move(params, "accept")
+    def btn_accept_as_is(self, session_id, params): self._move(params, "accept")
+    def btn_again(self, session_id, params): self._move(params, "again")
+    def btn_back(self, session_id, params): self._move(params, "back")
+    def btn_start(self, session_id, params): self._move(params, "start")
+
+    def btn_focus(self, session_id, params) -> None:
+        """Строка ждущей задачи в общей панели: ничего не меняет, только жест."""
+
+    def btn_sheet_step(self, session_id, params) -> None:
+        """Клик по строке листа задачи: ворота → вопросы → и то и другое → ничего."""
+        if self.engine is None:
+            return
+        db = self.engine.db
+        task = db.task(params["task"])
+        if task is None or int(params["revision"]) != int(task["revision"]):
+            return
+        sheet = json.loads(task["human_sheet"] or "{}")
+        knobs = sheet.setdefault(params["step"], {"after": False, "ask": True})
+        after, ask = bool(knobs.get("after")), bool(knobs.get("ask"))
+        after, ask = _next_knobs(after, ask)
+        knobs["after"], knobs["ask"] = after, ask
+        with db.tx():
+            db.bump(task["id"], human_sheet=json.dumps(sheet, ensure_ascii=False))
+            db.event(task["id"], "sheet_edited", {"step": params["step"], **knobs})
+
+    # ── кнопка у поля ввода ──────────────────────────────────────────────
+    def btn_move_with_text(self, session_id, params) -> None:
+        """«Двинуть с этим текстом»: черновик становится комментарием движения."""
+        text = ((params.get("composer") or {}).get("text") or "").strip()
+        if self.engine is None:
+            return
+        if self.draft is not None:
+            self.draft["text"] = text
+            self.draft["session_id"] = session_id
+            if not self.draft.get("project_path"):
+                self.draft["project_path"] = self._project_of_session(session_id) or ""
+            self.notify("orch", "текст задачи взят, теперь «Запустить»")
+            self.clear_composer(session_id)
+            return
+        task = self._task_of_session(session_id)
+        if task is None:
+            self.notify("orch", "эта сессия не принадлежит задаче", tone="warn")
+            return
+        if not text:
+            self.comments.pop(task["id"], None)
+            self.notify("orch", "поле пустое: комментарий снят", tone="warn")
+            return
+        self.comments[task["id"]] = text
+        self.notify(
+            f"{task['id']}: комментарий прикреплён",
+            "теперь выберите движение кнопкой в панели",
+        )
+        self.clear_composer(session_id)
+
+    def btn_new_task(self, session_id, params) -> None:
+        """Открыть лист автономии новой задачи."""
+        if self.engine is None:
+            return
+        chain_name = str(self.settings.get("default_chain", "deep"))
+        try:
+            chain = load_chain(chains_dir() / f"{chain_name}.yml")
+        except ChainError as exc:
+            self.notify("orch", f"цепочка {chain_name}: {exc}", tone="danger")
+            return
+        text = ((params.get("composer") or {}).get("text") or "").strip()
+        project = self._project_of_session(session_id)
+        self.draft = {
+            "chain": chain_name,
+            "project_path": project or "",
+            "text": text,
+            "sheet": chain.default_sheet(),
+            "session_id": session_id,
         }
-        self.last_action = record
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        with ACTIONS.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-        log("orch-plugin: клик", json.dumps(record, ensure_ascii=False))
-        sid = record["session_id"]
-        if sid:
-            self.session_slots.add(sid)
-        self.push_all()
+
+    def btn_sheet_toggle(self, session_id, params) -> None:
+        if not self.draft:
+            return
+        knobs = self.draft["sheet"].setdefault(params["step"], {"after": False, "ask": True})
+        knob = params["knob"]
+        knobs[knob] = not bool(knobs.get(knob))
+
+    def btn_launch(self, session_id, params): self._create_draft(backlog=False)
+    def btn_backlog(self, session_id, params): self._create_draft(backlog=True)
+
+    def btn_cancel_new(self, session_id, params) -> None:
+        self.draft = None
+
+    def _create_draft(self, backlog: bool) -> None:
+        draft = self.draft
+        if not draft or self.engine is None:
+            return
+        if not draft.get("text"):
+            self.notify("orch", "текста задачи нет", tone="warn")
+            return
+        if not draft.get("project_path"):
+            self.notify("orch", "не понял, в каком проекте задача", tone="warn")
+            return
+        edits = {}
+        for step, knobs in draft["sheet"].items():
+            edits[f"{step}.after"] = knobs["after"]
+            edits[f"{step}.ask"] = knobs["ask"]
+        try:
+            task_id = self.engine.create_task(
+                chain_name=draft["chain"],
+                project_path=draft["project_path"],
+                text=draft["text"],
+                sheet_edits=edits,
+                backlog=backlog,
+            )
+        except (ChainError, OSError) as exc:
+            self.notify("orch", f"задача не создалась: {exc}", tone="danger")
+            return
+        self.draft = None
+        self.notify(f"{task_id} создана", "в бэклоге" if backlog else "поехала")
+        self.clear_composer(draft.get("session_id") or "")
 
     # ── исходящие вызовы хоста ───────────────────────────────────────────
-    # Ключи объявлены в `aoe-plugin.toml`; хост отдаёт по одному за вызов.
     SETTING_DEFAULTS = {
         "poll_secs": 5,
         "max_running": 3,
         "cost_warn_usd": 5,
         "default_chain": "deep",
+        "aoe_url": "",
     }
 
     def read_settings(self) -> None:
@@ -91,6 +254,24 @@ class Worker:
                 value = None
             settings[key] = default if value is None else value
         self.settings = settings
+        if self.engine:
+            self.engine.settings = self._settings_object()
+            self.engine.aoe.base = self.base_url
+
+    def _settings_object(self) -> Settings:
+        return Settings(
+            poll_secs=self.poll_secs,
+            max_running=int(self.settings.get("max_running", 3)),
+            cost_warn_usd=float(self.settings.get("cost_warn_usd", 5)),
+            default_chain=str(self.settings.get("default_chain", "deep")),
+            aoe_url=str(self.settings.get("aoe_url") or ""),
+        )
+
+    @property
+    def base_url(self) -> str:
+        from .aoe import BASE
+
+        return str(self.settings.get("aoe_url") or BASE).rstrip("/")
 
     def ui_set(self, slot: str, ident: str, payload: dict, session_id: str | None = None) -> None:
         params = {"slot": slot, "id": ident, "payload": payload}
@@ -101,89 +282,127 @@ class Worker:
         except RpcError as exc:
             log(f"orch-plugin: ui.state.set {slot}/{ident}: {exc}")
 
-    def push_all(self) -> None:
-        self.ui_set("home-pane", "tasks", self.home_pane())
-        for sid in sorted(self.session_slots):
-            self.ui_set("pane", "task", self.task_pane(sid), session_id=sid)
-            self.ui_set("composer-action", "move", self.composer_action(), session_id=sid)
+    def notify(self, title: str, body: str | None, tone: str = "info") -> None:
+        try:
+            self.rpc.call("ui.notify", {"title": title, "body": body, "tone": tone})
+        except RpcError:
+            pass
 
-    # ── содержимое панелей (наполняется на этапе 2) ───────────────────────
-    def home_pane(self) -> dict:
-        blocks: list[dict] = [{"kind": "heading", "text": "Задачи"}]
-        if self.last_action:
-            act = self.last_action
-            composer = (act["params"].get("composer") or {}).get("text")
-            blocks.append(
-                {
-                    "kind": "row",
-                    "label": f"последний клик: {act['method']}",
-                    "sublabel": f"сессия {act['session_id']}",
-                    "value": act["at"],
-                    "mono": True,
-                }
+    # Сколько держим просьбу очистить поле, чтобы браузер успел её забрать.
+    CLEAR_TTL_S = 120.0
+
+    def clear_composer(self, session_id: str) -> None:
+        """Очистить поле ввода: текст уже стал комментарием движения."""
+        if not session_id:
+            return
+        self.clear_ops[session_id] = (
+            {"kind": "set-text", "id": f"clear-{int(time.time() * 1000)}", "text": ""},
+            time.time(),
+        )
+
+    def _clear_op(self, session_id: str) -> dict | None:
+        entry = self.clear_ops.get(session_id)
+        if not entry:
+            return None
+        op, at = entry
+        if time.time() - at > self.CLEAR_TTL_S:
+            self.clear_ops.pop(session_id, None)
+            return None
+        return op
+
+    def sessions_now(self) -> list[dict]:
+        try:
+            return self.rpc.call("sessions.list", {}).get("sessions", [])
+        except RpcError as exc:
+            log(f"orch-plugin: sessions.list: {exc}")
+            return []
+
+    # ── перерисовка ──────────────────────────────────────────────────────
+    def push_all(self, force: bool = False) -> None:
+        if self.engine is None:
+            self.ui_set("home-pane", "tasks", _no_engine_pane())
+            return
+        db = self.engine.db
+        cost_warn = float(self.settings.get("cost_warn_usd", 5))
+        draft = self.draft
+        self._push_if_changed(
+            ("home-pane", ""),
+            panels.home_pane(db, draft, cost_warn),
+            "home-pane",
+            "tasks",
+            None,
+            force,
+        )
+        self._refresh_session_map(db)
+        for session_id, task_id in self.session_of_task.items():
+            task = db.task(task_id)
+            if task is None:
+                continue
+            self._push_if_changed(
+                ("pane", session_id),
+                panels.task_pane(
+                    db,
+                    task,
+                    session_id,
+                    self.base_url,
+                    cost_warn,
+                    comment=self.comments.get(task_id),
+                ),
+                "pane",
+                "task",
+                session_id,
+                force,
             )
-            if composer is not None:
-                blocks.append(
-                    {
-                        "kind": "row",
-                        "label": "черновик поля ввода",
-                        "sublabel": composer[:200] or "(пусто)",
-                        "mono": True,
-                    }
-                )
-        else:
-            blocks.append({"kind": "note", "text": "движок ещё не запущен"})
-        blocks.append(
-            {
-                "kind": "action",
-                "label": "Проверка кнопки",
-                "method": "orch.ping",
-                "params": {"from": "home-pane"},
-            }
-        )
-        return {
-            "title": "orch",
-            "default_location": "right",
-            "icon": "list-checks",
-            "blocks": blocks,
-        }
-
-    def task_pane(self, session_id: str) -> dict:
-        blocks: list[dict] = [{"kind": "heading", "text": "Задача"}]
-        blocks.append(
-            {"kind": "row", "label": "сессия", "value": session_id, "mono": True}
-        )
-        if self.last_action:
-            blocks.append(
-                {
-                    "kind": "row",
-                    "label": "последний клик",
-                    "value": self.last_action["method"],
-                    "mono": True,
-                }
+        # Кнопка у поля ввода — в каждой живой сессии: из чужой сессии ею
+        # набирают текст новой задачи, из сессии задачи — комментарий движения.
+        for row in self.sessions_now():
+            session_id = row.get("id")
+            if not session_id or row.get("archived"):
+                continue
+            task_id = self.session_of_task.get(session_id)
+            task = db.task(task_id) if task_id else None
+            self._push_if_changed(
+                ("composer-action", session_id),
+                panels.composer_action(
+                    task,
+                    draft_open=self.draft is not None,
+                    clear_op=self._clear_op(session_id),
+                ),
+                "composer-action",
+                "move",
+                session_id,
+                force,
             )
-        blocks.append(
-            {
-                "kind": "action",
-                "label": "Проверка кнопки в сессии",
-                "method": "orch.ping",
-                "params": {"from": "pane"},
-            }
-        )
-        return {
-            "title": "orch",
-            "default_location": "right",
-            "icon": "list-checks",
-            "blocks": blocks,
+
+    def _push_if_changed(self, key, payload, slot, ident, session_id, force) -> None:
+        blob = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        if not force and self.drawn.get(key) == blob:
+            return
+        self.drawn[key] = blob
+        self.ui_set(slot, ident, payload, session_id=session_id)
+
+    def _refresh_session_map(self, db: Db) -> None:
+        """Какая сессия какой задаче принадлежит — из заходов, без догадок."""
+        self.session_of_task = {
+            row["session_id"]: row["task_id"]
+            for row in db.conn.execute(
+                "SELECT DISTINCT session_id, task_id FROM run "
+                "WHERE session_id IS NOT NULL AND task_id IN "
+                "(SELECT id FROM task WHERE status IN ('running','waiting','queued'))"
+            )
         }
 
-    def composer_action(self) -> dict:
-        return {
-            "label": "Двинуть с этим текстом",
-            "method": "orch.move_with_text",
-            "icon": "arrow-right",
-            "tooltip": "Комментарий владельца к движению задачи",
-        }
+    def _task_of_session(self, session_id: str):
+        if self.engine is None:
+            return None
+        task_id = self.session_of_task.get(session_id)
+        return self.engine.db.task(task_id) if task_id else None
+
+    def _project_of_session(self, session_id: str) -> str | None:
+        for row in self.sessions_now():
+            if row.get("id") == session_id:
+                return row.get("project_path") or None
+        return None
 
     # ── жизненный цикл ───────────────────────────────────────────────────
     def run(self) -> int:
@@ -191,8 +410,12 @@ class Worker:
         reader.start()
         self.read_settings()
         self.start_engine()
-        self.push_all()
-        while not self.rpc.stopped.wait(timeout=self.poll_secs):
+        self.push_all(force=True)
+        while not self.rpc.stopped.is_set():
+            self.wake.wait(timeout=self.poll_secs)
+            self.wake.clear()
+            if self.rpc.stopped.is_set():
+                break
             self.tick()
         log("orch-plugin: stdin закрыт, выходим")
         return 0
@@ -204,16 +427,6 @@ class Worker:
         except (TypeError, ValueError):
             return 5.0
 
-    def tick(self) -> None:
-        """Проход движка: одно действие на задачу, дальше перерисовка панелей."""
-        if self.engine is None:
-            return
-        try:
-            self.engine.reconcile()
-        except Exception as exc:  # noqa: BLE001 — воркер не падает от одной задачи
-            log(f"orch-plugin: проход движка упал: {exc!r}")
-        self.push_all()
-
     def start_engine(self) -> None:
         self.lock = EngineLock()
         if not self.lock.acquire():
@@ -223,15 +436,55 @@ class Worker:
             )
             self.engine = None
             return
-        self.engine = Engine(
-            Db(),
-            settings=Settings(
-                poll_secs=self.poll_secs,
-                max_running=int(self.settings.get("max_running", 3)),
-                cost_warn_usd=float(self.settings.get("cost_warn_usd", 5)),
-                default_chain=str(self.settings.get("default_chain", "deep")),
-            ),
-        )
+        self.engine = self._new_engine()
+
+    def _new_engine(self) -> Engine:
+        from .aoe import Aoe
+
+        settings = self._settings_object()
+        return Engine(Db(), Aoe(self.base_url), settings)
+
+    def tick(self) -> None:
+        if self.engine is None:
+            # Замок мог освободиться: движок из терминала выключили.
+            if self.lock and self.lock.acquire():
+                self.engine = self._new_engine()
+                log("orch-plugin: движок подхвачен этим воркером")
+            else:
+                self.drain_actions()
+                self.push_all()
+                return
+        clicked = self.drain_actions()
+        try:
+            self.engine.reconcile()
+        except Exception as exc:  # noqa: BLE001 — воркер не падает от одной задачи
+            log(f"orch-plugin: проход движка упал: {exc!r}")
+        self.push_all(force=clicked)
+
+
+def _next_knobs(after: bool, ask: bool) -> tuple[bool, bool]:
+    """Круг переключателя строки листа: ничего → ворота → вопросы → оба."""
+    order = [(False, False), (True, False), (False, True), (True, True)]
+    try:
+        return order[(order.index((after, ask)) + 1) % len(order)]
+    except ValueError:
+        return (True, False)
+
+
+def _no_engine_pane() -> dict:
+    return {
+        "title": "orch",
+        "default_location": "right",
+        "icon": "list-checks",
+        "blocks": [
+            {"kind": "heading", "text": "Задачи"},
+            {
+                "kind": "note",
+                "tone": "warn",
+                "text": "Движок ведёт другой процесс: панель только читает.",
+            },
+        ],
+    }
 
 
 def run_standalone(poll_secs: float) -> int:

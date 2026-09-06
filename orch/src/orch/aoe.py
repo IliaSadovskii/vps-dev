@@ -15,7 +15,12 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-BASE = "http://127.0.0.1:8065"
+import os
+
+# Порт демона — параметр развёртывания: рабочий демон на 8065, запасной для
+# проверки плагина на другом. Настройка плагина главнее переменной окружения,
+# она и передаётся в конструктор.
+BASE = os.environ.get("ORCH_AOE_URL", "http://127.0.0.1:8065")
 
 # Статусы сессии AoE, как они приходят по проводу (PascalCase).
 STARTING, RUNNING, WAITING, IDLE, ERROR, STOPPED = (

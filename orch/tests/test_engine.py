@@ -146,6 +146,25 @@ def test_возврат_ролью_и_предел_заходов(engine, fake, 
     assert task["status"] == WAITING and task["wait_reason"] == "max_runs"
 
 
+def test_ещё_заход_на_пределе_поднимает_предел(engine, fake, repo):
+    """Кнопка на пределе заходов обязана дать заход, а не остановить снова."""
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "back")
+    turn(engine, fake, task_id, "one", 2, None)
+    turn(engine, fake, task_id, "two", 2, "back")
+    turn(engine, fake, task_id, "one", 3, None)
+    task = engine.db.task(task_id)
+    assert task["wait_reason"] == "max_runs"
+
+    assert "предел поднят" in engine.button(task_id, task["revision"], "again")
+    engine.reconcile()
+    engine.reconcile()
+    task = engine.db.task(task_id)
+    assert task["status"] == RUNNING and task["step"] == "two"
+    assert len(engine.db.runs_of_step(task_id, "two")) == 3
+
+
 def test_нет_сигнала(engine, fake, repo):
     task_id = start(engine, repo)
     sid = session_of(engine, task_id)

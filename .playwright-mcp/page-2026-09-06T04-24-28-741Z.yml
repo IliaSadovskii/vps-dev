@@ -1,0 +1,95 @@
+- generic [ref=f9e3]:
+  - banner [ref=f9e6]:
+    - generic [ref=f9e7]:
+      - button "Toggle sidebar" [ref=f9e8] [cursor=pointer]
+      - button "Go to dashboard" [ref=f9e11] [cursor=pointer]:
+        - generic [ref=f9e12]: aoe
+    - button "Open command palette" [ref=f9e15] [cursor=pointer]:
+      - generic [ref=f9e19]: Search anything…
+      - generic [ref=f9e20]: CtrlK
+    - generic [ref=f9e21]:
+      - generic [ref=f9e22]:
+        - button "Toggle diff pane" [pressed] [ref=f9e23] [cursor=pointer]
+        - button "Toggle files pane" [ref=f9e26] [cursor=pointer]
+        - button "Toggle terminal pane" [pressed] [ref=f9e32] [cursor=pointer]
+        - button "Toggle sub agents pane" [ref=f9e36] [cursor=pointer]
+        - button "Toggle orch · t2 pane" [ref=f9e40] [cursor=pointer]
+      - button "More options" [ref=f9e42] [cursor=pointer]
+  - generic [ref=f9e47]:
+    - generic [ref=f9e48]:
+      - generic [ref=f9e49]:
+        - generic [ref=f9e50]: Sessions
+        - button "Group sessions by repository" [ref=f9e52] [cursor=pointer]
+        - 'button "Sort sessions, current: Manual" [ref=f9e59] [cursor=pointer]'
+        - button "Filter sessions" [ref=f9e64] [cursor=pointer]
+        - button "New project session" [ref=f9e68] [cursor=pointer]
+        - button "Compact sidebar" [ref=f9e72] [cursor=pointer]
+      - generic [ref=f9e75]:
+        - generic [ref=f9e76]:
+          - generic "Project actions for kandev-trial" [ref=f9e77]:
+            - button "kandev-trial (4)" [expanded] [ref=f9e79] [cursor=pointer]:
+              - generic "/projects/kandev-trial" [ref=f9e87]: kandev-trial
+              - generic [ref=f9e88]: (4)
+            - button "New session in kandev-trial" [ref=f9e90] [cursor=pointer]
+          - 'link "⠒ Color: amber t2-panel-nyj-progon-vozvrat-knopkoj [t2-panel-nyj]" [ref=f9e93] [cursor=pointer]':
+            - /url: /session/adcba05b24be485a
+            - generic [ref=f9e94]:
+              - generic [ref=f9e95]: ⠒
+              - generic [ref=f9e97]:
+                - 'generic "Color: amber" [ref=f9e98]'
+                - generic "t2-panel-nyj-progon-vozvrat-knopkoj" [ref=f9e99]
+                - generic "t2-panel-nyj-progon-vozvrat-knopkoj" [ref=f9e100]: "[t2-panel-nyj]"
+          - 'link "Unread Color: red t1-dobavit-v-notes-cli-komandu-udal [t1-dobavit-v] Unsent draft" [ref=f9e102] [cursor=pointer]':
+            - /url: /session/f3690d64c78e4199
+            - generic [ref=f9e103]:
+              - generic [ref=f9e104]: ●
+              - generic [ref=f9e106]:
+                - 'generic "Color: red" [ref=f9e107]'
+                - generic "t1-dobavit-v-notes-cli-komandu-udal" [ref=f9e108]
+                - generic "t1-dobavit-v-notes-cli-komandu-udal" [ref=f9e109]: "[t1-dobavit-v]"
+                - generic "Unsent draft" [ref=f9e110]
+          - link "⠒ Inbox · kandev-trial Unsent draft" [ref=f9e115] [cursor=pointer]:
+            - /url: /session/9ddbc343710443c8
+            - generic [ref=f9e116]:
+              - generic [ref=f9e117]: ⠒
+              - generic [ref=f9e119]:
+                - generic "Inbox · kandev-trial" [ref=f9e120]
+                - generic "Unsent draft" [ref=f9e121]
+          - link "⠶ orch spike4 Unsent draft" [ref=f9e126] [cursor=pointer]:
+            - /url: /session/7b39ba634bbf4f57
+            - generic [ref=f9e127]:
+              - generic [ref=f9e128]: ⠶
+              - generic [ref=f9e130]:
+                - generic "orch spike4" [ref=f9e131]
+                - generic "Unsent draft" [ref=f9e132]
+        - status [ref=f9e136]
+        - generic [ref=f9e137]:
+          - generic [ref=f9e138]:
+            - button "Projects (0)" [expanded] [ref=f9e139] [cursor=pointer]
+            - button "Add project" [ref=f9e143] [cursor=pointer]
+          - paragraph [ref=f9e145]: No saved projects. Add one to keep a repo handy without a session.
+      - button "Settings" [ref=f9e147] [cursor=pointer]
+    - generic [ref=f9e153]:
+      - generic [ref=f9e155]:
+        - generic [ref=f9e156]: Loading acp…
+        - generic [ref=f9e166]:
+          - tablist [ref=f9e167]:
+            - generic [ref=f9e168]:
+              - generic [ref=f9e169]:
+                - tab "Diff" [selected] [ref=f9e170] [cursor=pointer]
+                - button "Close diff" [ref=f9e174] [cursor=pointer]
+              - generic [ref=f9e178]:
+                - tab "Terminal" [ref=f9e179] [cursor=pointer]
+                - button "Close terminal" [ref=f9e184] [cursor=pointer]
+            - generic [ref=f9e188]:
+              - button "Move diff to bottom dock" [ref=f9e189] [cursor=pointer]
+              - button "New terminal" [ref=f9e192] [cursor=pointer]
+          - generic [ref=f9e196]:
+            - generic [ref=f9e198]:
+              - generic [ref=f9e199]: Changes
+              - 'button "Change diff base (current: main)" [ref=f9e201] [cursor=pointer]': vs main
+            - generic [ref=f9e203]:
+              - text: No changes vs
+              - generic [ref=f9e204]: main
+      - status [ref=f9e205]
+  - textbox [aria-hidden]

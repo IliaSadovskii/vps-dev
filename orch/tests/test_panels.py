@@ -1,0 +1,223 @@
+"""Панели: что владелец видит и какие кнопки ему предлагают."""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from orch import panels
+from orch.db import RUNNING, WAITING
+
+from test_engine import monkey_chain, session_of, start, turn
+
+
+def blocks_text(payload: dict) -> str:
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def test_пустая_панель_зовёт_завести_задачу(engine):
+    pane = panels.home_pane(engine.db)
+    assert "Задач нет" in blocks_text(pane)
+    assert "orch.new_task" in blocks_text(pane)
+
+
+def test_идущая_задача_в_разделе_едут(engine, fake, repo):
+    task_id = start(engine, repo)
+    pane = panels.home_pane(engine.db)
+    text = blocks_text(pane)
+    assert "Едут" in text and task_id in text
+    assert "claude/haiku" in text
+    assert pane["footer"]["text"] == "едут"
+
+
+def test_ждущая_задача_первой_и_с_кнопками(engine, fake, repo):
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "ok")
+    pane = panels.home_pane(engine.db)
+    text = blocks_text(pane)
+    assert "Ждут вас" in text
+    assert "orch.accept" in text and "orch.back" in text
+    assert "Вернуть на one" in text
+    assert pane["footer"]["tone"] == "danger"
+
+
+def test_кнопки_несут_текущую_ревизию(engine, fake, repo):
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "ok")
+    task = engine.db.task(task_id)
+    pane = panels.home_pane(engine.db)
+    carrying = [a for a in _actions(pane) if "params" in a]
+    assert carrying
+    for action in carrying:
+        assert action["params"]["revision"] == task["revision"]
+
+
+def test_кнопки_зависят_от_причины(engine, fake, repo):
+    task_id = start(engine, repo)
+    sid = session_of(engine, task_id)
+    fake.finish_turn(sid)
+    engine.reconcile()      # автоматическая просьба закончить
+    fake.finish_turn(sid)
+    engine.reconcile()      # остановка «нет сигнала»
+    pane = panels.home_pane(engine.db)
+    methods = {a["method"] for a in _actions(pane)}
+    assert "orch.again" in methods and "orch.accept_as_is" in methods
+    assert "orch.accept" not in methods
+
+
+def test_вопрос_роли_не_даёт_кнопок_а_зовёт_в_чат(engine, fake, repo):
+    task_id = start(engine, repo)
+    fake.set_status(session_of(engine, task_id), "Waiting")
+    engine.reconcile()
+    pane = panels.home_pane(engine.db)
+    assert "ответьте ей в чате" in blocks_text(pane)
+    # Кроме вечной «Новой задачи», решать тут нечем: отвечают в чате.
+    assert [a["method"] for a in _actions(pane)] == ["orch.new_task"]
+
+
+def test_панель_задачи_показывает_путь_файлы_и_лист(engine, fake, repo):
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    task = engine.db.task(task_id)
+    pane = panels.task_pane(engine.db, task, "s9", "http://127.0.0.1:8065")
+    text = blocks_text(pane)
+    assert "one → two" in text
+    assert f"/api/sessions/s9/file?path=.orch/{task_id}/artifacts/one.md" in text
+    assert "Лист автономии" in text
+    assert "Журнал" in text
+
+
+def test_панель_задачи_показывает_последний_ответ_orch(engine, fake, repo):
+    from orch import signals
+
+    task_id = start(engine, repo)
+    ws = _ws(engine, task_id)
+    signals.write_aux(ws.signals, "refused", "one", 1, "исход 'нет' не существует")
+    sid = session_of(engine, task_id)
+    fake.finish_turn(sid)
+    engine.reconcile()
+    fake.finish_turn(sid)
+    engine.reconcile()
+    task = engine.db.task(task_id)
+    pane = panels.task_pane(engine.db, task, "s9", "http://x")
+    assert "не существует" in blocks_text(pane)
+
+
+def test_лист_автономии_не_даёт_щёлкать_пройденные_шаги(engine, fake, repo):
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    task = engine.db.task(task_id)
+    pane = panels.task_pane(engine.db, task, "s9", "http://x")
+    rows = [
+        r
+        for b in pane["blocks"]
+        if b.get("title") == "Лист автономии"
+        for r in b["children"]
+    ]
+    by_step = {r["label"]: r for r in rows}
+    assert "method" not in by_step["one"]      # пройден
+    assert "method" in by_step["two"]          # текущий
+    assert "method" in by_step["three"]
+
+
+def test_дорогой_ход_помечен(engine, fake, repo):
+    task_id = start(engine, repo)
+    fake.cost = 12.5
+    turn(engine, fake, task_id, "one", 1, None)
+    pane = panels.home_pane(engine.db, cost_warn=5.0)
+    assert "$12" in blocks_text(pane)
+
+
+def test_лист_новой_задачи_рисует_переключатели(engine):
+    from orch.chain import chains_dir, load
+
+    chain = load(chains_dir() / "smoke.yml")
+    draft = {
+        "chain": "smoke",
+        "project_path": "/projects/kandev-trial",
+        "text": "",
+        "sheet": chain.default_sheet(),
+    }
+    pane = panels.home_pane(engine.db, draft)
+    text = blocks_text(pane)
+    assert "Лист автономии" in text
+    assert "orch.sheet_toggle" in text
+    assert "orch.launch" in text and "orch.backlog" in text
+    # Без текста запускать нечего.
+    launch = [a for a in _actions(pane) if a["method"] == "orch.launch"][0]
+    assert launch["disabled"] is True
+    draft["text"] = "Добавить удаление заметки."
+    pane = panels.home_pane(engine.db, draft)
+    launch = [a for a in _actions(pane) if a["method"] == "orch.launch"][0]
+    assert launch["disabled"] is False
+
+
+def test_панель_влезает_в_предел_хоста(engine, fake, repo):
+    """64 КиБ на слот — предел хоста; панель должна оставаться далеко под ним."""
+    monkey_chain(engine)
+    for i in range(40):
+        engine.create_task(chain_name="t", project_path=str(repo), text=f"задача {i}")
+    engine.reconcile()
+    size = len(json.dumps(panels.home_pane(engine.db), ensure_ascii=False).encode())
+    assert size < 64 * 1024, size
+
+
+def _actions(pane: dict) -> list[dict]:
+    out = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get("kind") == "action" and node.get("method"):
+                out.append(node)
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(pane)
+    return out
+
+
+def _ws(engine, task_id):
+    from orch.workspace import Workspace
+
+    task = engine.db.task(task_id)
+    return Workspace(task["worktree_path"] or task["project_path"], task_id)
+
+
+def test_ворота_шага_с_одним_переходом_без_исхода_в_тексте(engine, fake, repo):
+    """У шага с одним переходом исхода нет — «исходом None» владельцу не показываем."""
+    import json as _json
+
+    task_id = start(engine, repo)
+    sheet = _json.loads(engine.db.task(task_id)["human_sheet"])
+    sheet["one"]["after"] = True
+    with engine.db.tx():
+        engine.db.bump(task_id, human_sheet=_json.dumps(sheet, ensure_ascii=False))
+    turn(engine, fake, task_id, "one", 1, None)
+    text = blocks_text(panels.home_pane(engine.db))
+    assert "None" not in text
+    assert "закончил ход. Принять" in text
+
+
+def test_очистка_поля_живёт_в_нагрузке_кнопки(engine):
+    """Отдельная посылка с очисткой затирается перерисовкой — она в кнопке."""
+    op = {"kind": "set-text", "id": "clear-1", "text": ""}
+    payload = panels.composer_action(None, clear_op=op)
+    assert payload["draft_operation"] == op
+    assert payload["method"] == "orch.new_task"
+    assert "draft_operation" not in panels.composer_action(None)
+
+
+def test_прикреплённый_комментарий_виден_в_панели_задачи(engine, fake, repo):
+    task_id = start(engine, repo)
+    task = engine.db.task(task_id)
+    pane = panels.task_pane(
+        engine.db, task, "s9", "http://x", comment="Верни одну строку."
+    )
+    assert "Комментарий к следующему движению" in blocks_text(pane)
+    assert "Верни одну строку." in blocks_text(pane)
