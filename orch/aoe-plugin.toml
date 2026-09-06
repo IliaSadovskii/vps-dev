@@ -1,0 +1,70 @@
+# Плагин orch: движок оркестратора и панели. Воркер — точка входа
+# `orch-plugin` из venv, положенная симлинком в /usr/local/bin, поэтому
+# `system = true`: правки кода действуют после disable/enable без
+# переустановки плагина (orch/HANDOFF.md).
+id = "dev.sadovskii.orch"
+name = "orch"
+version = "0.1.0"
+api_version = 13
+aoe_version = ">=1.15.0, <2.0.0"
+description = "Оркестратор ролей: цепочка шагов, ворота владельца, панель задач."
+
+capabilities = [
+  "runtime.worker",
+  "session.read",
+  "composer.read",
+  "composer.write",
+  "notifications",
+]
+
+[[ui]]
+slot = "home-pane"
+id = "tasks"
+
+[[ui]]
+slot = "pane"
+id = "task"
+
+[[ui]]
+slot = "composer-action"
+id = "move"
+
+[[commands]]
+id = "status"
+title = "orch: состояние"
+description = "Что движок думает о задачах прямо сейчас."
+
+[[settings]]
+key = "poll_secs"
+label = "Интервал опроса AoE, с"
+type = "integer"
+default = 5
+min = 2
+max = 60
+
+[[settings]]
+key = "max_running"
+label = "Сколько задач едет одновременно"
+type = "integer"
+default = 3
+min = 1
+max = 20
+
+[[settings]]
+key = "cost_warn_usd"
+label = "Порог предупреждения о стоимости хода, $"
+type = "integer"
+default = 5
+min = 0
+max = 1000
+
+[[settings]]
+key = "default_chain"
+label = "Цепочка по умолчанию"
+type = "string"
+default = "deep"
+
+[runtime]
+kind = "command"
+command = ["orch-plugin"]
+system = true

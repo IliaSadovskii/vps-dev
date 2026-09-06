@@ -1,0 +1,3 @@
+[console_scripts]
+orch = orch.cli:main
+orch-plugin = orch.plugin:main
