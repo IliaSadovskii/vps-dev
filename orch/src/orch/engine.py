@@ -781,8 +781,12 @@ class Engine:
         завести на ней новую.
         """
         with self.db.tx():
+            # `wait_reason` у закрытой задачи не используется — метим им, что
+            # её сняли, а не довели. Иначе снятая заявка встаёт в «Готово»
+            # рядом с настоящей работой и читается как достижение.
             revision = self.db.bump(
-                task["id"], status=ST_DONE, step=None, closed_at=now(), wait_reason=None
+                task["id"], status=ST_DONE, step=None, closed_at=now(),
+                wait_reason="closed_by_owner",
             )
             self.db.move(
                 task["id"], task["step"], DONE, "human", "button", revision, comment=comment

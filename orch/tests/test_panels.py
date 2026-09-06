@@ -346,6 +346,7 @@ def test_лист_новой_задачи_рисуется_в_сессии_гд�
     worker.settings = {}
     worker.session_of_task = {}
     worker.clear_ops = {}
+    worker.editing = None
     pushed = []
     worker.ui_set = lambda slot, ident, payload, session_id=None: pushed.append(
         (slot, session_id, payload)
@@ -389,4 +390,27 @@ def test_заявка_из_бэклога_не_запускается_щелчк
     assert "завела роль задачи T7" in заявка["sublabel"]
 
     методы = {a["method"] for a in _actions(pane)}
-    assert "orch.start" in методы and "orch.close" in методы
+    # «Запустить» ведёт в лист (автономия и ветка), а не сразу в работу.
+    assert {"orch.open_backlog", "orch.edit_text", "orch.close"} <= методы
+    assert "orch.start" not in методы
+
+
+def test_снятая_задача_не_попадает_в_готово(engine, repo):
+    """«Закрыл заявку» и «довёл до конца» — разные вещи, и в панели тоже."""
+    from test_engine import monkey_chain
+
+    monkey_chain(engine)
+    сделана = engine.create_task(chain_name="t", project_path=str(repo), text="сделана")
+    снята = engine.create_task(
+        chain_name="t", project_path=str(repo), text="снята", backlog=True
+    )
+    with engine.db.tx():
+        engine.db.bump(сделана, status="done", closed_at="2026-09-06T00:00:00Z")
+    t = engine.db.task(снята)
+    engine.button(снята, t["revision"], "close")
+
+    pane = panels.home_pane(engine.db)
+    разделы = {b.get("title"): b for b in pane["blocks"] if b.get("kind") == "section"}
+    assert [r["label"] for r in разделы["Готово"]["children"]] == [f"{сделана} · сделана"]
+    assert [r["label"] for r in разделы["Снято"]["children"]] == [f"{снята} · снята"]
+    assert "работа не делалась" in разделы["Снято"]["children"][0]["sublabel"]

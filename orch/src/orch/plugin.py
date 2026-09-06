@@ -17,6 +17,7 @@ from pathlib import Path
 
 from . import panels
 from .chain import ChainError, chains_dir, load as load_chain
+from .engine import _title_from as _title_of
 from .db import Db, EngineLock
 from .engine import Engine, Settings
 from .rpc import Rpc, RpcError, log
@@ -51,6 +52,9 @@ class Worker:
         # Просьба очистить поле ввода: держится в полезной нагрузке кнопки,
         # пока не устареет. Ключ — сессия, значение — операция и время.
         self.clear_ops: dict[str, tuple[dict, float]] = {}
+        # Какую заявку сейчас правим: {task, session_id}. Текст приходит из
+        # поля ввода, как и всё свободное от человека.
+        self.editing: dict | None = None
         # Комментарий владельца, прикреплённый к следующему движению задачи.
         # Клик по кнопке панели черновика поля ввода не несёт — его отдают
         # только кнопке у поля, — поэтому текст приходит отдельно и ждёт
@@ -125,6 +129,54 @@ class Worker:
     def btn_start(self, session_id, params): self._move(params, "start")
     def btn_close(self, session_id, params): self._move(params, "close")
 
+    def btn_open_backlog(self, session_id, params) -> None:
+        """«Запустить» у заявки: сначала лист, потом работа.
+
+        Раньше кнопка стартовала задачу немедленно — и владелец уезжал в
+        работу, не увидев ни текста, ни листа автономии, ни ветки.
+        """
+        if self.engine is None:
+            return
+        task = self.engine.db.task(params["task"])
+        if task is None or int(params["revision"]) != int(task["revision"]):
+            return
+        from .chain import parse as parse_chain
+
+        try:
+            chain = parse_chain(task["chain_yaml"], source=task["id"])
+        except ChainError as exc:
+            self.notify("orch", f"цепочка задачи не читается: {exc}", tone="danger")
+            return
+        self.draft = {
+            "chain": task["chain"],
+            "project_path": task["project_path"],
+            "text": task["text"],
+            "sheet": json.loads(task["human_sheet"] or "{}") or chain.default_sheet(),
+            "session_id": session_id,
+            "branch": task["branch"],
+            "from_backlog": task["id"],
+        }
+        self.notify(
+            f"orch: {task['id']} — лист открыт",
+            "проверьте текст, автономию и ветку, потом «Запустить»",
+        )
+
+    def btn_edit_text(self, session_id, params) -> None:
+        """Правка ТЗ заявки: ждём новый текст из поля ввода."""
+        if self.engine is None:
+            return
+        task = self.engine.db.task(params["task"])
+        if task is None:
+            return
+        self.editing = {"task": task["id"], "session_id": session_id}
+        self.notify(
+            f"orch: правим ТЗ {task['id']}",
+            "напишите новый текст в поле ввода и нажмите «Взять ТЗ из поля»",
+        )
+
+    def btn_edit_done(self, session_id, params) -> None:
+        self.editing = None
+
     def btn_focus(self, session_id, params) -> None:
         """Строка ждущей задачи в общей панели: ничего не меняет, только жест."""
 
@@ -150,6 +202,9 @@ class Worker:
         """«Двинуть с этим текстом»: черновик становится комментарием движения."""
         text = ((params.get("composer") or {}).get("text") or "").strip()
         if self.engine is None:
+            return
+        if self.editing is not None:
+            self.save_text(session_id, text)
             return
         if self.draft is not None and self.draft.get("awaiting") == "branch":
             self.take_branch(session_id, text)
@@ -285,6 +340,22 @@ class Worker:
             self.notify(f"orch: работаем в ветке {branch}", "теперь «Запустить»")
         self.clear_composer(session_id)
 
+    def save_text(self, session_id: str, text: str) -> None:
+        """Новый текст ТЗ заявки из поля ввода."""
+        if self.engine is None or not self.editing:
+            return
+        if not text:
+            self.notify("orch", "поле пустое: ТЗ не менял", tone="warn")
+            return
+        task_id = self.editing["task"]
+        db = self.engine.db
+        with db.tx():
+            db.bump(task_id, text=text, title=_title_of(text))
+            db.event(task_id, "text_edited", {"len": len(text)})
+        self.editing = None
+        self.notify(f"orch: ТЗ {task_id} переписано", text[:120])
+        self.clear_composer(session_id)
+
     def btn_sheet_toggle(self, session_id, params) -> None:
         if not self.draft:
             return
@@ -329,6 +400,12 @@ class Worker:
         except (ChainError, OSError) as exc:
             self.notify("orch", f"задача не создалась: {exc}", tone="danger")
             return
+        if draft.get("from_backlog"):
+            # Заявку, из которой вырос лист, закрываем: работа поехала под
+            # новым номером, и держать её ветку старой незачем.
+            old = self.engine.db.task(draft["from_backlog"])
+            if old and old["status"] == "backlog":
+                self.engine.button(old["id"], old["revision"], "close")
         self.draft = None
         self.notify(f"{task_id} создана", "в бэклоге" if backlog else "поехала")
         self.clear_composer(draft.get("session_id") or "")
@@ -435,8 +512,20 @@ class Worker:
         # кнопка у поля стоит здесь, значит и «Запустить» должна быть здесь.
         # Раньше лист жил только в общей панели на обзоре, и человек,
         # нажавший кнопку внутри сессии, оставался ни с чем.
+        if self.editing:
+            task = db.task(self.editing["task"])
+            if task is not None:
+                self._push_if_changed(
+                    ("pane", self.editing["session_id"]),
+                    panels.edit_text_pane(task),
+                    "pane",
+                    "task",
+                    self.editing["session_id"],
+                    force,
+                )
+
         draft_session = (draft or {}).get("session_id")
-        if draft and draft_session:
+        if draft and draft_session and not self.editing:
             self._push_if_changed(
                 ("pane", draft_session),
                 panels.new_task_pane(draft),
@@ -481,7 +570,7 @@ class Worker:
                 panels.composer_action(
                     task,
                     draft_open=self.draft is not None,
-                    awaiting=(self.draft or {}).get("awaiting"),
+                    awaiting="text" if self.editing else (self.draft or {}).get("awaiting"),
                     clear_op=self._clear_op(session_id),
                 ),
                 "composer-action",

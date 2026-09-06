@@ -62,7 +62,9 @@ def home_pane(db: Db, draft: dict | None = None, cost_warn: float = 5.0) -> dict
     running = db.tasks((RUNNING,))
     queued = db.tasks((QUEUED,))
     backlog = db.tasks((BACKLOG,))
-    done = db.tasks((ST_DONE,))[-MAX_DONE:]
+    закрытые = db.tasks((ST_DONE,))
+    done = [t for t in закрытые if t["wait_reason"] != "closed_by_owner"][-MAX_DONE:]
+    снятые = [t for t in закрытые if t["wait_reason"] == "closed_by_owner"][-MAX_DONE:]
     lost = db.tasks((ABANDONED,))
 
     if waiting:
@@ -124,6 +126,14 @@ def home_pane(db: Db, draft: dict | None = None, cost_warn: float = 5.0) -> dict
                     "mono": True,
                 }
             )
+            # Текст задачи виден целиком: заявку мог написать не владелец, и
+            # прежде чем её запускать, надо прочитать, что в ней стоит.
+            children.append(
+                {
+                    "kind": "note",
+                    "text": (t["text"] or "").strip()[:800] or "текста нет",
+                }
+            )
             # Кнопки отдельно, а строка не кликается: раньше нажатие по
             # строке запускало задачу без спроса, и случайный тык уводил в
             # работу, которую владелец не заказывал.
@@ -134,8 +144,15 @@ def home_pane(db: Db, draft: dict | None = None, cost_warn: float = 5.0) -> dict
                         {
                             "kind": "action",
                             "label": "Запустить",
-                            "method": "orch.start",
+                            "method": "orch.open_backlog",
                             "variant": "primary",
+                            "tooltip": "открыть лист: автономия и ветка, потом запуск",
+                            "params": {"task": t["id"], "revision": t["revision"]},
+                        },
+                        {
+                            "kind": "action",
+                            "label": "Править ТЗ",
+                            "method": "orch.edit_text",
                             "params": {"task": t["id"], "revision": t["revision"]},
                         },
                         {
@@ -181,16 +198,38 @@ def home_pane(db: Db, draft: dict | None = None, cost_warn: float = 5.0) -> dict
             {
                 "kind": "section",
                 "title": "Готово",
+                "badges": [{"text": str(len(done)), "tone": "success"}],
                 "collapsible": True,
                 "collapsed": True,
                 "children": [
                     {
                         "kind": "row",
                         "label": f"{t['id']} · {t['title']}",
-                        "value": _ago(t["closed_at"]),
+                        "sublabel": "доведена до конца",
+                        "value": f"{_ago(t['closed_at'])} назад",
                         "tone": "success",
                     }
                     for t in reversed(done)
+                ],
+            }
+        )
+    if снятые:
+        blocks.append(
+            {
+                "kind": "section",
+                "title": "Снято",
+                "badges": [{"text": str(len(снятые))}],
+                "collapsible": True,
+                "collapsed": True,
+                "children": [
+                    {
+                        "kind": "row",
+                        "label": f"{t['id']} · {t['title']}",
+                        "sublabel": "закрыта, работа не делалась",
+                        "value": f"{_ago(t['closed_at'])} назад",
+                        "tone": "neutral",
+                    }
+                    for t in reversed(снятые)
                 ],
             }
         )
@@ -435,7 +474,14 @@ def composer_action(
     участия модели, поэтому висит в каждой сессии, а не только в сессиях
     задач: в чужой сессии ею набирают текст новой задачи.
     """
-    if awaiting == "branch":
+    if awaiting == "text":
+        payload = {
+            "label": "Взять ТЗ из поля",
+            "method": "orch.move_with_text",
+            "icon": "pencil",
+            "tooltip": "Текст из поля станет новым ТЗ заявки",
+        }
+    elif awaiting == "branch":
         payload = {
             "label": "Взять ветку из поля",
             "method": "orch.move_with_text",
@@ -574,6 +620,27 @@ def _branch_row(draft: dict) -> dict:
         "sublabel": "щёлкните, чтобы работать в существующей ветке или в чужом PR",
         "value": "новая",
         "method": "orch.pick_branch",
+    }
+
+
+def edit_text_pane(task) -> dict:
+    """Правка ТЗ заявки: текст на глазах, новый берётся из поля ввода."""
+    return {
+        "title": f"orch · ТЗ {task['id']}",
+        "default_location": "right",
+        "icon": "pencil",
+        "blocks": [
+            {"kind": "heading", "text": f"{task['id']} · {task['title']}"},
+            {"kind": "note", "text": (task["text"] or "").strip() or "текста нет"},
+            {"kind": "divider"},
+            {
+                "kind": "note",
+                "tone": "warn",
+                "text": "Напишите новый текст в поле ввода и нажмите там кнопку "
+                "«Взять ТЗ из поля» — не Enter: Enter отправит текст агенту.",
+            },
+            {"kind": "action", "label": "Готово", "method": "orch.edit_done"},
+        ],
     }
 
 
