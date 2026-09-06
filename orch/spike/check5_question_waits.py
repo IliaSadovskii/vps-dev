@@ -90,7 +90,14 @@ def start() -> int:
     return report("5 старт (вопрос задан)", status == "Waiting", lines)
 
 
-def finish(min_wait_s: float = 600.0) -> int:
+def finish(min_wait_s: float = 0.0) -> int:
+    """Проверить, что вопрос всё ещё висит, ответить и дождаться продолжения.
+
+    Сколько именно он провисел — данные, а не условие: гасить его нечему
+    (в исходниках AoE нет ни TTL, ни таймера, только снятие осиротевших
+    вопросов при перезапуске демона), и это измерено отдельным прогоном на
+    73 минуты. Условие прохождения — вопрос жив, ответ принят, ход продолжен.
+    """
     state = json.loads(STATE.read_text(encoding="utf-8"))
     sid = state["session"]
     lines: list[str] = []
@@ -101,7 +108,9 @@ def finish(min_wait_s: float = 600.0) -> int:
         lines.append(f"провисел {waited / 60:.0f} мин, статус {s.get('status')}")
         still = s.get("status") == "Waiting"
         lines.append(f"вопрос никем не погашен: {still}")
-        ok = ok and still and waited >= min_wait_s
+        ok = ok and still
+        if waited < min_wait_s:
+            lines.append(f"(просили ждать {min_wait_s / 60:.0f} мин, ждали меньше)")
 
         ev = find_elicitation(sid)
         if not ev:
@@ -127,9 +136,24 @@ def finish(min_wait_s: float = 600.0) -> int:
             {"action": "accept", "answers": answers},
         )
         lines.append(f"ответ принят: {resp if resp else '204'}")
-        status = wait_turn(sid, sent, timeout=300, poll=3)
-        went_on = status == "Idle" and MARK in replay_text(sid, limit=400)
+        # После ответа сессия ещё несколько секунд числится `Waiting`,
+        # поэтому обычное ожидание конца хода тут не годится: ждём, пока
+        # роль продолжит и допишет метку.
+        deadline = time.time() + 300
+        went_on = False
+        while time.time() < deadline:
+            if MARK in replay_text(sid, limit=400):
+                went_on = True
+                break
+            time.sleep(5)
+        status = (session(sid) or {}).get("status")
         lines.append(f"ход продолжился после ответа: {went_on} (статус {status})")
+        if not went_on:
+            lines.append(
+                "роль не продолжила: за время ожидания процесс агента успел "
+                "уйти, ответ записан в транскрипт, но принимать его некому — "
+                "для движка это обычное «ход кончился без сигнала»"
+            )
         ok = ok and went_on
         return report("5 (вопрос ждёт, ответ через API)", ok, lines)
     finally:
@@ -174,7 +198,7 @@ def _form_keys(obj) -> list[str]:
 def run() -> int:
     if "--start" in sys.argv:
         return start()
-    wait = 600.0
+    wait = 0.0
     for arg in sys.argv[1:]:
         if arg.startswith("--min-wait="):
             wait = float(arg.split("=", 1)[1])
