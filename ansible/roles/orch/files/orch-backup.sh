@@ -25,7 +25,22 @@ else
 fi
 
 if [[ -d "$CONFIG_DIR/agent-of-empires" ]]; then
-  tar czf "$DEST/aoe-config-$STAMP.tgz" -C "$CONFIG_DIR" agent-of-empires
+  # Живые сокеты воркеров и их журналы в снимок не идут: сокет не
+  # архивируется вовсе, а каталог воркеров меняется прямо во время чтения —
+  # tar на этом ругается и возвращает ненулевой код, из-за чего страница
+  # обновлений сочла бы снимок несостоявшимся и отменила бы обновление.
+  # Восстанавливать их всё равно нечего: воркеры поднимаются заново.
+  # Каталог адаптеров (360 МБ) тоже не наш: это скачанные бинарники агентов,
+  # AoE ставит их себе сам. Без него снимок ~50 МБ вместо ~114, и четырнадцать
+  # суток хранения перестают стоить полтора гигабайта.
+  tar czf "$DEST/aoe-config-$STAMP.tgz" \
+    --warning=no-file-changed \
+    --exclude='agent-of-empires/acp-workers' \
+    --exclude='agent-of-empires/plugin-workers' \
+    --exclude='agent-of-empires/artifacts' \
+    --exclude='agent-of-empires/acp-worker/adapters' \
+    --exclude='*.sock' \
+    -C "$CONFIG_DIR" agent-of-empires || [[ $? -eq 1 ]]
   echo "настройки aoe: $DEST/aoe-config-$STAMP.tgz"
 fi
 
