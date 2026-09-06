@@ -35,10 +35,18 @@ mkdir -p "$PORTS_DIR"
 
 # ---------------------------------------------------------------- утилиты ----
 
+# Строки «ИМЯ=порт» из файла реестра, без хвостовых комментариев. Комментарий
+# после номера — штатный: его показывает дашборд как название карточки. Раньше
+# такие строки не проходили grep и порт не считался занятым нигде, кроме
+# BASE_PORT (найдено при разборе схемы стендов задач).
+port_lines(){
+  sed -nE 's/^[[:space:]]*([A-Za-z0-9_]+)=([0-9]+).*$/\1=\2/p' "$1"
+}
+
 # минимальный порт в файле реестра → база его десятка (или пусто)
 file_base(){
   local min
-  min="$(grep -hE '^[A-Za-z0-9_]+=[0-9]+$' "$1" 2>/dev/null | cut -d= -f2 | sort -n | head -1)"
+  min="$(port_lines "$1" 2>/dev/null | cut -d= -f2 | sort -n | head -1)"
   [[ -n "$min" ]] && echo "$(( min / 10 * 10 ))"
 }
 
@@ -63,8 +71,41 @@ is_reserved(){ local b=$1 r; for r in "${RESERVED_BASES[@]}"; do [[ "$b" == "$r"
 
 # ---------------------------------------------------------------- команды ----
 
+# Имена переменных портов из docker-compose.yml: строки `${APP_PORT:-8090}`
+# и `${APP_PORT:?…}` внутри ports:. Порт, зашитый числом, переменной не
+# имеет — про такие говорим отдельно, подставить в них нечего.
+compose_vars(){
+  local file="${1:-docker-compose.yml}"
+  [[ -f "$file" ]] || return 1
+  awk '
+    /^[[:space:]]*ports:[[:space:]]*$/ { inports=1; next }
+    inports && /^[[:space:]]*-/ { print; next }
+    inports && /^[[:space:]]*[a-zA-Z_]+:/ { inports=0 }
+  ' "$file" | grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*' | sed 's/^\${//' | awk '!seen[$0]++'
+}
+
+# Сколько портов, зашитых числом, в ports: — про них предупреждаем.
+compose_hardcoded(){
+  local file="${1:-docker-compose.yml}"
+  [[ -f "$file" ]] || return 0
+  awk '
+    /^[[:space:]]*ports:[[:space:]]*$/ { inports=1; next }
+    inports && /^[[:space:]]*-/ { print; next }
+    inports && /^[[:space:]]*[a-zA-Z_]+:/ { inports=0 }
+  ' "$file" | grep -vE '\$\{' | grep -oE '[0-9]+:[0-9]+' | head -5
+}
+
 cmd_claim(){
-  local name="${1:-}"; [[ -n "$name" ]] || die "Использование: ports claim <имя-проекта>"
+  local like="" from_compose="" compose_file="docker-compose.yml"
+  while [[ "${1:-}" == --* ]]; do
+    case "$1" in
+      --like)          like="${2:-}"; shift 2 ;;
+      --from-compose)  from_compose=1; shift
+                       [[ "${1:-}" == *.y*ml ]] && { compose_file="$1"; shift; } ;;
+      *) die "Неизвестный ключ '$1'. Смотри: ports --help" ;;
+    esac
+  done
+  local name="${1:-}"; [[ -n "$name" ]] || die "Использование: ports claim [--like <проект>|--from-compose] <имя>"
   [[ "$name" =~ ^[A-Za-z0-9-]+$ ]] || die "Имя: только буквы, цифры и дефис."
   exec 9>"$PORTS_DIR/.lock"; flock 9    # атомарность: два проекта не займут один блок
 
@@ -93,18 +134,55 @@ cmd_claim(){
 #   APP_PORT=${base}   # Приложение
 BASE_PORT=$base
 EOF
+
+  # Имена переменных: из блока проекта-образца (--like) или из compose
+  # (--from-compose). Так арендатору не приходится вписывать их руками, а
+  # блок задачи получает ровно тот же набор, что у её проекта.
+  local vars=() v i=0
+  if [[ -n "$like" ]]; then
+    local lf="$PORTS_DIR/$like.env"
+    [[ -f "$lf" ]] || die "У образца '$like' нет блока (ports claim $like)."
+    mapfile -t vars < <(port_lines "$lf" | cut -d= -f1 | grep -v '^BASE_PORT$')
+  elif [[ -n "$from_compose" ]]; then
+    mapfile -t vars < <(compose_vars "$compose_file")
+    [[ ${#vars[@]} -gt 0 ]] || die "В $compose_file не нашлось портов вида \${APP_PORT:-8090}."
+  fi
+  if (( ${#vars[@]} > 10 )); then
+    rm -f "$f"
+    die "Проекту нужно ${#vars[@]} портов, а блок — десять. Возьми второй блок отдельным именем ('$name-2') и раздели сервисы."
+  fi
+  for v in "${vars[@]}"; do
+    echo "$v=$((base + i))" >> "$f"
+    i=$((i+1))
+  done
+
   echo "${c_g}✔ Проекту '$name' закреплён блок ${base}-$((base+9)).${c_0}"
-  echo "Занимай порты ${base}..$((base+9)) — они гарантированно свободны и теперь видны как занятые."
+  if (( ${#vars[@]} )); then
+    echo "Порты записаны: $(printf '%s ' "${vars[@]}")— поднимай через ${c_c}ports run $name -- docker compose up -d${c_0}"
+  else
+    echo "Занимай порты ${base}..$((base+9)) — они гарантированно свободны и теперь видны как занятые."
+  fi
+  if [[ -n "$from_compose" ]]; then
+    local hard; hard="$(compose_hardcoded "$compose_file")"
+    [[ -z "$hard" ]] || echo "${c_y}⚠ В $compose_file есть порты числом: $(echo "$hard" | tr '\n' ' ')— их реестр не защищает, вынеси в переменные.${c_0}"
+  fi
 }
 
 cmd_free(){
-  local name="${1:-}"; [[ -n "$name" ]] || die "Использование: ports free <имя-проекта>"
+  local force=""
+  [[ "${1:-}" == "--force" ]] && { force=1; shift; }
+  local name="${1:-}"; [[ -n "$name" ]] || die "Использование: ports free [--force] <имя-проекта>"
   exec 9>"$PORTS_DIR/.lock"; flock 9
   local f="$PORTS_DIR/$name.env"
   [[ -f "$f" ]] || die "У '$name' нет закреплённого блока."
   local base; base="$(file_base "$f")"
   local lp; lp="$(live_ports | awk -v b="${base:-0}" '$1>=b && $1<=b+9' | tr '\n' ' ')"
-  [[ -z "$lp" ]] || echo "${c_y}⚠ В блоке ${base}-$((base+9)) ещё кто-то слушает: $lp — сначала останови проект.${c_0}"
+  if [[ -n "$lp" ]]; then
+    # Отдать блок, пока в нём слушают, — значит выдать эти же порты соседу и
+    # получить «address already in use» у того, кто ни при чём.
+    [[ -n "$force" ]] || die "В блоке ${base}-$((base+9)) ещё слушают: $lp. Останови проект ('ports run $name -- docker compose down -v') или настаивай: ports free --force $name"
+    echo "${c_y}⚠ Блок отдан, хотя в нём слушают: $lp${c_0}"
+  fi
   rm -f "$f"
   echo "${c_g}✔ Блок проекта '$name' освобождён (файл реестра удалён).${c_0}"
 }
@@ -117,13 +195,34 @@ cmd_which(){
   echo "${base}-$((base+9))"
 }
 
+# Переменные блока для запуска: сами порты плюс COMPOSE_PROJECT_NAME —
+# без него `docker compose` назовёт контейнеры по каталогу, и стенд задачи
+# сцепится с основным (одни имена, одни тома).
+cmd_env(){
+  local name="${1:-}"; [[ -n "$name" ]] || die "Использование: ports env <имя>"
+  local f="$PORTS_DIR/$name.env"
+  [[ -f "$f" ]] || die "У '$name' нет блока (ports claim $name)."
+  port_lines "$f"
+  echo "COMPOSE_PROJECT_NAME=$name"
+}
+
+cmd_run(){
+  local name="${1:-}"; [[ -n "$name" ]] || die "Использование: ports run <имя> -- <команда>"
+  shift
+  [[ "${1:-}" == "--" ]] && shift
+  [[ $# -gt 0 ]] || die "Нечего запускать: ports run <имя> -- docker compose up -d"
+  local line
+  while read -r line; do export "${line?}"; done < <(cmd_env "$name")
+  exec "$@"
+}
+
 cmd_doctor(){
   local problems=0
 
   # 1) один порт в реестре у двух проектов
   shopt -s nullglob; local files=( "$PORTS_DIR"/*.env ); shopt -u nullglob
   if (( ${#files[@]} )); then
-    local dups; dups="$(grep -hE '^[A-Za-z0-9_]+=[0-9]+$' "${files[@]}" | cut -d= -f2 | sort | uniq -d)"
+    local dups; dups="$(for f in "${files[@]}"; do port_lines "$f"; done | cut -d= -f2 | sort | uniq -d)"
     [[ -z "$dups" ]] || { echo "${c_r}✗ Порт выдан дважды в реестре: $(echo "$dups" | tr '\n' ' ')${c_0}"; problems=1; }
   fi
 
@@ -192,14 +291,22 @@ usage(){
   cat <<EOF
 ports — учёт портов проектов (блок из 10 на проект).
 
-  ports map              карта: занято / зарезервировано / свободно
-  ports claim <имя>      забронировать проекту свободный блок (идемпотентно)
-  ports which <имя>      показать блок проекта
-  ports free <имя>       освободить блок проекта
-  ports doctor           проверить конфликты и рассинхрон с живыми портами
+  ports map                       карта: занято / зарезервировано / свободно
+  ports claim <имя>               забронировать свободный блок (идемпотентно)
+  ports claim --from-compose <имя>  то же, но имена портов взять из docker-compose.yml
+  ports claim --like <проект> <имя> то же, но набор портов повторить за проектом
+  ports which <имя>               показать блок
+  ports env <имя>                 переменные блока (порты + COMPOSE_PROJECT_NAME)
+  ports run <имя> -- <команда>    запустить команду с этими переменными
+  ports free [--force] <имя>      освободить блок
+  ports doctor                    проверить конфликты и рассинхрон с живыми портами
 
-Правило для проектов: не хардкодь порты — возьми блок через 'ports claim',
-и не выходи за его пределы. Всё остальное застолблено соседями.
+Правило: не хардкодь порты — возьми блок через 'ports claim' и поднимай через
+'ports run', он подставит номера в окружение. Всё остальное занято соседями.
+
+Стенд проекта и стенд задачи — разные арендаторы: 'myapp' и 'myapp-t16'.
+У каждого свой блок, свои контейнеры и свои тома; гасить задачу нужно с
+'-v', иначе её тома останутся на диске.
 EOF
 }
 
@@ -208,6 +315,8 @@ case "${1:-map}" in
   claim)    shift; cmd_claim "$@" ;;
   free)     shift; cmd_free  "$@" ;;
   which)    shift; cmd_which "$@" ;;
+  env)      shift; cmd_env   "$@" ;;
+  run)      shift; cmd_run   "$@" ;;
   doctor)   cmd_doctor ;;
   -h|--help|help) usage ;;
   *) die "Неизвестная команда '$1'. Смотри: ports --help" ;;
