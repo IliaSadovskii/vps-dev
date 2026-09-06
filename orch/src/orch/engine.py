@@ -86,6 +86,11 @@ class Engine:
         if task["status"] == QUEUED:
             return
         if task["status"] == ST_WAITING:
+            # Задача, вставшая на вопросе роли, снимается сама: владелец
+            # отвечает в чате, сессия уходит из `Waiting`, и ход продолжается.
+            # Остальные остановки ждут кнопки.
+            if task["wait_reason"] == "ask":
+                self.resume_after_answer(task, sessions)
             return
         chain = self.chain_of(task)
         if chain is None:
@@ -96,6 +101,20 @@ class Engine:
             self.begin_run(task, chain)
             return
         self.watch_run(task, chain, run, sessions)
+
+    def resume_after_answer(self, task, sessions: dict[str, Session]) -> None:
+        """Владелец ответил роли в чате — задача снова едет."""
+        run = self.db.open_run(task["id"])
+        if run is None or not run["session_id"]:
+            return
+        session = sessions.get(run["session_id"]) or self.aoe.session(run["session_id"])
+        if session is None or session.status == WAITING:
+            return
+        with self.db.tx():
+            self.db.bump(task["id"], status=ST_RUNNING, wait_reason=None)
+            self.db.event(task["id"], "answered", {"session": session.id})
+        self.aoe.set_color(session.id, "amber")
+        self.aoe.set_urgent(session.id, False)
 
     # ── заявки и очередь ─────────────────────────────────────────────────
     def take_inbox(self) -> None:

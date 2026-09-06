@@ -331,6 +331,26 @@ def test_вопросы_включены_задача_ждёт(engine, fake, rep
     assert sid not in fake.cancels
 
 
+def test_ответ_владельца_снимает_остановку_на_вопросе(engine, fake, repo):
+    """Ответ в чате возвращает задачу в работу без всякой кнопки."""
+    task_id = start(engine, repo)
+    sid = session_of(engine, task_id)
+    fake.set_status(sid, "Waiting")
+    engine.reconcile()
+    assert engine.db.task(task_id)["wait_reason"] == "ask"
+
+    fake.set_status(sid, "Running")     # владелец ответил, роль продолжила
+    engine.reconcile()
+    task = engine.db.task(task_id)
+    assert task["status"] == RUNNING and task["wait_reason"] is None
+    assert fake.colors[sid] == "amber"
+
+    sign(engine, task_id, "one", 1, None)
+    fake.finish_turn(sid)
+    engine.reconcile()
+    assert engine.db.task(task_id)["step"] == "two"
+
+
 def test_ворота_только_на_названном_исходе(engine, fake, repo):
     task_id = start(engine, repo)
     sid = turn(engine, fake, task_id, "one", 1, None)

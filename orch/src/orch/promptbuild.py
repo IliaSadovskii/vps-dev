@@ -171,11 +171,19 @@ def _files(ctx: Context, inline: bool) -> str:
     for name in ctx.owner_edited:
         lines.append("")
         lines.append(f"Файл `{name}` правил владелец после сдачи.")
-    skills = ctx.root / "docs" / "skills"
-    lines.append("")
-    lines.append(f"Навыки, если `scoping.md` их называет: `{prompts_dir()}` (файлы `skill-*.md`).")
-    if skills.is_dir():
-        lines.append(f"Навыки проекта: `{skills}`.")
+    # Путь к навыкам называем только когда навыки есть: иначе роль получает
+    # дорогу в репозиторий самого оркестратора и ходит туда без нужды
+    # (наблюдение прогона Conventions, `PROMPT-NOTES.md`).
+    skills = sorted(prompts_dir().glob("skill-*.md"))
+    if skills and ctx.step.reads:
+        lines.append("")
+        lines.append(
+            "Навыки, если `scoping.md` их называет: "
+            + ", ".join(f"`{p}`" for p in skills)
+        )
+    project_skills = ctx.root / "docs" / "skills"
+    if project_skills.is_dir():
+        lines.append(f"Навыки проекта: `{project_skills}`.")
     if ctx.sub_prompts:
         lines.append(
             "Роли подагентов — прочитай файл целиком и передай его текст подагенту: "
