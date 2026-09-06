@@ -261,10 +261,10 @@ def task_pane(
     if chain:
         blocks.append(
             {
-                "kind": "row",
-                "label": "путь",
-                "sublabel": _trail(db, task, chain),
-                "mono": True,
+                "kind": "section",
+                "title": "Путь задачи",
+                "value": _trail(db, task, chain),
+                "children": _trail_rows(db, task, chain, base_url),
             }
         )
 
@@ -620,6 +620,34 @@ def _buttons(db: Db, task) -> list[dict]:
             }
         )
     return [{k: v for k, v in a.items() if v is not None} for a in actions]
+
+
+def _trail_rows(db: Db, task, chain: Chain, base_url: str) -> list[dict]:
+    """Путь по шагам строками, каждая — ссылка на сессию своего захода.
+
+    Пока сайдбар веба сворачивает сессии одной ветки в одну строку, это
+    единственная дорога владельца к сессии прошлого шага из интерфейса.
+    """
+    rows = []
+    for run in db.conn.execute(
+        "SELECT * FROM run WHERE task_id = ? ORDER BY id", (task["id"],)
+    ):
+        outcome = run["outcome"] or (
+            "идёт" if not run["ended_at"] else ("сдан" if run["signalled"] else "нет сигнала")
+        )
+        row = {
+            "kind": "row",
+            "label": run["step"],
+            "sublabel": f"заход {run['n']}",
+            "value": outcome,
+            "value_tone": "success" if run["signalled"] else "warn",
+            "selected": run["step"] == task["step"] and not run["ended_at"],
+        }
+        if run["session_id"]:
+            row["href"] = f"{base_url}/session/{run['session_id']}"
+            row["tooltip"] = "открыть сессию этого захода"
+        rows.append(row)
+    return rows or [{"kind": "note", "text": "заходов ещё не было"}]
 
 
 def _outcomes_of(chain: Chain | None, task) -> dict[str, str]:

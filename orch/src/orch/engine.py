@@ -21,7 +21,7 @@ from . import promptbuild, signals
 from .aoe import ERROR, IDLE, RUNNING, STARTING, STOPPED, WAITING, Aoe, AoeError, Session
 from .chain import DONE, Chain, ChainError, Step, chains_dir, load as load_chain, parse as parse_chain
 from .db import ABANDONED, BACKLOG, DONE as ST_DONE, LIVE, QUEUED, RUNNING as ST_RUNNING, WAITING as ST_WAITING, Db, now
-from .workspace import Workspace, git
+from .workspace import Workspace, create_worktree, git, remove_worktree
 
 INBOX = Path.home() / ".local" / "share" / "orch" / "inbox"
 GROUP_ROOT = "orch"
@@ -38,6 +38,7 @@ WAIT_REASONS = {
     "chain_broken": "замороженная цепочка не читается",
     "path_mismatch": "рабочая копия сессии не совпала с задачей",
     "no_worker": "у сессии не поднялся воркер агента",
+    "no_worktree": "не удалось создать рабочую копию задачи",
     "artifact": "роль сдала ход, но её файла нет или он не той формы",
     "abandoned": "сессия задачи исчезла",
 }
@@ -260,9 +261,16 @@ class Engine:
                 continue
             for sid in self.db.sessions_of_task(task["id"]):
                 self.aoe.archive(sid)
+            # Рабочую копию убирает движок: AoE о ней не знает. Ветку не
+            # трогаем — в ней вся работа задачи.
+            error = ""
+            if task["worktree_path"] and Path(task["worktree_path"]).is_dir():
+                error = remove_worktree(task["project_path"], task["worktree_path"])
             with self.db.tx():
                 self.db.bump(task["id"], archived_at=now())
-                self.db.event(task["id"], "archived", {})
+                self.db.event(
+                    task["id"], "archived", {"worktree_removed": not error, "error": error[:300]}
+                )
 
     # ── старт захода ─────────────────────────────────────────────────────
     def begin_run(self, task, chain: Chain) -> None:
@@ -272,15 +280,15 @@ class Engine:
             self.stop(task["id"], "max_runs")
             return
 
-        # Рабочей копии задачи может ещё не быть: её создаёт первая сессия.
-        # Тогда файлы задачи пишутся сразу после создания сессии и всё равно
-        # до промпта — роль не увидит полузаписанного состояния.
-        if task["worktree_path"]:
-            ws = self.workspace(task)
-            ws.ensure(task["text"], task["chain_yaml"])
-            start_sha = ws.head()
-        else:
-            start_sha = None
+        # Рабочая копия задачи — забота движка, а не AoE: и создание, и
+        # удаление. Она готова до первой сессии, поэтому файлы задачи всегда
+        # на месте раньше промпта (`PLAN.md` §2, правило 7).
+        if not self.ensure_worktree(task):
+            return
+        task = self.db.task(task["id"])
+        ws = self.workspace(task)
+        ws.ensure(task["text"], task["chain_yaml"])
+        start_sha = ws.head()
 
         with self.db.tx():
             run_id = self.db.start_run(task["id"], step.id, step.context, start_sha)
@@ -289,16 +297,6 @@ class Engine:
         session = self.attach_session(task, chain, step, run)
         if session is None:
             return
-
-        task = self.db.task(task["id"])   # worktree_path появился вместе с сессией
-        ws = self.workspace(task)
-        ws.ensure(task["text"], task["chain_yaml"])
-        if start_sha is None:
-            start_sha = ws.head()
-            with self.db.tx():
-                self.db.conn.execute(
-                    "UPDATE run SET start_sha = ? WHERE id = ?", (start_sha, run_id)
-                )
         ws.write_current(
             step.id, run["n"], session.id, "running", task["branch"], list(step.reads)
         )
@@ -326,6 +324,29 @@ class Engine:
             )
         self.dress(task, chain, step, session.id)
 
+    def ensure_worktree(self, task) -> bool:
+        """Рабочая копия задачи существует. False — не смогли, задача встала.
+
+        Делает `git worktree add` сам: AoE о рабочих копиях задач не знает
+        вовсе. Иначе все сессии задачи имели бы одну ветку, а сайдбар веба
+        сворачивает такие сессии в одну строку с именем ветки вместо титулов
+        (`web/src/hooks/useWorkspaces.ts`), и до сессии прошлого шага было бы
+        не добраться.
+        """
+        if task["worktree_path"] and Path(task["worktree_path"]).is_dir():
+            return True
+        path, error = create_worktree(task["project_path"], task["branch"])
+        if error:
+            self.db.event(
+                task["id"], "worktree_failed", {"path": str(path), "error": error[:500]}
+            )
+            self.stop(task["id"], "no_worktree")
+            return False
+        with self.db.tx():
+            self.db.bump(task["id"], worktree_path=str(path))
+            self.db.event(task["id"], "worktree_created", {"path": str(path)})
+        return True
+
     def attach_session(self, task, chain: Chain, step: Step, run) -> Session | None:
         """`fresh` — новая сессия; `continue` — последняя сессия этого агента."""
         if step.context == "continue":
@@ -337,28 +358,25 @@ class Engine:
                     self.switch_model(task, chain, step, prev, session)
                     return session
 
-        first = _first_session_run(self.db, task["id"])
         # Ключ идемпотентности — задача/шаг/заход плюс время создания задачи.
         # Без времени пересозданная база наткнулась бы на старую сессию с тем
         # же именем и получила её вместе с мёртвым воркером.
         key = f"{task['id']}@{task['created_at']}/{step.id}/{run['n']}"
         try:
             session = self.aoe.create(
-                path=task["project_path"],
+                path=task["worktree_path"],
                 agent=step.agent,
                 model=step.model,
                 effort=step.effort,
                 title=_session_title(task, step),
                 group=task["group_path"] or f"{GROUP_ROOT}/{task['id']}",
-                branch=task["branch"],
-                new_branch=first is None,
                 idempotency_key=key,
             )
         except AoeError as exc:
             self.db.event(task["id"], "session_create_failed", {"step": step.id, "error": str(exc)})
             return None
 
-        if task["worktree_path"] and session.project_path != task["worktree_path"]:
+        if session.project_path and session.project_path != task["worktree_path"]:
             self.db.event(
                 task["id"],
                 "worktree_mismatch",
@@ -366,9 +384,6 @@ class Engine:
             )
             self.stop(task["id"], "path_mismatch")
             return None
-        if not task["worktree_path"] and session.project_path:
-            with self.db.tx():
-                self.db.bump(task["id"], worktree_path=session.project_path)
         return session
 
     def switch_model(self, task, chain: Chain, step: Step, prev, session: Session) -> None:
@@ -927,13 +942,6 @@ def _epoch_now() -> float:
     import time
 
     return time.time()
-
-
-def _first_session_run(db: Db, task_id: str):
-    return db.conn.execute(
-        "SELECT * FROM run WHERE task_id = ? AND session_id IS NOT NULL ORDER BY id LIMIT 1",
-        (task_id,),
-    ).fetchone()
 
 
 def _session_title(task, step: Step) -> str:

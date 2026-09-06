@@ -6076,3 +6076,9 @@
 [13105394ms] [WARNING] The resource http://127.0.0.1:8199/fonts/Geist-Regular.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally. @ http://127.0.0.1:8199/session/3d2838bff7aa46ac:0
 [13105394ms] [WARNING] The resource http://127.0.0.1:8199/fonts/GeistMono-Regular.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally. @ http://127.0.0.1:8199/session/3d2838bff7aa46ac:0
 [13403919ms] [INFO] Autofocus processing was blocked because a document already has a focused element. @ http://localhost:8090/login:0
+[17045453ms] [INFO] Autofocus processing was blocked because a document already has a focused element. @ http://localhost:8090/login/code:0
+[17271960ms] [ERROR] Failed to load resource: the server responded with a status of 409 (Conflict) @ http://localhost:8090/forgot-password:0
+[17276032ms] [ERROR] Failed to load resource: the server responded with a status of 409 (Conflict) @ http://localhost:8090/forgot-password:0
+[17353125ms] [ERROR] Failed to load resource: the server responded with a status of 409 (Conflict) @ http://localhost:8090/forgot-password:0
+[19071128ms] [WARNING] <meta name="apple-mobile-web-app-capable" content="yes"> is deprecated. Please include <meta name="mobile-web-app-capable" content="yes"> @ http://127.0.0.1:8199/:0
+[19779084ms] [WARNING] <meta name="apple-mobile-web-app-capable" content="yes"> is deprecated. Please include <meta name="mobile-web-app-capable" content="yes"> @ http://127.0.0.1:8199/:0

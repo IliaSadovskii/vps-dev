@@ -56,8 +56,10 @@ class FakeAoe:
         return None
 
     # создание и ход
-    def create(self, *, path, agent, model, effort, title, group, branch,
-               new_branch, idempotency_key, base_branch=None) -> Session:
+    def create(self, *, path, agent, model, effort, title, group,
+               idempotency_key) -> Session:
+        """Обычная сессия в готовом каталоге: полей worktree_* больше нет —
+        рабочую копию задачи делает движок сам."""
         if self.fail_create:
             from orch.aoe import AoeError
 
@@ -66,10 +68,7 @@ class FakeAoe:
             return self.session(self.by_key[idempotency_key])
         sid = f"s{self.next_id}"
         self.next_id += 1
-        # Рабочая копия сессии существует на диске: движок пишет в неё папку
-        # задачи до отправки промпта.
-        project = f"{self.worktree_root}/{branch}" if branch else path
-        Path(project).mkdir(parents=True, exist_ok=True)
+        project = path
         self.rows[sid] = {
             "id": sid,
             "status": IDLE,

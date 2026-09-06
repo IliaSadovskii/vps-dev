@@ -240,3 +240,21 @@ def test_на_пределе_заходов_владелец_выбирает_и
     task = engine.db.task(task_id)
     engine.button(task_id, task["revision"], "accept_as_is", target="ok")
     assert engine.db.task(task_id)["step"] == "three"
+
+
+def test_путь_задачи_ведёт_в_сессии_заходов(engine, fake, repo):
+    """Сайдбар прячет сессии шагов — путь в панели должен быть дорогой к ним."""
+    task_id = start(engine, repo)
+    sid = session_of(engine, task_id)
+    turn(engine, fake, task_id, "one", 1, None)
+    task = engine.db.task(task_id)
+    pane = panels.task_pane(engine.db, task, "s9", "http://127.0.0.1:8065")
+    rows = [
+        r
+        for b in pane["blocks"]
+        if b.get("title") == "Путь задачи"
+        for r in b["children"]
+    ]
+    assert rows[0]["label"] == "one"
+    assert rows[0]["href"] == f"http://127.0.0.1:8065/session/{sid}"
+    assert rows[-1]["selected"] is True          # текущий шаг помечен

@@ -183,11 +183,19 @@ class Aoe:
         effort: str | None,
         title: str,
         group: str,
-        branch: str | None,
-        new_branch: bool,
         idempotency_key: str,
-        base_branch: str | None = None,
     ) -> Session:
+        """Обычная сессия в готовом каталоге. Полей `worktree_*` здесь нет.
+
+        Рабочую копию задачи делает движок (`git worktree add`), а AoE о ней
+        не знает вовсе. Причина в интерфейсе: сайдбар веба сворачивает все
+        сессии с одинаковыми `main_repo_path` и `branch` в одну строку
+        («one row per worktree», `web/src/hooks/useWorkspaces.ts`) и
+        подписывает её именем ветки. Задача из восьми шагов превращалась в
+        одну строку без титулов, и попасть в сессию прошлого шага было
+        неоткуда. У сессии без ветки ключ строится по её `id`, поэтому
+        каждый шаг виден отдельной строкой со своим титулом.
+        """
         body = {
             "path": path,
             "tool": agent,
@@ -202,12 +210,6 @@ class Aoe:
         }
         if effort:
             body["agent_effort"] = effort
-        if branch:
-            body["worktree_enabled"] = True
-            body["worktree_branch"] = branch
-            body["create_new_branch"] = new_branch
-            if new_branch and base_branch:
-                body["base_branch"] = base_branch
         return Session.of(self.call("POST", "/api/sessions?wait=ready", body, timeout=180))
 
     def prompt(self, sid: str, text: str, attempts: int = 3) -> dict:

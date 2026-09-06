@@ -119,3 +119,91 @@ def git(root: Path | str, *args: str, timeout: float = 60.0) -> str:
         ["git", *args], cwd=str(root), capture_output=True, text=True, timeout=timeout
     )
     return out.stdout.strip() if out.returncode == 0 else ""
+
+
+def git_try(root: Path | str, *args: str, timeout: float = 300.0) -> tuple[int, str]:
+    """Тот же git, но с кодом возврата и текстом ошибки: для действий, где
+    молчаливый провал недопустим (создание и удаление рабочей копии)."""
+    out = subprocess.run(
+        ["git", *args], cwd=str(root), capture_output=True, text=True, timeout=timeout
+    )
+    return out.returncode, (out.stdout + out.stderr).strip()
+
+
+def worktree_path(project: Path | str, branch: str) -> Path:
+    """Где лежит рабочая копия задачи: `../<repo>-orch/<branch>`.
+
+    Нарочно не `<repo>-worktrees`: там держит свои копии сам AoE, и его
+    `aoe worktree cleanup` считает чужие каталоги в этой папке брошенными.
+    Копии задач лежат отдельно, и убирает их движок — `aoe worktree cleanup`
+    orch не зовёт никогда.
+    """
+    project = Path(project).resolve()
+    return project.parent / f"{project.name}-orch" / branch
+
+
+def create_worktree(project: Path | str, branch: str, base: str = "") -> tuple[Path, str]:
+    """Создать рабочую копию задачи. Возвращает (путь, ошибка или '').
+
+    Идемпотентно: готовый каталог с нужной веткой принимается как есть,
+    поэтому повтор после падения движка ничего не ломает.
+    """
+    project = Path(project).resolve()
+    path = worktree_path(project, branch)
+    if path.is_dir() and (path / ".git").exists():
+        return path, ""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    base = base or default_branch(project)
+    if branch_exists(project, branch):
+        code, out = git_try(project, "worktree", "add", str(path), branch)
+    else:
+        # Ответвляемся от свежей базовой ветки, а не от того, что лежало на
+        # диске с прошлой недели: иначе задача начинается в устаревшем коде.
+        # Нет сети или нет ремоута — не беда, работаем от локальной.
+        if has_remote(project):
+            git_try(project, "fetch", "origin", base)
+            start = f"origin/{base}" if ref_exists(project, f"refs/remotes/origin/{base}") else base
+        else:
+            start = base
+        code, out = git_try(project, "worktree", "add", str(path), "-b", branch, start)
+    if code != 0:
+        return path, out
+    if (Path(project) / ".gitmodules").exists():
+        sub_code, sub_out = git_try(path, "submodule", "update", "--init", "--recursive")
+        if sub_code != 0:
+            return path, f"подмодули не поднялись: {sub_out}"
+    return path, ""
+
+
+def has_remote(project: Path | str) -> bool:
+    return bool(git(project, "remote"))
+
+
+def ref_exists(project: Path | str, ref: str) -> bool:
+    code, _ = git_try(project, "rev-parse", "--verify", "--quiet", ref)
+    return code == 0
+
+
+def remove_worktree(project: Path | str, path: Path | str) -> str:
+    """Убрать рабочую копию задачи. Ветку не трогаем: в ней вся работа."""
+    project = Path(project).resolve()
+    git_try(project, "worktree", "unlock", str(path))
+    code, out = git_try(project, "worktree", "remove", "--force", str(path))
+    git_try(project, "worktree", "prune")
+    return "" if code == 0 else out
+
+
+def branch_exists(project: Path | str, branch: str) -> bool:
+    code, _ = git_try(project, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}")
+    return code == 0
+
+
+def default_branch(project: Path | str) -> str:
+    """Ветка, от которой ответвляются задачи: origin/HEAD, иначе main/master."""
+    head = git(project, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    if head:
+        return head.split("/", 1)[-1]
+    for name in ("main", "master"):
+        if branch_exists(project, name):
+            return name
+    return git(project, "rev-parse", "--abbrev-ref", "HEAD") or "main"
