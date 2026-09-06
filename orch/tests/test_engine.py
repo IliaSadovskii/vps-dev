@@ -640,3 +640,14 @@ def test_тз_правится_только_у_заявки(engine, fake, repo):
     ответ = engine.edit_text(поехала, "поздно")
     assert "уже не в бэклоге" in ответ
     assert engine.db.task(поехала)["text"] != "поздно"
+
+
+def test_титул_без_разметки(engine):
+    """Мастер пишет ТЗ с markdown, а в панели строка должна читаться."""
+    from orch.engine import _title_from
+
+    assert _title_from("**Цель.** Показать дату у каждой заметки в list") == (
+        "Показать дату у каждой заметки в list"
+    )
+    assert _title_from("# Заголовок\nтекст") == "Заголовок"
+    assert _title_from("") == "задача"

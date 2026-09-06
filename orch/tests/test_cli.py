@@ -158,10 +158,11 @@ def _fake_db(tmp_path, monkeypatch, **fields):
     conn = sqlite3.connect(path)
     conn.execute(
         "CREATE TABLE task (id TEXT PRIMARY KEY, revision INT, status TEXT, "
-        "wait_reason TEXT, step TEXT, branch TEXT, project_path TEXT)"
+        "wait_reason TEXT, step TEXT, branch TEXT, project_path TEXT, "
+        "worktree_path TEXT)"
     )
     conn.execute(
-        "INSERT INTO task VALUES (?,?,?,?,?,?,?)",
+        "INSERT INTO task VALUES (?,?,?,?,?,?,?,?)",
         (
             fields.get("id", "T1"),
             fields.get("revision", 3),
@@ -170,6 +171,7 @@ def _fake_db(tmp_path, monkeypatch, **fields):
             fields.get("step", "two"),
             None,
             None,
+            fields.get("worktree_path"),
         ),
     )
     conn.commit()
@@ -229,3 +231,18 @@ def test_task_edit_кладёт_новое_тз(task, capsys, tmp_path, monkeypa
     assert code == 0
     request = json.loads(next(inbox.glob("*.json")).read_text(encoding="utf-8"))
     assert request["kind"] == "edit_text" and request["text"] == "новое ТЗ"
+
+
+def test_заявка_из_корня_проекта_не_подписана_чужой_задачей(
+    task, capsys, tmp_path, monkeypatch
+):
+    """`.orch/<T>` могла остаться от прошлой задачи: подпись была бы ложью."""
+    import orch.cli as mod
+
+    inbox = tmp_path / "inbox"
+    monkeypatch.setattr(mod, "INBOX", inbox)
+    _fake_db(tmp_path, monkeypatch, id="T1", status="done")
+    code, _ = run(["task", "new", "новая", "--chain", "smoke"], capsys)
+    assert code == 0
+    request = json.loads(next(inbox.glob("*.json")).read_text(encoding="utf-8"))
+    assert request["author"] is None

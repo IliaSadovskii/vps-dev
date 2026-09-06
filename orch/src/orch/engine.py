@@ -1132,8 +1132,19 @@ def _artifact_sha(ws: Workspace, step: Step) -> str | None:
 
 
 def _title_from(text: str) -> str:
-    first = text.strip().splitlines()[0] if text.strip() else "задача"
-    words = first.split()
+    """Титул — первые слова текста, очищенные от разметки.
+
+    Мастер пишет ТЗ размеченным markdown («**Цель.** …»), и без чистки
+    строка задачи в панели начиналась со звёздочек и слова «Цель».
+    """
+    first = ""
+    for line in text.strip().splitlines():
+        line = re.sub(r"[*_`#>]+", "", line).strip()
+        line = re.sub(r"^(цель|задача|результат)[.:]\s*", "", line, flags=re.I)
+        if line:
+            first = line
+            break
+    words = (first or "задача").split()
     return " ".join(words[:7])[:60] or "задача"
 
 

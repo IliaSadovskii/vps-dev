@@ -146,12 +146,11 @@ def cmd_task_new(args: argparse.Namespace) -> int:
         key, _, value = item.partition("=")
         sheet_edits[f"{key}.ask"] = _flag(value)
     # Заявку могла завести роль изнутри задачи — тогда владелец должен
-    # видеть в панели, что писал не он.
-    author = None
-    try:
-        author = find_task().task_id
-    except NotInTask:
-        pass
+    # видеть в панели, что писал не он. Папка `.orch/<T>` могла остаться в
+    # проекте от прошлой задачи, поэтому мало найти её: задача должна быть
+    # жива и работать именно в этой копии, иначе мастер, запущенный в корне
+    # проекта, подписался бы чужим номером.
+    author = _author_here(project)
     request = {
         "id": uuid.uuid4().hex[:12],
         "author": author,
@@ -175,6 +174,26 @@ def cmd_task_new(args: argparse.Namespace) -> int:
 
 
 # ── команды владельца: чтение базы ───────────────────────────────────────
+def _author_here(project: Path) -> str | None:
+    """Номер живой задачи, которой принадлежит эта рабочая копия, или None."""
+    try:
+        task_id = find_task().task_id
+    except NotInTask:
+        return None
+    try:
+        conn = _ro_db()
+    except Refused:
+        return None
+    row = conn.execute(
+        "SELECT worktree_path, status FROM task WHERE id = ?", (task_id,)
+    ).fetchone()
+    if row is None or row["status"] not in ("running", "waiting", "queued"):
+        return None
+    if not row["worktree_path"]:
+        return None
+    return task_id if Path(row["worktree_path"]).resolve() == project else None
+
+
 def _ro_db():
     """База только на чтение: единственный писатель — движок."""
     import sqlite3
