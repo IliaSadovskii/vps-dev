@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import artifacts as art
+from . import stand as stands
 from . import promptbuild, signals
 from .aoe import ERROR, IDLE, RUNNING, STARTING, STOPPED, WAITING, Aoe, AoeError, Session
 from .chain import DONE, Chain, ChainError, Step, chains_dir, load as load_chain, parse as parse_chain
@@ -535,6 +536,7 @@ class Engine:
         for task in self.db.tasks((ABANDONED,)):
             if task["archived_at"]:
                 continue
+            self.drop_stand(task)
             error = ""
             if task["worktree_path"] and Path(task["worktree_path"]).is_dir():
                 error = remove_worktree(task["project_path"], task["worktree_path"])
@@ -552,6 +554,7 @@ class Engine:
             closed = epoch(task["closed_at"])
             if closed is None or (time.time() - closed) / 3600 < ARCHIVE_AFTER_H:
                 continue
+            self.drop_stand(task)
             for sid in self.db.sessions_of_task(task["id"]):
                 self.aoe.archive(sid)
             # Рабочую копию убирает движок: AoE о ней не знает. Ветку не
@@ -939,6 +942,7 @@ class Engine:
             else:
                 target = step.target(outcome)
                 gated = False
+                closed_now = False
                 if target == DONE:
                     revision = self.db.bump(
                         task["id"], status=ST_DONE, step=None, closed_at=now()
@@ -948,6 +952,7 @@ class Engine:
                         artifact_sha=sha,
                     )
                     self.db.event(task["id"], "done", {})
+                    closed_now = True
                 else:
                     revision = self.db.bump(task["id"], step=target)
                     self.db.move(
@@ -959,6 +964,10 @@ class Engine:
         else:
             row = self.db.task(task["id"])
             self.aoe.set_color(session.id, "green" if row["status"] == ST_DONE else "amber")
+            if closed_now:
+                # Задача доведена до конца: стенд больше некому смотреть, а
+                # он держит порты, контейнеры и тома.
+                self.drop_stand(row)
 
     def end_without_signal(
         self, task, step: Step, run, ws: Workspace, end_sha: str | None, session: Session
@@ -1018,6 +1027,7 @@ class Engine:
         if chain is None:
             return "цепочка задачи не читается"
         handler = {
+            "stand": self._btn_stand,
             "accept": self._btn_accept,
             "back": self._btn_back,
             "again": self._btn_again,
@@ -1029,6 +1039,43 @@ class Engine:
         if handler is None:
             return f"неизвестное действие {action}"
         return handler(task, chain, target, comment)
+
+    def _btn_stand(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
+        """Поднять стенд задачи: свой блок портов, свои контейнеры.
+
+        По кнопке, а не при каждом старте: контейнеры нужны, когда владелец
+        хочет посмотреть глазами, а не на каждом ходе роли.
+        """
+        if not task["worktree_path"]:
+            return "рабочей копии ещё нет"
+        name, error = stands.claim(task)
+        if error:
+            self.db.event(task["id"], "stand_failed", {"stage": "claim", "error": error})
+            return f"не смог занять порты: {error[:200]}"
+        error = stands.up(task, name)
+        if error:
+            self.db.event(task["id"], "stand_failed", {"stage": "up", "error": error})
+            return f"стенд не поднялся: {error[:200]}"
+        port = stands.web_port(name)
+        with self.db.tx():
+            self.db.bump(task["id"], stand=name, stand_port=port)
+            self.db.event(task["id"], "stand_up", {"name": name, "port": port})
+        return f"стенд поднят на {port}"
+
+    def drop_stand(self, task) -> None:
+        """Погасить стенд задачи и вернуть блок портов.
+
+        Зовётся, когда задача больше не живая: закрыта, доведена до конца или
+        брошена. Стенд, переживший задачу, держит порты и тома, а найти его
+        потом некому.
+        """
+        name = task["stand"] if "stand" in task.keys() else None
+        if not name:
+            return
+        error = stands.down(task, name)
+        with self.db.tx():
+            self.db.bump(task["id"], stand=None, stand_port=None)
+            self.db.event(task["id"], "stand_down", {"name": name, "error": error[:300]})
 
     def _btn_accept(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
         """Принять ход владельцем.
@@ -1052,6 +1099,8 @@ class Engine:
                 revision = self.db.bump(task["id"], status=ST_RUNNING, step=to, wait_reason=None)
             self.db.move(task["id"], step.id, to, "human", "button", revision, comment=comment)
             self.db.event(task["id"], "button", {"action": "accept", "to": to})
+        if to == DONE:
+            self.drop_stand(self.db.task(task["id"]))
         return "принято"
 
     def _btn_back(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
@@ -1109,6 +1158,7 @@ class Engine:
                 task["id"], task["step"], DONE, "human", "button", revision, comment=comment
             )
             self.db.event(task["id"], "closed", {"comment": comment})
+        self.drop_stand(self.db.task(task["id"]))
         return "закрыта"
 
     def _btn_start(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
@@ -1232,6 +1282,7 @@ class Engine:
             owner_edited=self.owner_edited(task, ws, chain),
             sub_prompts=self.sub_prompts(step),
             extra_includes=self.extra_includes(task, step),
+            stand_name=stands.name_of(task) if task["worktree_path"] else "",
         )
         text = promptbuild.build(ctx)
         if ctx.oversized:

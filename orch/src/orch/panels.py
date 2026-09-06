@@ -24,6 +24,10 @@ MAX_DONE = 10
 MAX_EVENTS = 10
 MAX_COMMENTS = 3
 
+# Адрес машины в частной сети владельца: веб-сервис отдаётся на том же номере
+# порта, что слушает на 127.0.0.1 (`/var/lib/vps-dev/style/machine/ports.md`).
+HOST = "dev-hel1-3.taila4db50.ts.net"
+
 # Кнопки по причине остановки: что предлагать владельцу, когда задача встала.
 BUTTONS_BY_REASON = {
     "gate": ("accept", "back"),
@@ -371,6 +375,8 @@ def task_pane(
             }
         )
 
+    blocks.append(_stand_row(task))
+
     wizard = task["wizard_session"] if "wizard_session" in task.keys() else None
     if wizard:
         # Разговор, в котором задачу заводили: сама сессия в архиве, но
@@ -583,6 +589,34 @@ def _what_to_decide(db: Db, task) -> str:
     if reason == "no_worker":
         return f"У сессии шага {step} не поднялся агент. Ещё заход заведёт новую сессию."
     return f"Шаг {step} ждёт вас."
+
+
+def _stand_row(task) -> dict:
+    """Стенд задачи: ссылка, если поднят, кнопка — если нет.
+
+    Кнопкой, а не сама: контейнеры нужны, когда владелец хочет посмотреть
+    глазами, а не на каждом ходе роли (`UX-PLAN.md`).
+    """
+    stand = task["stand"] if "stand" in task.keys() else None
+    port = task["stand_port"] if "stand_port" in task.keys() else None
+    if stand and port:
+        return {
+            "kind": "row",
+            "label": "стенд",
+            "sublabel": f"{stand} · погаснет, когда задача закроется",
+            "value": str(port),
+            "value_tone": "success",
+            "mono": True,
+            "href": f"https://{HOST}:{port}/",
+        }
+    return {
+        "kind": "action",
+        "label": "Поднять стенд",
+        "method": "orch.stand",
+        "icon": "play",
+        "tooltip": "свой блок портов и свои контейнеры — посмотреть работу глазами",
+        "params": {"task": task["id"], "revision": task["revision"]},
+    }
 
 
 def _branch_busy_text(db: Db, task) -> str:

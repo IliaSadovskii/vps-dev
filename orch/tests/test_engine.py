@@ -855,3 +855,29 @@ def test_копия_снимается_даже_под_другим_путём(e
     assert main_worktree(alias).samefile(repo)
     assert remove_worktree(alias, copy) == ""
     assert not copy.exists()
+
+
+def test_стенд_задачи_поднимается_кнопкой_и_гаснет_с_задачей(engine, fake, repo, monkeypatch):
+    """Порты стенда выдаёт `ports`, движок только помнит имя аренды."""
+    from orch import stand as stands
+
+    calls = []
+    monkeypatch.setattr(stands, "claim", lambda task: (stands.name_of(task), ""))
+    monkeypatch.setattr(stands, "up", lambda task, name: calls.append(("up", name)) or "")
+    monkeypatch.setattr(stands, "web_port", lambda name: 8030)
+    monkeypatch.setattr(stands, "down", lambda task, name: calls.append(("down", name)) or "")
+
+    task_id = start(engine, repo)
+    task = engine.db.task(task_id)
+    assert engine.button(task_id, task["revision"], "stand") == "стенд поднят на 8030"
+    task = engine.db.task(task_id)
+    assert task["stand"].endswith(task_id.lower()) and task["stand_port"] == 8030
+
+    from orch import panels
+
+    pane = panels.task_pane(engine.db, task, "s9", "http://x")
+    assert "8030" in json.dumps(pane, ensure_ascii=False)
+
+    engine.button(task_id, task["revision"], "close")
+    assert ("down", task["stand"]) in calls
+    assert engine.db.task(task_id)["stand"] is None

@@ -41,6 +41,7 @@ class Context:
     later_artifacts: list[str] = field(default_factory=list)
     owner_edited: list[str] = field(default_factory=list)
     sub_prompts: list[str] = field(default_factory=list)
+    stand_name: str = ""
     # Общие файлы сверх цепочки: движок добавляет их по состоянию задачи.
     extra_includes: list[str] = field(default_factory=list)
     oversized: bool = False
@@ -127,6 +128,13 @@ def _where(ctx: Context) -> str:
         f"Логи команд — `{ctx.task_dir / 'logs'}`, свой файл пиши в "
         f"`{ctx.task_dir / 'artifacts'}`."
     )
+    if ctx.stand_name:
+        # Порты стенда задачи выдаёт `ports`, а не роль: номера проекта заняты
+        # постоянным стендом владельца, и брать их на глаз нельзя.
+        lines.append(
+            f"Стенд задачи поднимается так: `ports run {ctx.stand_name} -- docker compose up -d`; "
+            f"порты покажет `ports which {ctx.stand_name}`. Гасит его движок при закрытии задачи."
+        )
     if ctx.run_n >= ctx.step.max_runs:
         lines.append(
             f"Это последний допустимый заход в этот шаг (предел {ctx.step.max_runs}). "
