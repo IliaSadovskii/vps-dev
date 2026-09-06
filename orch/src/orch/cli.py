@@ -497,14 +497,20 @@ def cmd_gc(args: argparse.Namespace) -> int:
     }
     сироты: list[tuple[str, Path]] = []
     for project in sorted(projects):
-        base = Path(project).parent / f"{Path(project).name}-orch"
-        if not base.is_dir():
-            continue
-        for path in sorted(base.rglob(".git")):
-            copy = path.parent
-            if str(copy) in живые:
+        # Смотрим обе папки: свою (`<repo>-orch`) и ту, куда копии клал сам
+        # AoE (`<repo>-worktrees`) — там остаются копии ночных прогонов, а в
+        # них `node_modules` и `vendor` на сотни мегабайт.
+        for base in (
+            Path(project).parent / f"{Path(project).name}-orch",
+            Path(project).parent / f"{Path(project).name}-worktrees",
+        ):
+            if not base.is_dir():
                 continue
-            сироты.append((project, copy))
+            for path in sorted(base.rglob(".git")):
+                copy = path.parent
+                if str(copy) in живые or str(copy.resolve()) in живые:
+                    continue
+                сироты.append((project, copy))
     if not сироты:
         print("сирот нет: все рабочие копии принадлежат живым задачам")
         return 0

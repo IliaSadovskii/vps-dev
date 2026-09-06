@@ -835,3 +835,23 @@ def test_брошенная_задача_убирает_за_собой_копи
     task = engine.db.task(task_id)
     assert task["archived_at"]
     assert not copy.exists()
+
+
+def test_копия_снимается_даже_под_другим_путём(engine, fake, repo, tmp_path):
+    """Каталог проекта бывает доступен под двумя путями, git сверяет строкой."""
+    import subprocess
+
+    from orch.workspace import main_worktree, remove_worktree
+
+    # Второй путь к тому же каталогу: так на машине живут `/projects/x` и
+    # `~/projects/x`.
+    alias = tmp_path / "alias"
+    alias.symlink_to(repo)
+    copy = repo.parent / f"{repo.name}-orch" / "t1-x"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", str(copy), "-b", "t1-x"],
+        cwd=alias, check=True, capture_output=True,
+    )
+    assert main_worktree(alias).samefile(repo)
+    assert remove_worktree(alias, copy) == ""
+    assert not copy.exists()

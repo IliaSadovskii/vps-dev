@@ -232,11 +232,33 @@ def ref_exists(project: Path | str, ref: str) -> bool:
     return code == 0
 
 
+def main_worktree(project: Path | str) -> Path:
+    """Путь главной копии так, как его записал сам git.
+
+    Один каталог бывает доступен под двумя путями (`/projects/x` и
+    `~/projects/x` — это один и тот же каталог), а git сверяет их строкой.
+    Команды об удалении копий надо звать оттуда, где путь совпадает с
+    записанным, иначе git отвечает «does not point back».
+    """
+    out = git(project, "worktree", "list", "--porcelain")
+    for line in out.splitlines():
+        if line.startswith("worktree "):
+            return Path(line[len("worktree "):].strip())
+    return Path(project)
+
+
 def remove_worktree(project: Path | str, path: Path | str) -> str:
     """Убрать рабочую копию задачи. Ветку не трогаем: в ней вся работа."""
     project = Path(project).resolve()
     git_try(project, "worktree", "unlock", str(path))
     code, out = git_try(project, "worktree", "remove", "--force", str(path))
+    if code != 0 and "does not point back" in out:
+        # Тот же репозиторий, но под путём, который записан у git.
+        home = main_worktree(project)
+        git_try(home, "worktree", "unlock", str(path))
+        code, out = git_try(home, "worktree", "remove", "--force", str(path))
+        git_try(home, "worktree", "prune")
+        return "" if code == 0 else out
     git_try(project, "worktree", "prune")
     return "" if code == 0 else out
 
