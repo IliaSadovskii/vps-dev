@@ -277,6 +277,39 @@ def load(path: str | Path) -> Chain:
         raise ChainError(f"{path}: не разобрал YAML: {exc}") from None
 
 
+def catalog() -> list[dict]:
+    """Какие цепочки есть: имя, о чём она, шаги, пресеты, ворота по умолчанию.
+
+    Нужен мастеру: он показывает владельцу выбор вариантами, а не заставляет
+    помнить имена файлов. Описание — верхний блок комментариев файла, там оно
+    и так написано для человека; отдельного поля в схеме заводить не стали.
+    Битая цепочка попадает в список с пометкой, а не роняет весь выбор.
+    """
+    out: list[dict] = []
+    for path in sorted(chains_dir().glob("*.yml")):
+        head = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("#"):
+                head.append(line.lstrip("# ").rstrip())
+            elif line.strip():
+                break
+        try:
+            chain = load(path)
+        except ChainError as exc:
+            out.append({"name": path.stem, "error": str(exc)})
+            continue
+        out.append(
+            {
+                "name": chain.name,
+                "description": " ".join(head).strip(),
+                "steps": [s.id for s in chain.steps],
+                "presets": sorted(chain.presets),
+                "gates": [s.id for s in chain.steps if s.human_after],
+            }
+        )
+    return out
+
+
 def chains_dir() -> Path:
     """Каталог `orch/chains/` рядом с исходниками пакета."""
     return _repo_dir() / "chains"

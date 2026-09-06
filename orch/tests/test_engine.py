@@ -585,3 +585,58 @@ def test_задачу_можно_закрыть_и_она_отпускает_в�
         chain_name="t", project_path=str(repo), text="новая", branch="общая"
     )
     assert engine.db.task(second)["branch"] == "общая"
+
+
+def test_мастер_открывается_с_каталогом_цепочек(engine, fake, repo):
+    """Панель не умеет полей ввода: цепочку и ветку спрашивает мастер в чате."""
+    sid = engine.open_wizard(str(repo))
+    assert sid is not None
+    отправлено = [text for target, text in fake.prompts if target == sid]
+    assert отправлено, "мастеру не отправили промпт"
+    text = отправлено[0]
+    assert "Мастер задачи" in text
+    assert "Цепочки:" in text and "`deep`" in text
+    assert str(repo) in text
+    # Сессия одна на проект: второй вызов не плодит новую.
+    assert engine.open_wizard(str(repo)) == sid
+
+
+def test_мастер_из_бэклога_видит_заявку_и_режим(engine, fake, repo):
+    monkey_chain(engine)
+    task_id = engine.create_task(
+        chain_name="t", project_path=str(repo), text="починить вход", backlog=True
+    )
+    sid = engine.open_wizard(str(repo), task_id, "text")
+    text = [t for target, t in fake.prompts if target == sid][0]
+    assert f"Заявка {task_id} из бэклога" in text
+    assert "починить вход" in text
+    assert "orch task edit" in text and "Задачу не запускай" in text
+
+
+def test_задача_из_заявки_закрывает_её(engine, fake, repo):
+    """Мастер заводит задачу с `--from-backlog`: заявка не должна остаться."""
+    monkey_chain(engine)
+    заявка = engine.create_task(
+        chain_name="t", project_path=str(repo), text="черновик", backlog=True
+    )
+    новая = engine.create_task(
+        chain_name="t", project_path=str(repo), text="настоящая", from_backlog=заявка
+    )
+    assert engine.db.task(заявка)["status"] == "done"
+    assert engine.db.task(заявка)["wait_reason"] == "closed_by_owner"
+    assert engine.db.task(новая)["status"] in ("queued", "running")
+
+
+def test_тз_правится_только_у_заявки(engine, fake, repo):
+    """У поехавшей задачи текст уже в промптах прошлых шагов."""
+    monkey_chain(engine)
+    task_id = engine.create_task(
+        chain_name="t", project_path=str(repo), text="старое", backlog=True
+    )
+    engine.edit_text(task_id, "новое ТЗ целиком")
+    assert engine.db.task(task_id)["text"] == "новое ТЗ целиком"
+
+    поехала = start(engine, repo)
+    ответ = engine.edit_text(поехала, "поздно")
+    assert "уже не в бэклоге" in ответ
+    assert engine.db.task(поехала)["text"] != "поздно"

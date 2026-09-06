@@ -163,6 +163,7 @@ def cmd_task_new(args: argparse.Namespace) -> int:
         "preset": args.preset,
         "sheet_edits": sheet_edits,
         "backlog": bool(args.backlog),
+        "from_backlog": getattr(args, "from_backlog", None),
         "at": signals.now(),
     }
     INBOX.mkdir(parents=True, exist_ok=True)
@@ -333,20 +334,122 @@ def cmd_task_move(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_inbox(args: argparse.Namespace) -> int:
-    """Завести сессию Inbox проекта: заявка движку."""
+def cmd_wizard(args: argparse.Namespace) -> int:
+    """Открыть мастера задачи в проекте: заявка движку."""
     project = Path(args.project).resolve()
     request = {
         "id": uuid.uuid4().hex[:12],
-        "kind": "inbox_session",
+        "kind": "wizard",
         "project_path": str(project),
+        "task": getattr(args, "task", None),
         "at": signals.now(),
     }
     INBOX.mkdir(parents=True, exist_ok=True)
     (INBOX / f"{request['id']}.json").write_text(
         json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    print(f"сессия Inbox для {project} будет создана на следующем проходе")
+    print(f"мастер задачи для {project} откроется на следующем проходе")
+    return 0
+
+
+def cmd_gate(args: argparse.Namespace) -> int:
+    """Решение владельца, сказанное словами роли.
+
+    Панель — не единственный путь: владелец правит план в чате и там же
+    говорит «принято» или «вернись на разведку». Роль передаёт это сюда
+    (`UX-PLAN.md`). Работает только когда задача действительно стоит на
+    воротах: обычной фразой в разговоре задачу не сдвинуть.
+    """
+    task = find_task()
+    conn = _ro_db()
+    row = conn.execute(
+        "SELECT id, revision, status, wait_reason, step FROM task WHERE id = ?",
+        (task.task_id,),
+    ).fetchone()
+    if row is None:
+        raise Refused(f"нет задачи {task.task_id}")
+    if row["status"] != "waiting":
+        raise Refused(
+            f"{task.task_id} сейчас не ждёт владельца (статус {row['status']}). "
+            "Ход заканчивают вызовом `orch done <исход>`, а не `orch gate`."
+        )
+    action = args.action
+    if action == "back" and not args.target:
+        raise Refused("для «back» назовите шаг: orch gate back <шаг>")
+    request = {
+        "id": uuid.uuid4().hex[:12],
+        "kind": "button",
+        "task": row["id"],
+        "revision": row["revision"],
+        "action": action,
+        "target": args.target,
+        "comment": args.comment,
+        "at": signals.now(),
+    }
+    INBOX.mkdir(parents=True, exist_ok=True)
+    (INBOX / f"{request['id']}.json").write_text(
+        json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    where = f" на {args.target}" if args.target else ""
+    print(f"решение владельца принято: {action}{where}. Задача поедет на следующем проходе.")
+    return 0
+
+
+def cmd_chains(args: argparse.Namespace) -> int:
+    """Какие цепочки есть — мастеру, чтобы показать владельцу выбор."""
+    from .chain import catalog
+
+    for item in catalog():
+        if item.get("error"):
+            print(f"{item['name']}: не читается — {item['error']}")
+            continue
+        print(f"{item['name']}: {item['description'] or 'без описания'}")
+        print(f"  шаги: {' → '.join(item['steps'])}")
+        print(f"  ворота по умолчанию: {', '.join(item['gates']) or 'нет'}")
+        print(f"  пресеты: {', '.join(item['presets']) or 'нет'}")
+    return 0
+
+
+def cmd_branches(args: argparse.Namespace) -> int:
+    """Свежие ветки проекта с пометкой, какие заняты живыми задачами."""
+    from .branchref import recent
+
+    project = Path(args.project).resolve() if args.project else _project_here()
+    conn = _ro_db()
+    busy = {
+        row["branch"]: row["id"]
+        for row in conn.execute(
+            "SELECT id, branch FROM task WHERE status IN "
+            "('queued','running','waiting','backlog') AND branch IS NOT NULL"
+        )
+    }
+    for item in recent(str(project)):
+        mark = f"  занята задачей {busy[item['branch']]}" if item["branch"] in busy else ""
+        pr = f"  PR #{item['pr']}" if item.get("pr") else ""
+        print(f"{item['branch']}  {item.get('when','')}  {item.get('subject','')[:60]}{pr}{mark}")
+    return 0
+
+
+def cmd_task_edit(args: argparse.Namespace) -> int:
+    """Переписать ТЗ заявки. Текст из аргумента или со стандартного ввода."""
+    text = args.text
+    if text == "-":
+        text = sys.stdin.read()
+    text = (text or "").strip()
+    if not text:
+        raise Refused("текст пуст")
+    request = {
+        "id": uuid.uuid4().hex[:12],
+        "kind": "edit_text",
+        "task": args.task,
+        "text": text,
+        "at": signals.now(),
+    }
+    INBOX.mkdir(parents=True, exist_ok=True)
+    (INBOX / f"{request['id']}.json").write_text(
+        json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(f"новое ТЗ {args.task} поставлено в очередь движку")
     return 0
 
 
@@ -463,6 +566,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("text")
     p.set_defaults(func=cmd_note)
 
+    p = sub.add_parser(
+        "gate",
+        help="решение владельца, сказанное словами в чате (только на воротах)",
+    )
+    p.add_argument("action", choices=["accept", "back", "again"])
+    p.add_argument("target", nargs="?", help="шаг для «back»")
+    p.add_argument("--comment", help="что владелец просил передать адресату")
+    p.set_defaults(func=cmd_gate)
+
     p = sub.add_parser("push", help="запушить ветку задачи")
     p.set_defaults(func=cmd_push)
 
@@ -499,7 +611,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--base",
         help="от чего ответвляться, если ветки ещё нет (по умолчанию origin/HEAD)",
     )
+    p.add_argument(
+        "--from-backlog",
+        dest="from_backlog",
+        metavar="T12",
+        help="заявка, из которой выросла задача: она закроется сама",
+    )
     p.set_defaults(func=cmd_task_new)
+
+    p = task_sub.add_parser("edit", help="переписать ТЗ заявки в бэклоге")
+    p.add_argument("task")
+    p.add_argument("--text", required=True, help="новый текст; «-» — со стандартного ввода")
+    p.set_defaults(func=cmd_task_edit)
 
     p = sub.add_parser("log", help="журнал событий")
     p.add_argument("task", nargs="?")
@@ -511,9 +634,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--last", type=int, default=20)
     p.set_defaults(func=cmd_stats)
 
-    p = sub.add_parser("inbox", help="сессия Inbox проекта")
+    p = sub.add_parser("wizard", help="открыть мастера задачи в проекте")
     p.add_argument("project")
-    p.set_defaults(func=cmd_inbox)
+    p.set_defaults(func=cmd_wizard)
+
+    p = sub.add_parser("chains", help="какие цепочки есть")
+    p.set_defaults(func=cmd_chains)
+
+    p = sub.add_parser("branches", help="ветки проекта и кто их занял")
+    p.add_argument("--project")
+    p.set_defaults(func=cmd_branches)
 
     p = sub.add_parser("doctor", help="проверить окружение")
     p.set_defaults(func=cmd_doctor)

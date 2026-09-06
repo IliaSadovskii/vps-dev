@@ -146,3 +146,86 @@ def test_task_new_кладёт_заявку(task, capsys, tmp_path, monkeypatch)
     assert len(files) == 1
     request = json.loads(files[0].read_text(encoding="utf-8"))
     assert request["chain"] == "smoke" and request["backlog"] is True
+
+
+def _fake_db(tmp_path, monkeypatch, **fields):
+    """База только на чтение: одна задача с нужным статусом."""
+    import sqlite3
+
+    import orch.cli as mod
+
+    path = tmp_path / "orch.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE task (id TEXT PRIMARY KEY, revision INT, status TEXT, "
+        "wait_reason TEXT, step TEXT, branch TEXT, project_path TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO task VALUES (?,?,?,?,?,?,?)",
+        (
+            fields.get("id", "T1"),
+            fields.get("revision", 3),
+            fields.get("status", "waiting"),
+            fields.get("wait_reason", "gate"),
+            fields.get("step", "two"),
+            None,
+            None,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(mod, "DB_PATH", path)
+    return path
+
+
+def test_gate_передаёт_решение_владельца_сказанное_словами(
+    task, capsys, tmp_path, monkeypatch
+):
+    """Владелец правит план в чате и там же говорит, куда двигаться."""
+    import orch.cli as mod
+
+    inbox = tmp_path / "inbox"
+    monkeypatch.setattr(mod, "INBOX", inbox)
+    _fake_db(tmp_path, monkeypatch)
+    code, text = run(["gate", "back", "one", "--comment", "мало тестов"], capsys)
+    assert code == 0 and "решение владельца принято" in text
+    request = json.loads(next(inbox.glob("*.json")).read_text(encoding="utf-8"))
+    assert request["kind"] == "button" and request["action"] == "back"
+    assert request["target"] == "one" and request["comment"] == "мало тестов"
+    assert request["revision"] == 3
+
+
+def test_gate_не_двигает_задачу_которая_не_ждёт(task, capsys, tmp_path, monkeypatch):
+    """Иначе роль сдвинет себя сама, решив, что владелец доволен."""
+    import orch.cli as mod
+
+    monkeypatch.setattr(mod, "INBOX", tmp_path / "inbox")
+    _fake_db(tmp_path, monkeypatch, status="running", wait_reason=None)
+    code, text = run(["gate", "accept"], capsys)
+    assert code == 1 and "не ждёт владельца" in text
+
+
+def test_gate_back_без_шага_отказывает(task, capsys, tmp_path, monkeypatch):
+    import orch.cli as mod
+
+    monkeypatch.setattr(mod, "INBOX", tmp_path / "inbox")
+    _fake_db(tmp_path, monkeypatch)
+    code, text = run(["gate", "back"], capsys)
+    assert code == 1 and "назовите шаг" in text
+
+
+def test_chains_показывает_выбор_мастеру(capsys):
+    code, text = run(["chains"], capsys)
+    assert code == 0
+    assert "deep:" in text and "шаги:" in text and "ворота по умолчанию:" in text
+
+
+def test_task_edit_кладёт_новое_тз(task, capsys, tmp_path, monkeypatch):
+    import orch.cli as mod
+
+    inbox = tmp_path / "inbox"
+    monkeypatch.setattr(mod, "INBOX", inbox)
+    code, text = run(["task", "edit", "T5", "--text", "новое ТЗ"], capsys)
+    assert code == 0
+    request = json.loads(next(inbox.glob("*.json")).read_text(encoding="utf-8"))
+    assert request["kind"] == "edit_text" and request["text"] == "новое ТЗ"

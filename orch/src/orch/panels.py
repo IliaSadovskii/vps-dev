@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 from typing import Any
 
 from .chain import DONE, Chain, ChainError, parse as parse_chain
@@ -52,20 +53,20 @@ PICK_OUTCOME_REASONS = ("no_signal", "max_runs", "bad_outcome")
 
 
 # ── главная панель ───────────────────────────────────────────────────────
-def home_pane(db: Db, draft: dict | None = None, cost_warn: float = 5.0) -> dict:
-    """Слот `home-pane` «Задачи»: что решить, что едет, что ждёт очереди."""
-    if draft is not None:
-        return new_task_pane(draft)
+def home_pane(db: Db, projects: list[str] | None = None, cost_warn: float = 5.0) -> dict:
+    """Слот `home-pane` «Задачи»: витрина, а не пульт.
 
+    Три секции: что решить, что лежит в бэклоге, что закрыто. Едущих задач и
+    очереди тут нет нарочно — про них рассказывает сайдбар (цвет строки,
+    бейдж шага, счётчик у группы), и второй список тех же строк только
+    отнимал место (`UX-PLAN.md`).
+    """
     blocks: list[dict] = []
     waiting = _sorted_waiting(db)
-    running = db.tasks((RUNNING,))
-    queued = db.tasks((QUEUED,))
     backlog = db.tasks((BACKLOG,))
     закрытые = db.tasks((ST_DONE,))
     done = [t for t in закрытые if t["wait_reason"] != "closed_by_owner"][-MAX_DONE:]
     снятые = [t for t in закрытые if t["wait_reason"] == "closed_by_owner"][-MAX_DONE:]
-    lost = db.tasks((ABANDONED,))
 
     if waiting:
         blocks.append(
@@ -88,32 +89,6 @@ def home_pane(db: Db, draft: dict | None = None, cost_warn: float = 5.0) -> dict
             }
         )
 
-    if running:
-        blocks.append(
-            {
-                "kind": "section",
-                "title": "Едут",
-                "badges": [{"text": str(len(running))}],
-                "children": [_running_row(db, t, cost_warn) for t in running[:MAX_TASKS]],
-            }
-        )
-    if queued:
-        blocks.append(
-            {
-                "kind": "section",
-                "title": "Очередь",
-                "badges": [{"text": str(len(queued))}],
-                "children": [
-                    {
-                        "kind": "row",
-                        "label": f"{t['id']} · {t['title']}",
-                        "sublabel": "ждёт свободного места",
-                        "tone": "neutral",
-                    }
-                    for t in queued[:MAX_TASKS]
-                ],
-            }
-        )
     if backlog:
         children: list[dict] = []
         for t in backlog[:MAX_TASKS]:
@@ -143,21 +118,26 @@ def home_pane(db: Db, draft: dict | None = None, cost_warn: float = 5.0) -> dict
                     "children": [
                         {
                             "kind": "action",
-                            "label": "Запустить",
-                            "method": "orch.open_backlog",
+                            "label": "В работу",
+                            "method": "orch.wizard",
                             "variant": "primary",
-                            "tooltip": "открыть лист: автономия и ветка, потом запуск",
+                            "tooltip": "мастер спросит цепочку, ветку и автономию в чате",
                             "params": {"task": t["id"], "revision": t["revision"]},
                         },
                         {
                             "kind": "action",
                             "label": "Править ТЗ",
-                            "method": "orch.edit_text",
-                            "params": {"task": t["id"], "revision": t["revision"]},
+                            "method": "orch.wizard",
+                            "tooltip": "переписать текст заявки в разговоре с мастером",
+                            "params": {
+                                "task": t["id"],
+                                "revision": t["revision"],
+                                "mode": "text",
+                            },
                         },
                         {
                             "kind": "action",
-                            "label": "Закрыть",
+                            "label": "Удалить",
                             "method": "orch.close",
                             "tooltip": "снять заявку и освободить её ветку",
                             "params": {"task": t["id"], "revision": t["revision"]},
@@ -170,29 +150,10 @@ def home_pane(db: Db, draft: dict | None = None, cost_warn: float = 5.0) -> dict
                 "kind": "section",
                 "title": "Бэклог",
                 "badges": [{"text": str(len(backlog))}],
-                "collapsible": True,
-                "collapsed": True,
                 "children": children,
             }
         )
 
-    if lost:
-        blocks.append(
-            {
-                "kind": "section",
-                "title": "Брошены",
-                "badges": [{"text": str(len(lost)), "tone": "danger"}],
-                "children": [
-                    {
-                        "kind": "row",
-                        "label": f"{t['id']} · {t['title']}",
-                        "sublabel": "сессия исчезла",
-                        "tone": "danger",
-                    }
-                    for t in lost[:MAX_TASKS]
-                ],
-            }
-        )
     if done:
         blocks.append(
             {
@@ -237,25 +198,63 @@ def home_pane(db: Db, draft: dict | None = None, cost_warn: float = 5.0) -> dict
     if not blocks:
         blocks.append({"kind": "note", "text": "Задач нет. Заведите первую."})
 
-    blocks.append(
-        {
-            "kind": "action",
-            "label": "Новая задача",
-            "method": "orch.new_task",
-            "variant": "primary",
-            "icon": "plus",
-        }
-    )
+    blocks += _new_task_blocks(projects or [])
     return {
         "title": "orch",
         "default_location": "right",
         "icon": "list-checks",
         "blocks": blocks,
-        "footer": _footer(db, waiting, running),
+        "footer": _footer(db, waiting),
     }
 
 
-def _footer(db: Db, waiting: list, running: list) -> dict:
+def _new_task_blocks(projects: list[str]) -> list[dict]:
+    """Заведение задачи: кнопка на проект.
+
+    Клик по общей панели приходит без сессии, а мастеру нужен проект. Один
+    проект — одна кнопка; несколько — строка на каждый, чтобы не гадать.
+    """
+    if len(projects) == 1:
+        return [
+            {
+                "kind": "action",
+                "label": "Новая задача",
+                "method": "orch.wizard",
+                "variant": "primary",
+                "icon": "plus",
+                "params": {"project": projects[0]},
+            }
+        ]
+    if not projects:
+        return [
+            {
+                "kind": "note",
+                "tone": "warn",
+                "text": "Проектов не видно: заведите задачу командой "
+                "`orch task new --project <путь> \"текст\"`.",
+            }
+        ]
+    return [
+        {
+            "kind": "section",
+            "title": "Новая задача",
+            "children": [
+                {
+                    "kind": "row",
+                    "label": Path(p).name,
+                    "sublabel": p,
+                    "value": "завести",
+                    "mono": True,
+                    "method": "orch.wizard",
+                    "params": {"project": p},
+                }
+                for p in projects[:MAX_TASKS]
+            ],
+        }
+    ]
+
+
+def _footer(db: Db, waiting: list) -> dict:
     if waiting:
         return {
             "text": "нужно ваше решение",
@@ -263,8 +262,9 @@ def _footer(db: Db, waiting: list, running: list) -> dict:
             "tone": "danger",
             "icon": "hand",
         }
+    running = len(db.tasks((RUNNING,))) + len(db.tasks((QUEUED,)))
     if running:
-        return {"text": "едут", "value": str(len(running)), "tone": "info", "icon": "play"}
+        return {"text": "едут", "value": str(running), "tone": "info", "icon": "play"}
     return {"text": "тихо", "value": "0", "tone": "neutral"}
 
 
@@ -293,29 +293,6 @@ def _waiting_row(db: Db, task) -> dict:
     }
 
 
-def _running_row(db: Db, task, cost_warn: float) -> dict:
-    chain = _chain(task)
-    step = None
-    if chain and task["step"]:
-        try:
-            step = chain.step(task["step"])
-        except ChainError:
-            step = None
-    badges = [{"text": task["step"] or "—"}]
-    if step:
-        badges.append({"text": f"{step.agent}/{step.model}"})
-    cost = _last_cost(db, task["id"])
-    if cost and cost >= cost_warn:
-        badges.append({"text": f"${cost:.0f}", "tone": "warn", "tooltip": "дорогой ход"})
-    return {
-        "kind": "row",
-        "label": f"{task['id']} · {task['title']}",
-        "sublabel": f"идёт {_ago(_state_since(db, task))}",
-        "tone": "info",
-        "badges": badges,
-    }
-
-
 # ── панель задачи в сессии ───────────────────────────────────────────────
 def task_pane(
     db: Db,
@@ -323,7 +300,6 @@ def task_pane(
     session_id: str,
     base_url: str,
     cost_warn: float = 5.0,
-    comment: str | None = None,
 ) -> dict:
     chain = _chain(task)
     blocks: list[dict] = [
@@ -343,15 +319,6 @@ def task_pane(
                 "title": "Путь задачи",
                 "value": _trail(db, task, chain),
                 "children": _trail_rows(db, task, chain, base_url),
-            }
-        )
-
-    if comment:
-        blocks.append(
-            {
-                "kind": "note",
-                "tone": "info",
-                "text": f"Комментарий к следующему движению: «{comment[:300]}»",
             }
         )
 
@@ -462,271 +429,54 @@ def task_pane(
     }
 
 
-def composer_action(
-    task,
-    draft_open: bool = False,
-    awaiting: str | None = None,
-    clear_op: dict | None = None,
-) -> dict:
-    """Кнопка у поля ввода.
-
-    Она же — единственный способ передать оркестратору свободный текст без
-    участия модели, поэтому висит в каждой сессии, а не только в сессиях
-    задач: в чужой сессии ею набирают текст новой задачи.
-    """
-    if awaiting == "text":
-        payload = {
-            "label": "Взять ТЗ из поля",
-            "method": "orch.move_with_text",
-            "icon": "pencil",
-            "tooltip": "Текст из поля станет новым ТЗ заявки",
-        }
-    elif awaiting == "branch":
-        payload = {
-            "label": "Взять ветку из поля",
-            "method": "orch.move_with_text",
-            "icon": "git-branch",
-            "tooltip": "Ссылка на ветку или на PR из поля ввода станет веткой задачи",
-        }
-    elif draft_open:
-        payload = {
-            "label": "Взять этот текст в задачу",
-            "method": "orch.move_with_text",
-            "icon": "clipboard-paste",
-            "tooltip": "Текст из поля станет постановкой новой задачи",
-        }
-    elif task is None:
-        payload = {
-            "label": "Новая задача с этим текстом",
-            "method": "orch.new_task",
-            "icon": "plus",
-            "tooltip": "Открыть лист автономии и взять текст из поля ввода",
-        }
-    else:
-        payload = {
-            "label": "Двинуть с этим текстом",
-            "method": "orch.move_with_text",
-            "icon": "arrow-right",
-            # Кнопка не двигает сама: у клика по кнопке панели черновика нет
-            # (хост отдаёт его только кнопке у поля ввода), поэтому текст
-            # сначала прикрепляется, а движение выбирается кнопкой в панели.
-            "tooltip": "Прикрепить текст к следующему движению задачи",
-            "disabled": task["status"] not in (WAITING, RUNNING),
-        }
-    # Очистка поля ввода живёт в той же полезной нагрузке, что и кнопка:
-    # отдельная посылка тут же затирается обычной перерисовкой, и браузер
-    # успевает увидеть только вторую. Хост применяет каждую операцию по её
-    # `id` ровно один раз, поэтому висеть она может сколько угодно проходов.
-    if clear_op:
-        payload["draft_operation"] = clear_op
-    return payload
-
-
-# ── лист автономии новой задачи ──────────────────────────────────────────
-def _branch_choices(draft: dict) -> list[dict]:
-    """Ветки проекта строками: щелчок вместо набора текста.
-
-    Поле ввода в AoE делает две вещи сразу — Enter отправляет текст агенту,
-    а оркестратору его отдаёт отдельная маленькая кнопка у поля. Человек про
-    кнопку не знает и жмёт Enter; ссылка уходит агенту, а лист остаётся
-    ждать. Щелчок по строке этой двусмысленности не имеет, поэтому список —
-    основной путь, а ссылка в поле — запасной.
-    """
-    if draft.get("awaiting") != "branch":
-        return []
-    rows: list[dict] = [
-        {
-            "kind": "row",
-            "label": "новая ветка от базовой",
-            "sublabel": "как обычно: своя ветка под эту задачу",
-            "value": "новая",
-            "method": "orch.set_branch",
-            "params": {"branch": ""},
-        }
-    ]
-    for item in draft.get("branches") or []:
-        holder = item.get("holder")
-        badges = []
-        if item.get("pr"):
-            badges.append({"text": f"PR #{item['pr']}", "tone": "info"})
-        if holder:
-            badges.append({"text": f"занята {holder}", "tone": "danger"})
-        row = {
-            "kind": "row",
-            "label": item["branch"],
-            "sublabel": item.get("subject", "")[:70],
-            "value": item.get("when", ""),
-            "mono": True,
-            "badges": badges,
-            "tone": "danger" if holder else "neutral",
-        }
-        if not holder:
-            row["method"] = "orch.set_branch"
-            row["params"] = {"branch": item["branch"]}
-        rows.append(row)
-    rows.append(
-        {
-            "kind": "note",
-            "text": "Ветки нет в списке — вставьте ссылку на неё или на PR в поле "
-            "ввода и нажмите там кнопку «Взять ветку из поля» (не Enter: "
-            "Enter отправит текст агенту).",
-        }
-    )
-    return rows
-
-
-def _draft_ready(draft: dict) -> bool:
-    """Запускать нечего, пока нет текста, ждём ссылку или ветка занята."""
-    return bool(
-        draft.get("text")
-        and draft.get("awaiting") != "branch"
-        and not draft.get("branch_holder")
-    )
-
-
-def _branch_row(draft: dict) -> dict:
-    """Строка выбора ветки.
-
-    Списка веток нет нарочно: поле ввода — единственный способ дать
-    оркестратору свободный текст, и ссылку на ветку или на PR владелец
-    вставляет туда же, куда писал текст задачи.
-    """
-    branch = draft.get("branch")
-    error = draft.get("branch_error")
-    if draft.get("awaiting") == "branch":
+# ── строка сессии в сайдбаре ─────────────────────────────────────────────
+# Хост сам подсвечивает строку, когда сессия `Waiting`/`Error` или на ней
+# флаг `urgent` (движок его ставит на каждой остановке). Подсветка говорит
+# «посмотри сюда», а бейдж — зачем: ворота, вопрос, какой шаг из скольких.
+def row_badge(db: Db, task, step_no: int | None = None, steps: int | None = None) -> dict:
+    """Слот `row-badge`: одна короткая пометка на строке сессии шага."""
+    status = task["status"]
+    if status == WAITING:
+        reason = task["wait_reason"] or ""
+        text = {
+            "gate": "ворота",
+            "ask": "вопрос",
+            "no_signal": "нет сигнала",
+            "max_runs": "предел заходов",
+            "artifact": "нет файла",
+            "bad_outcome": "чужой исход",
+            "error": "ошибка",
+            "no_worker": "агент не поднялся",
+        }.get(reason, "ждёт вас")
+        step = task["step"]
         return {
-            "kind": "row",
-            "label": "ветка",
-            "sublabel": error or "выберите строкой ниже — или отмените щелчком здесь",
-            "value": "выбор",
-            "value_tone": "danger" if error else "warn",
-            "method": "orch.pick_branch",
-            "params": {"cancel": True},
+            "text": f"{text} · {step}" if step else text,
+            "tone": "danger",
+            "icon": "hand",
+            "tooltip": _what_to_decide(db, task),
         }
-    if branch:
-        holder = draft.get("branch_holder")
-        return {
-            "kind": "row",
-            "label": "ветка",
-            "sublabel": f"занята задачей {holder}" if holder else "работаем в ней",
-            "value": branch,
-            "value_tone": "danger" if holder else "success",
-            "mono": True,
-            "method": "orch.pick_branch",
-        }
+    if status == ST_DONE:
+        return {"text": "готово", "tone": "success", "icon": "check"}
+    if status == ABANDONED:
+        return {"text": "сессия потеряна", "tone": "danger"}
+    if status == QUEUED:
+        return {"text": "в очереди", "tone": "neutral"}
+    place = f" {step_no}/{steps}" if step_no and steps else ""
     return {
-        "kind": "row",
-        "label": "ветка",
-        "sublabel": "щёлкните, чтобы работать в существующей ветке или в чужом PR",
-        "value": "новая",
-        "method": "orch.pick_branch",
+        "text": f"{task['step'] or 'едет'}{place}",
+        "tone": "info",
+        "tooltip": f"{task['id']} · {task['title']}",
     }
 
 
-def edit_text_pane(task) -> dict:
-    """Правка ТЗ заявки: текст на глазах, новый берётся из поля ввода."""
-    return {
-        "title": f"orch · ТЗ {task['id']}",
-        "default_location": "right",
-        "icon": "pencil",
-        "blocks": [
-            {"kind": "heading", "text": f"{task['id']} · {task['title']}"},
-            {"kind": "note", "text": (task["text"] or "").strip() or "текста нет"},
-            {"kind": "divider"},
-            {
-                "kind": "note",
-                "tone": "warn",
-                "text": "Напишите новый текст в поле ввода и нажмите там кнопку "
-                "«Взять ТЗ из поля» — не Enter: Enter отправит текст агенту.",
-            },
-            {"kind": "action", "label": "Готово", "method": "orch.edit_done"},
-        ],
-    }
-
-
-def new_task_pane(draft: dict) -> dict:
-    """Лист автономии перед запуском: переключатели на каждый шаг."""
-    blocks: list[dict] = [
-        {"kind": "heading", "text": "Новая задача"},
-        {
-            "kind": "note",
-            "tone": "info" if draft.get("text") else "warn",
-            "text": draft.get("text", "")[:400]
-            or (
-                "Текста нет. Напишите задачу в поле ввода и нажмите там "
-                "«Двинуть с этим текстом» — текст попадёт сюда."
-            ),
-        },
-        {
-            "kind": "row",
-            "label": "цепочка",
-            "value": draft.get("chain", "deep"),
-            "mono": True,
-        },
-        {
-            "kind": "row",
-            "label": "проект",
-            "value": draft.get("project_path", "—"),
-            "mono": True,
-        },
-        _branch_row(draft),
-        *_branch_choices(draft),
-        {"kind": "divider"},
-        {"kind": "heading", "text": "Лист автономии"},
-    ]
-    for step, knobs in draft.get("sheet", {}).items():
-        blocks.append(
-            {
-                "kind": "row",
-                "label": step,
-                "sublabel": "ворота после шага",
-                "value": "ждать" if knobs.get("after") else "не ждать",
-                "value_tone": "warn" if knobs.get("after") else "neutral",
-                "method": "orch.sheet_toggle",
-                "params": {"step": step, "knob": "after"},
-            }
-        )
-        blocks.append(
-            {
-                "kind": "row",
-                "label": "",
-                "sublabel": "вопросы владельцу внутри шага",
-                "value": "можно" if knobs.get("ask") else "нельзя",
-                "value_tone": "info" if knobs.get("ask") else "neutral",
-                "method": "orch.sheet_toggle",
-                "params": {"step": step, "knob": "ask"},
-            }
-        )
-    blocks += [
-        {"kind": "divider"},
-        {
-            "kind": "columns",
-            "children": [
-                {
-                    "kind": "action",
-                    "label": "Запустить",
-                    "method": "orch.launch",
-                    "variant": "primary",
-                    "disabled": not _draft_ready(draft),
-                },
-                {"kind": "action", "label": "В бэклог", "method": "orch.backlog",
-                 "disabled": not _draft_ready(draft)},
-            ],
-        },
-        {"kind": "action", "label": "Отмена", "method": "orch.cancel_new"},
-    ]
-    return {
-        "title": "orch · новая задача",
-        "default_location": "right",
-        "icon": "plus",
-        "blocks": blocks,
-        "footer": {
-            "text": "лист новой задачи",
-            "value": "не запущена",
-            "tone": "warn",
-            "icon": "plus",
-        },
-    }
+def step_place(task, chain: Chain | None) -> tuple[int | None, int | None]:
+    """Который шаг из скольких — для бейджа. Нет цепочки — нет счёта."""
+    if not chain or not task["step"]:
+        return None, None
+    ids = [s.id for s in chain.steps]
+    if task["step"] not in ids:
+        return None, None
+    return ids.index(task["step"]) + 1, len(ids)
 
 
 # ── вспомогательное ──────────────────────────────────────────────────────

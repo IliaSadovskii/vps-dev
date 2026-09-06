@@ -33,11 +33,6 @@ class Worker:
         self.settings: dict = {}
         self.engine: Engine | None = None
         self.lock: EngineLock | None = None
-        # Черновик новой задачи: лист автономии, который владелец щёлкает до
-        # запуска. Один на весь плагин, потому что общая панель одна и
-        # session_id в её кликах пустой; в черновике помним, из какой сессии
-        # он заведён — оттуда берётся проект и туда возвращается очистка поля.
-        self.draft: dict | None = None
         # Что уже нарисовано: перерисовываем только при смене ревизии, чтобы
         # не гонять 64 КиБ каждые пять секунд.
         self.drawn: dict[tuple[str, str], str] = {}
@@ -49,17 +44,6 @@ class Worker:
         # следующего опроса.
         self.pending: queue.Queue[tuple[str, str, dict]] = queue.Queue()
         self.wake = threading.Event()
-        # Просьба очистить поле ввода: держится в полезной нагрузке кнопки,
-        # пока не устареет. Ключ — сессия, значение — операция и время.
-        self.clear_ops: dict[str, tuple[dict, float]] = {}
-        # Какую заявку сейчас правим: {task, session_id}. Текст приходит из
-        # поля ввода, как и всё свободное от человека.
-        self.editing: dict | None = None
-        # Комментарий владельца, прикреплённый к следующему движению задачи.
-        # Клик по кнопке панели черновика поля ввода не несёт — его отдают
-        # только кнопке у поля, — поэтому текст приходит отдельно и ждёт
-        # здесь, пока владелец выберет движение.
-        self.comments: dict[str, str] = {}
 
     # ── входящие вызовы хоста ────────────────────────────────────────────
     def handle(self, method: str, params: dict):
@@ -129,57 +113,6 @@ class Worker:
     def btn_start(self, session_id, params): self._move(params, "start")
     def btn_close(self, session_id, params): self._move(params, "close")
 
-    def btn_open_backlog(self, session_id, params) -> None:
-        """«Запустить» у заявки: сначала лист, потом работа.
-
-        Раньше кнопка стартовала задачу немедленно — и владелец уезжал в
-        работу, не увидев ни текста, ни листа автономии, ни ветки.
-        """
-        if self.engine is None:
-            return
-        task = self.engine.db.task(params["task"])
-        if task is None or int(params["revision"]) != int(task["revision"]):
-            return
-        from .chain import parse as parse_chain
-
-        try:
-            chain = parse_chain(task["chain_yaml"], source=task["id"])
-        except ChainError as exc:
-            self.notify("orch", f"цепочка задачи не читается: {exc}", tone="danger")
-            return
-        self.draft = {
-            "chain": task["chain"],
-            "project_path": task["project_path"],
-            "text": task["text"],
-            "sheet": json.loads(task["human_sheet"] or "{}") or chain.default_sheet(),
-            "session_id": session_id,
-            "branch": task["branch"],
-            "from_backlog": task["id"],
-        }
-        self.notify(
-            f"orch: {task['id']} — лист открыт",
-            "проверьте текст, автономию и ветку, потом «Запустить»",
-        )
-
-    def btn_edit_text(self, session_id, params) -> None:
-        """Правка ТЗ заявки: ждём новый текст из поля ввода."""
-        if self.engine is None:
-            return
-        task = self.engine.db.task(params["task"])
-        if task is None:
-            return
-        self.editing = {"task": task["id"], "session_id": session_id}
-        self.notify(
-            f"orch: правим ТЗ {task['id']}",
-            "напишите новый текст в поле ввода и нажмите «Взять ТЗ из поля»",
-        )
-
-    def btn_edit_done(self, session_id, params) -> None:
-        self.editing = None
-
-    def btn_focus(self, session_id, params) -> None:
-        """Строка ждущей задачи в общей панели: ничего не меняет, только жест."""
-
     def btn_sheet_step(self, session_id, params) -> None:
         """Клик по строке листа задачи: ворота → вопросы → и то и другое → ничего."""
         if self.engine is None:
@@ -197,219 +130,40 @@ class Worker:
             db.bump(task["id"], human_sheet=json.dumps(sheet, ensure_ascii=False))
             db.event(task["id"], "sheet_edited", {"step": params["step"], **knobs})
 
-    # ── кнопка у поля ввода ──────────────────────────────────────────────
-    def btn_move_with_text(self, session_id, params) -> None:
-        """«Двинуть с этим текстом»: черновик становится комментарием движения."""
-        text = ((params.get("composer") or {}).get("text") or "").strip()
+    def btn_wizard(self, session_id, params) -> None:
+        """«Новая задача» и «В работу»: разговор вместо листа переключателей.
+
+        Панель не умеет ни поля ввода, ни дропдауна, поэтому цепочку, ветку и
+        автономию спрашивает мастер в чате (`UX-PLAN.md`).
+        """
         if self.engine is None:
+            self.notify("orch", "движок ведёт другой процесс", tone="warn")
             return
-        if self.editing is not None:
-            self.save_text(session_id, text)
-            return
-        if self.draft is not None and self.draft.get("awaiting") == "branch":
-            self.take_branch(session_id, text)
-            return
-        if self.draft is not None:
-            self.draft["text"] = text
-            self.draft["session_id"] = session_id
-            if not self.draft.get("project_path"):
-                self.draft["project_path"] = self._project_of_session(session_id) or ""
-            self.notify(
-                "orch: текст задачи взят",
-                "лист задачи — в панели orch этой сессии, там «Запустить»",
-            )
-            self.clear_composer(session_id)
-            return
-        task = self._task_of_session(session_id)
-        if task is None:
-            self.notify("orch", "эта сессия не принадлежит задаче", tone="warn")
-            return
-        if not text:
-            self.comments.pop(task["id"], None)
-            self.notify("orch", "поле пустое: комментарий снят", tone="warn")
-            return
-        self.comments[task["id"]] = text
-        self.notify(
-            f"{task['id']}: комментарий прикреплён",
-            "теперь выберите движение кнопкой в панели",
-        )
-        self.clear_composer(session_id)
-
-    def open_pane_hint(self) -> None:
-        """Сказать, где искать лист, если он не на глазах."""
-
-    def btn_new_task(self, session_id, params) -> None:
-        """Открыть лист автономии новой задачи."""
-        if self.engine is None:
-            return
-        chain_name = str(self.settings.get("default_chain", "deep"))
-        try:
-            chain = load_chain(chains_dir() / f"{chain_name}.yml")
-        except ChainError as exc:
-            self.notify("orch", f"цепочка {chain_name}: {exc}", tone="danger")
-            return
-        text = ((params.get("composer") or {}).get("text") or "").strip()
-        project = self._project_of_session(session_id)
-        self.draft = {
-            "chain": chain_name,
-            "project_path": project or "",
-            "text": text,
-            "sheet": chain.default_sheet(),
-            "session_id": session_id,
-        }
-        self.notify(
-            "orch: лист новой задачи открыт",
-            "он в панели orch этой сессии — переключатели и «Запустить» там",
-        )
-
-    def btn_pick_branch(self, session_id, params) -> None:
-        """Строка «ветка»: попросить ссылку, либо снять уже выбранную."""
-        if not self.draft:
-            return
-        if params.get("cancel") or self.draft.get("branch"):
-            self.draft.pop("branch", None)
-            self.draft.pop("branch_holder", None)
-            self.draft.pop("branch_error", None)
-            self.draft.pop("awaiting", None)
-            return
-        self.draft["awaiting"] = "branch"
-        self.draft.pop("branch_error", None)
-        self.draft["branches"] = self.branches_of(self.draft.get("project_path") or "")
-        self.notify("orch: выберите ветку", "список открыт в листе задачи")
-
-    def branches_of(self, project: str) -> list[dict]:
-        """Свежие ветки проекта с пометкой, кто из них занят живой задачей."""
-        from .branchref import recent
-
-        if not project or self.engine is None:
-            return []
-        try:
-            items = recent(project)
-        except Exception as exc:  # noqa: BLE001 — список веток не должен ронять панель
-            log(f"orch-plugin: не собрал список веток: {exc!r}")
-            return []
-        for item in items:
-            busy = self.engine.task_on_branch(item["branch"])
-            item["holder"] = busy["id"] if busy else None
-        return items
-
-    def btn_set_branch(self, session_id, params) -> None:
-        """Щелчок по строке ветки в списке."""
-        if not self.draft:
-            return
-        branch = (params.get("branch") or "").strip()
-        self.draft.pop("awaiting", None)
-        self.draft.pop("branches", None)
-        self.draft.pop("branch_error", None)
-        if not branch:
-            self.draft.pop("branch", None)
-            self.draft.pop("branch_holder", None)
-            self.notify("orch: ветка новая", "как обычно, своя под эту задачу")
-            return
-        busy = self.engine.task_on_branch(branch) if self.engine else None
-        self.draft["branch"] = branch
-        self.draft["branch_holder"] = busy["id"] if busy else None
-        self.notify(f"orch: работаем в ветке {branch}", "теперь «Запустить»")
-
-    def take_branch(self, session_id: str, text: str) -> None:
-        """Ссылка из поля ввода стала веткой задачи."""
-        from .branchref import BranchRefError, parse
-
-        draft = self.draft
-        if draft is None or self.engine is None:
-            return
-        try:
-            branch = parse(text, draft.get("project_path"))
-        except BranchRefError as exc:
-            draft["branch_error"] = str(exc)
-            self.notify("orch: не понял ссылку", str(exc)[:200], tone="warn")
-            return
-        draft.pop("branch_error", None)
-        draft.pop("awaiting", None)
-        draft.pop("branches", None)
-        draft["branch"] = branch
-        busy = self.engine.task_on_branch(branch)
-        draft["branch_holder"] = busy["id"] if busy else None
-        if busy:
-            self.notify(
-                f"orch: ветка {branch} занята задачей {busy['id']}",
-                "закройте ту задачу или выберите другую ветку",
-                tone="warn",
-            )
-        else:
-            self.notify(f"orch: работаем в ветке {branch}", "теперь «Запустить»")
-        self.clear_composer(session_id)
-
-    def save_text(self, session_id: str, text: str) -> None:
-        """Новый текст ТЗ заявки из поля ввода."""
-        if self.engine is None or not self.editing:
-            return
-        if not text:
-            self.notify("orch", "поле пустое: ТЗ не менял", tone="warn")
-            return
-        task_id = self.editing["task"]
-        db = self.engine.db
-        with db.tx():
-            db.bump(task_id, text=text, title=_title_of(text))
-            db.event(task_id, "text_edited", {"len": len(text)})
-        self.editing = None
-        self.notify(f"orch: ТЗ {task_id} переписано", text[:120])
-        self.clear_composer(session_id)
-
-    def btn_sheet_toggle(self, session_id, params) -> None:
-        if not self.draft:
-            return
-        knobs = self.draft["sheet"].setdefault(params["step"], {"after": False, "ask": True})
-        knob = params["knob"]
-        knobs[knob] = not bool(knobs.get(knob))
-
-    def btn_launch(self, session_id, params): self._create_draft(backlog=False)
-    def btn_backlog(self, session_id, params): self._create_draft(backlog=True)
-
-    def btn_cancel_new(self, session_id, params) -> None:
-        self.draft = None
-
-    def _create_draft(self, backlog: bool) -> None:
-        draft = self.draft
-        if not draft or self.engine is None:
-            return
-        if not draft.get("text"):
-            self.notify("orch", "текста задачи нет", tone="warn")
-            return
-        if not draft.get("project_path"):
+        task_id = params.get("task")
+        project = params.get("project")
+        if task_id:
+            task = self.engine.db.task(task_id)
+            if task is None or int(params.get("revision", -1)) != int(task["revision"]):
+                return
+            project = task["project_path"]
+        if not project:
+            project = self._project_of_session(session_id)
+        if not project:
             self.notify("orch", "не понял, в каком проекте задача", tone="warn")
             return
-        if draft.get("branch_holder"):
-            self.notify(
-                "orch", f"ветка занята задачей {draft['branch_holder']}", tone="warn"
-            )
+        sid = self.engine.open_wizard(project, task_id, params.get("mode") or "start")
+        if sid is None:
+            self.notify("orch", "мастер не открылся, смотрите журнал", tone="danger")
             return
-        edits = {}
-        for step, knobs in draft["sheet"].items():
-            edits[f"{step}.after"] = knobs["after"]
-            edits[f"{step}.ask"] = knobs["ask"]
-        try:
-            task_id = self.engine.create_task(
-                chain_name=draft["chain"],
-                project_path=draft["project_path"],
-                text=draft["text"],
-                sheet_edits=edits,
-                backlog=backlog,
-                branch=draft.get("branch"),
-            )
-        except (ChainError, OSError) as exc:
-            self.notify("orch", f"задача не создалась: {exc}", tone="danger")
-            return
-        if draft.get("from_backlog"):
-            # Заявку, из которой вырос лист, закрываем: работа поехала под
-            # новым номером, и держать её ветку старой незачем.
-            old = self.engine.db.task(draft["from_backlog"])
-            if old and old["status"] == "backlog":
-                self.engine.button(old["id"], old["revision"], "close")
-        self.draft = None
-        self.notify(f"{task_id} создана", "в бэклоге" if backlog else "поехала")
-        self.clear_composer(draft.get("session_id") or "")
+        self.notify(
+            "orch: мастер задачи открыт",
+            "он в сайдбаре, группа «orch/мастер» — отвечайте ему в чате",
+        )
 
+    def btn_focus(self, session_id, params) -> None:
+        """Строка ждущей задачи в общей панели: ничего не меняет, только жест."""
+
+    # ── кнопка у поля ввода ──────────────────────────────────────────────
     # ── исходящие вызовы хоста ───────────────────────────────────────────
     SETTING_DEFAULTS = {
         "poll_secs": 5,
@@ -463,28 +217,6 @@ class Worker:
         except RpcError:
             pass
 
-    # Сколько держим просьбу очистить поле, чтобы браузер успел её забрать.
-    CLEAR_TTL_S = 120.0
-
-    def clear_composer(self, session_id: str) -> None:
-        """Очистить поле ввода: текст уже стал комментарием движения."""
-        if not session_id:
-            return
-        self.clear_ops[session_id] = (
-            {"kind": "set-text", "id": f"clear-{int(time.time() * 1000)}", "text": ""},
-            time.time(),
-        )
-
-    def _clear_op(self, session_id: str) -> dict | None:
-        entry = self.clear_ops.get(session_id)
-        if not entry:
-            return None
-        op, at = entry
-        if time.time() - at > self.CLEAR_TTL_S:
-            self.clear_ops.pop(session_id, None)
-            return None
-        return op
-
     def sessions_now(self) -> list[dict]:
         try:
             return self.rpc.call("sessions.list", {}).get("sessions", [])
@@ -499,82 +231,36 @@ class Worker:
             return
         db = self.engine.db
         cost_warn = float(self.settings.get("cost_warn_usd", 5))
-        draft = self.draft
         self._push_if_changed(
             ("home-pane", ""),
-            panels.home_pane(db, draft, cost_warn),
+            panels.home_pane(db, self.known_projects(), cost_warn),
             "home-pane",
             "tasks",
             None,
             force,
         )
-        # Лист новой задачи рисуется и в сессии, из которой его открыли:
-        # кнопка у поля стоит здесь, значит и «Запустить» должна быть здесь.
-        # Раньше лист жил только в общей панели на обзоре, и человек,
-        # нажавший кнопку внутри сессии, оставался ни с чем.
-        if self.editing:
-            task = db.task(self.editing["task"])
-            if task is not None:
-                self._push_if_changed(
-                    ("pane", self.editing["session_id"]),
-                    panels.edit_text_pane(task),
-                    "pane",
-                    "task",
-                    self.editing["session_id"],
-                    force,
-                )
-
-        draft_session = (draft or {}).get("session_id")
-        if draft and draft_session and not self.editing:
-            self._push_if_changed(
-                ("pane", draft_session),
-                panels.new_task_pane(draft),
-                "pane",
-                "task",
-                draft_session,
-                force,
-            )
-
         self._refresh_session_map(db)
         for session_id, task_id in self.session_of_task.items():
-            if session_id == draft_session:
-                continue
             task = db.task(task_id)
             if task is None:
                 continue
             self._push_if_changed(
                 ("pane", session_id),
-                panels.task_pane(
-                    db,
-                    task,
-                    session_id,
-                    self.base_url,
-                    cost_warn,
-                    comment=self.comments.get(task_id),
-                ),
+                panels.task_pane(db, task, session_id, self.base_url, cost_warn),
                 "pane",
                 "task",
                 session_id,
                 force,
             )
-        # Кнопка у поля ввода — в каждой живой сессии: из чужой сессии ею
-        # набирают текст новой задачи, из сессии задачи — комментарий движения.
-        for row in self.sessions_now():
-            session_id = row.get("id")
-            if not session_id or row.get("archived"):
-                continue
-            task_id = self.session_of_task.get(session_id)
-            task = db.task(task_id) if task_id else None
+            # Бейдж на строке сессии: подсветку «сюда посмотри» хост рисует
+            # сам по `urgent`, а зачем смотреть — знаем только мы.
+            chain = self.engine.chain_of(task)
+            place = panels.step_place(task, chain)
             self._push_if_changed(
-                ("composer-action", session_id),
-                panels.composer_action(
-                    task,
-                    draft_open=self.draft is not None,
-                    awaiting="text" if self.editing else (self.draft or {}).get("awaiting"),
-                    clear_op=self._clear_op(session_id),
-                ),
-                "composer-action",
-                "move",
+                ("row-badge", session_id),
+                panels.row_badge(db, task, *place),
+                "row-badge",
+                "step",
                 session_id,
                 force,
             )
@@ -597,11 +283,24 @@ class Worker:
             )
         }
 
-    def _task_of_session(self, session_id: str):
-        if self.engine is None:
-            return None
-        task_id = self.session_of_task.get(session_id)
-        return self.engine.db.task(task_id) if task_id else None
+    def known_projects(self) -> list[str]:
+        """Проекты, в которых есть задачи или живые сессии.
+
+        Кнопке «Новая задача» нужен проект, а клик по общей панели приходит
+        без сессии, поэтому выбор показываем строками (`panels._new_task_blocks`).
+        """
+        out: list[str] = []
+        if self.engine is not None:
+            for row in self.engine.db.conn.execute(
+                "SELECT DISTINCT project_path FROM task WHERE project_path IS NOT NULL"
+            ):
+                if row["project_path"] not in out:
+                    out.append(row["project_path"])
+        for row in self.sessions_now():
+            path = row.get("project_path")
+            if path and path not in out and _is_project_root(path):
+                out.append(path)
+        return sorted(out)
 
     def _project_of_session(self, session_id: str) -> str | None:
         for row in self.sessions_now():
@@ -665,6 +364,17 @@ class Worker:
         except Exception as exc:  # noqa: BLE001 — воркер не падает от одной задачи
             log(f"orch-plugin: проход движка упал: {exc!r}")
         self.push_all(force=clicked)
+
+
+def _is_project_root(path: str) -> bool:
+    """Корень проекта, а не рабочая копия задачи.
+
+    У копии, сделанной `git worktree add`, `.git` — файл со ссылкой на общий
+    каталог, у настоящего корня — каталог. Без этой проверки список проектов
+    зарастает копиями прошлых задач: они тоже сессии со своим `project_path`.
+    """
+    root = Path(path)
+    return (root / ".git").is_dir()
 
 
 def _next_knobs(after: bool, ask: bool) -> tuple[bool, bool]:

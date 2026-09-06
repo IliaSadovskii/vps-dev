@@ -12,8 +12,6 @@ description = "Оркестратор ролей: цепочка шагов, в�
 capabilities = [
   "runtime.worker",
   "session.read",
-  "composer.read",
-  "composer.write",
   "notifications",
 ]
 
@@ -25,9 +23,12 @@ id = "tasks"
 slot = "pane"
 id = "task"
 
+# Бейдж на строке сессии в сайдбаре: подсветку «зовёт» хост рисует сам по
+# флагу `urgent`, который ставит движок, а бейдж говорит, зачем звать —
+# ворота, вопрос, какой шаг (orch/UX-PLAN.md).
 [[ui]]
-slot = "composer-action"
-id = "move"
+slot = "row-badge"
+id = "step"
 
 [[commands]]
 id = "status"

@@ -142,8 +142,14 @@ class Engine:
                         request.get("comment"),
                     )
                     self.db.event(request["task"], "button_from_cli", {"answer": answer})
-                elif kind == "inbox_session":
-                    self.ensure_inbox_session(request["project_path"])
+                elif kind == "edit_text":
+                    self.edit_text(request["task"], request["text"])
+                elif kind == "wizard":
+                    self.open_wizard(
+                        request["project_path"],
+                        request.get("task"),
+                        request.get("mode") or "start",
+                    )
                 else:
                     task_id = self.create_task(
                         chain_name=request.get("chain") or self.settings.default_chain,
@@ -155,41 +161,130 @@ class Engine:
                         branch=request.get("branch"),
                         base=request.get("base"),
                         author=request.get("author"),
+                        from_backlog=request.get("from_backlog"),
                     )
                     self.db.event(task_id, "task_created", {"from": "inbox", "file": path.name})
             except (ChainError, KeyError, OSError) as exc:
                 self.db.event(None, "inbox_rejected", {"file": path.name, "error": str(exc)})
             path.unlink(missing_ok=True)
 
-    def ensure_inbox_session(self, project_path: str) -> str | None:
-        """По одной сессии Inbox на проект: формулировщик задач (`PLAN.md` §8)."""
-        from .chain import prompts_dir
+    def edit_text(self, task_id: str, text: str) -> str:
+        """Переписать ТЗ заявки. Только пока она в бэклоге: у поехавшей задачи
+        текст уже разошёлся по промптам прошлых шагов, и молча менять его —
+        врать ролям."""
+        task = self.db.task(task_id)
+        if task is None:
+            return "нет такой задачи"
+        if task["status"] != BACKLOG:
+            return f"{task_id} уже не в бэклоге: текст правится только у заявки"
+        with self.db.tx():
+            self.db.bump(task_id, text=text, title=_title_from(text))
+            self.db.event(task_id, "text_edited", {"len": len(text)})
+        return f"{task_id}: ТЗ переписано"
+
+    def open_wizard(
+        self,
+        project_path: str,
+        task_id: str | None = None,
+        mode: str = "start",
+    ) -> str | None:
+        """Мастер задачи: сессия, в которой владелец заводит задачу разговором.
+
+        Панель не умеет ни поля ввода, ни дропдауна (`UX-PLAN.md`), поэтому
+        цепочку, ветку и автономию спрашивает роль в чате вариантами, а потом
+        сама зовёт `orch task new`. Сессия одна на проект: мастер дешёвый, и
+        плодить их на каждую заявку незачем.
+        """
+        from .chain import catalog, prompts_dir
 
         project = str(Path(project_path).resolve())
-        key = f"inbox/{project}"
-        prompt_file = prompts_dir() / "role-inbox.md"
+        task = self.db.task(task_id) if task_id else None
+        prompt_file = prompts_dir() / "role-wizard.md"
         try:
             session = self.aoe.create(
                 path=project,
                 agent="claude",
                 model="sonnet",
                 effort=None,
-                title=f"Inbox · {Path(project).name}",
-                group=f"{GROUP_ROOT}/inbox",
-                branch=None,
-                new_branch=False,
-                idempotency_key=key,
+                title=f"Мастер · {Path(project).name}",
+                group=f"{GROUP_ROOT}/мастер",
+                idempotency_key=f"wizard/{project}",
             )
         except AoeError as exc:
-            self.db.event(None, "inbox_session_failed", {"project": project, "error": str(exc)})
+            self.db.event(None, "wizard_failed", {"project": project, "error": str(exc)})
             return None
-        if prompt_file.exists():
-            try:
-                self.aoe.prompt(session.id, prompt_file.read_text(encoding="utf-8"))
-            except AoeError:
-                pass
-        self.db.event(None, "inbox_session", {"project": project, "session": session.id})
+        # Группу ставим отдельным вызовом: при создании AoE её не применяет,
+        # и мастер оказывался вне группы, вперемешку с сессиями шагов.
+        self.aoe.set_group(session.id, f"{GROUP_ROOT}/мастер")
+        # Модель ставится вызовом, а не полем при создании: `agent_model` до
+        # адаптера Claude не доезжает, и сессия молча уходит на Opus (см.
+        # `apply_model`). Мастер — дешёвая роль, платить за него Opus незачем.
+        if not self.aoe.apply_model(session.id, "sonnet"):
+            self.db.event(
+                None,
+                "wizard_model_not_applied",
+                {"session": session.id, "got": self.aoe.model_now(session.id)},
+            )
+        text = prompt_file.read_text(encoding="utf-8") if prompt_file.exists() else ""
+        text += "\n\n" + self.wizard_context(project, catalog(), task, mode)
+        try:
+            self.aoe.prompt(session.id, text)
+        except AoeError as exc:
+            self.db.event(None, "wizard_prompt_failed", {"project": project, "error": str(exc)})
+        self.db.event(
+            task_id,
+            "wizard_opened",
+            {"project": project, "session": session.id, "mode": mode},
+        )
         return session.id
+
+    def wizard_context(self, project: str, chains: list[dict], task, mode: str) -> str:
+        """Блок «чем располагаешь» для мастера: цепочки, проект, заявка."""
+        lines = ["## Чем располагаешь", "", f"Проект: `{project}`", "", "Цепочки:"]
+        for item in chains:
+            if item.get("error"):
+                lines.append(f"- `{item['name']}` — не читается: {item['error']}")
+                continue
+            gates = ", ".join(item["gates"]) or "нет"
+            lines.append(
+                f"- `{item['name']}` — {item['description'] or 'без описания'}\n"
+                f"  шаги: {' → '.join(item['steps'])}\n"
+                f"  ворота по умолчанию: {gates}; пресеты: "
+                f"{', '.join(item['presets']) or 'нет'}"
+            )
+        if task is not None:
+            lines += [
+                "",
+                f"## Заявка {task['id']} из бэклога",
+                "",
+                "Текст, который владелец уже записал:",
+                "",
+                "```",
+                (task["text"] or "").strip(),
+                "```",
+                "",
+                f"Ветка заявки: {task['branch'] or 'не выбрана'}.",
+            ]
+            if mode == "text":
+                lines.append(
+                    "Владелец нажал «Править ТЗ»: перепиши текст в разговоре и, "
+                    f"когда он одобрит, вызови `orch task edit {task['id']} --text -`. "
+                    "Задачу не запускай."
+                )
+            else:
+                lines.append(
+                    "Владелец нажал «В работу»: уточни, что нужно, спроси цепочку, "
+                    "ветку и автономию, и заведи задачу вызовом `orch task new` с "
+                    f"`--from-backlog {task['id']}` — заявка закроется сама."
+                )
+        else:
+            lines += [
+                "",
+                "## Новая задача",
+                "",
+                "Владелец нажал «Новая задача»: начни с вопроса, что он хочет.",
+            ]
+        return "\n".join(lines)
 
     def create_task(
         self,
@@ -204,6 +299,7 @@ class Engine:
         branch: str | None = None,
         base: str | None = None,
         author: str | None = None,
+        from_backlog: str | None = None,
     ) -> str:
         """Завести задачу.
 
@@ -257,6 +353,13 @@ class Engine:
                 "created",
                 {"chain": chain.name, "preset": preset, "branch": branch, "base": base},
             )
+        if from_backlog:
+            # Заявка, из которой выросла задача, закрывается: работа поехала
+            # под новым номером, держать её ветку за старой незачем.
+            old = self.db.task(from_backlog)
+            if old is not None and old["status"] == BACKLOG:
+                self.button(old["id"], old["revision"], "close")
+                self.db.event(task_id, "from_backlog", {"task": from_backlog})
         return task_id
 
     def promote_queue(self) -> None:

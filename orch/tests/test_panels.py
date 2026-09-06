@@ -17,18 +17,37 @@ def blocks_text(payload: dict) -> str:
 
 
 def test_пустая_панель_зовёт_завести_задачу(engine):
-    pane = panels.home_pane(engine.db)
+    pane = panels.home_pane(engine.db, ["/projects/kandev-trial"])
     assert "Задач нет" in blocks_text(pane)
-    assert "orch.new_task" in blocks_text(pane)
+    assert "orch.wizard" in blocks_text(pane)
 
 
-def test_идущая_задача_в_разделе_едут(engine, fake, repo):
+def test_идущая_задача_не_занимает_обзор_а_видна_в_подвале(engine, fake, repo):
+    """Про едущие рассказывает сайдбар, обзор — витрина (`UX-PLAN.md`)."""
     task_id = start(engine, repo)
     pane = panels.home_pane(engine.db)
-    text = blocks_text(pane)
-    assert "Едут" in text and task_id in text
-    assert "claude/haiku" in text
-    assert pane["footer"]["text"] == "едут"
+    разделы = [b.get("title") for b in pane["blocks"] if b.get("kind") == "section"]
+    assert "Едут" not in разделы and "Очередь" not in разделы
+    assert pane["footer"]["text"] == "едут" and pane["footer"]["value"] == "1"
+
+
+def test_бейдж_строки_сессии_говорит_зачем_смотреть(engine, fake, repo):
+    """Подсветку строки хост даёт по `urgent`, а причину — наш бейдж."""
+    task_id = start(engine, repo)
+    task = engine.db.task(task_id)
+    chain = engine.chain_of(task)
+    badge = panels.row_badge(engine.db, task, *panels.step_place(task, chain))
+    assert badge["text"] == "one 1/3" and badge["tone"] == "info"
+
+    sid = session_of(engine, task_id)
+    fake.finish_turn(sid)
+    engine.reconcile()
+    fake.finish_turn(sid)
+    engine.reconcile()          # встала без сигнала
+    task = engine.db.task(task_id)
+    badge = panels.row_badge(engine.db, task)
+    assert badge["tone"] == "danger"
+    assert "нет сигнала" in badge["text"] and "one" in badge["text"]
 
 
 def test_ждущая_задача_первой_и_с_кнопками(engine, fake, repo):
@@ -72,10 +91,10 @@ def test_вопрос_роли_не_даёт_кнопок_а_зовёт_в_ча�
     task_id = start(engine, repo)
     fake.set_status(session_of(engine, task_id), "Waiting")
     engine.reconcile()
-    pane = panels.home_pane(engine.db)
+    pane = panels.home_pane(engine.db, [str(repo)])
     assert "ответьте ей в чате" in blocks_text(pane)
     # Кроме вечной «Новой задачи», решать тут нечем: отвечают в чате.
-    assert [a["method"] for a in _actions(pane)] == ["orch.new_task"]
+    assert [a["method"] for a in _actions(pane)] == ["orch.wizard"]
 
 
 def test_панель_задачи_показывает_путь_файлы_и_лист(engine, fake, repo):
@@ -127,32 +146,9 @@ def test_дорогой_ход_помечен(engine, fake, repo):
     task_id = start(engine, repo)
     fake.cost = 12.5
     turn(engine, fake, task_id, "one", 1, None)
-    pane = panels.home_pane(engine.db, cost_warn=5.0)
+    task = engine.db.task(task_id)
+    pane = panels.task_pane(engine.db, task, "s9", "http://x", cost_warn=5.0)
     assert "$12" in blocks_text(pane)
-
-
-def test_лист_новой_задачи_рисует_переключатели(engine):
-    from orch.chain import chains_dir, load
-
-    chain = load(chains_dir() / "smoke.yml")
-    draft = {
-        "chain": "smoke",
-        "project_path": "/projects/kandev-trial",
-        "text": "",
-        "sheet": chain.default_sheet(),
-    }
-    pane = panels.home_pane(engine.db, draft)
-    text = blocks_text(pane)
-    assert "Лист автономии" in text
-    assert "orch.sheet_toggle" in text
-    assert "orch.launch" in text and "orch.backlog" in text
-    # Без текста запускать нечего.
-    launch = [a for a in _actions(pane) if a["method"] == "orch.launch"][0]
-    assert launch["disabled"] is True
-    draft["text"] = "Добавить удаление заметки."
-    pane = panels.home_pane(engine.db, draft)
-    launch = [a for a in _actions(pane) if a["method"] == "orch.launch"][0]
-    assert launch["disabled"] is False
 
 
 def test_панель_влезает_в_предел_хоста(engine, fake, repo):
@@ -202,25 +198,6 @@ def test_ворота_шага_с_одним_переходом_без_исхо�
     text = blocks_text(panels.home_pane(engine.db))
     assert "None" not in text
     assert "закончил ход. Принять" in text
-
-
-def test_очистка_поля_живёт_в_нагрузке_кнопки(engine):
-    """Отдельная посылка с очисткой затирается перерисовкой — она в кнопке."""
-    op = {"kind": "set-text", "id": "clear-1", "text": ""}
-    payload = panels.composer_action(None, clear_op=op)
-    assert payload["draft_operation"] == op
-    assert payload["method"] == "orch.new_task"
-    assert "draft_operation" not in panels.composer_action(None)
-
-
-def test_прикреплённый_комментарий_виден_в_панели_задачи(engine, fake, repo):
-    task_id = start(engine, repo)
-    task = engine.db.task(task_id)
-    pane = panels.task_pane(
-        engine.db, task, "s9", "http://x", comment="Верни одну строку."
-    )
-    assert "Комментарий к следующему движению" in blocks_text(pane)
-    assert "Верни одну строку." in blocks_text(pane)
 
 
 def test_на_пределе_заходов_владелец_выбирает_исход(engine, fake, repo):
@@ -280,92 +257,6 @@ def _row(pane, label):
     return None
 
 
-def test_строка_ветки_предлагает_взять_чужую(engine):
-    row = _row(panels.home_pane(engine.db, _draft()), "ветка")
-    assert row["value"] == "новая"
-    assert row["method"] == "orch.pick_branch"
-
-
-def test_выбор_ветки_блокирует_запуск_и_даёт_список(engine):
-    pane = panels.home_pane(
-        engine.db,
-        _draft(
-            awaiting="branch",
-            branches=[
-                {"branch": "feature/x", "when": "вчера", "subject": "правки", "pr": 4},
-                {"branch": "занятая", "when": "давно", "subject": "", "holder": "T9"},
-            ],
-        ),
-    )
-    assert _row(pane, "ветка")["value"] == "выбор"
-    # Ветку выбирают щелчком, а не набором: поле ввода уходит агенту по Enter.
-    выбор = {r["label"]: r for r in pane["blocks"] if r.get("kind") == "row"}
-    assert выбор["новая ветка от базовой"]["method"] == "orch.set_branch"
-    assert выбор["feature/x"]["method"] == "orch.set_branch"
-    assert any(b["text"] == "PR #4" for b in выбор["feature/x"]["badges"])
-    # Занятую щёлкнуть нельзя, и видно кем.
-    assert "method" not in выбор["занятая"]
-    assert any("занята T9" in b["text"] for b in выбор["занятая"]["badges"])
-    launch = [a for a in _actions(pane) if a["method"] == "orch.launch"][0]
-    assert launch["disabled"] is True
-    # Кнопка у поля говорит, чего от неё ждут.
-    assert panels.composer_action(None, draft_open=True, awaiting="branch")["label"] == (
-        "Взять ветку из поля"
-    )
-
-
-def test_выбранная_ветка_видна_и_пускает(engine):
-    pane = panels.home_pane(engine.db, _draft(branch="feature/x"))
-    row = _row(pane, "ветка")
-    assert row["value"] == "feature/x" and row["value_tone"] == "success"
-    launch = [a for a in _actions(pane) if a["method"] == "orch.launch"][0]
-    assert launch["disabled"] is False
-
-
-def test_занятая_ветка_не_даёт_запустить(engine):
-    pane = panels.home_pane(engine.db, _draft(branch="feature/x", branch_holder="T9"))
-    row = _row(pane, "ветка")
-    assert "занята задачей T9" in row["sublabel"] and row["value_tone"] == "danger"
-    for a in _actions(pane):
-        if a["method"] in ("orch.launch", "orch.backlog"):
-            assert a["disabled"] is True
-
-
-def test_лист_новой_задачи_рисуется_в_сессии_где_его_открыли(engine, fake, repo):
-    """Кнопка у поля стоит в сессии — значит и «Запустить» должна быть там.
-
-    Пока лист жил только в общей панели на обзоре, человек, нажавший кнопку
-    внутри сессии, видел уведомление «теперь Запустить» и пустой экран.
-    """
-    import orch.plugin as mod
-
-    worker = mod.Worker.__new__(mod.Worker)
-    worker.engine = engine
-    worker.draft = _draft(session_id="s42")
-    worker.drawn = {}
-    worker.settings = {}
-    worker.session_of_task = {}
-    worker.clear_ops = {}
-    worker.editing = None
-    pushed = []
-    worker.ui_set = lambda slot, ident, payload, session_id=None: pushed.append(
-        (slot, session_id, payload)
-    )
-    worker.sessions_now = lambda: [{"id": "s42"}]
-    worker._push_if_changed = mod.Worker._push_if_changed.__get__(worker)
-    worker._refresh_session_map = mod.Worker._refresh_session_map.__get__(worker)
-    worker._clear_op = mod.Worker._clear_op.__get__(worker)
-    worker.settings = {"aoe_url": "http://x"}
-    mod.Worker.push_all(worker, force=True)
-
-    panes = [(sid, p) for slot, sid, p in pushed if slot == "pane"]
-    assert panes, "лист не попал в панель сессии"
-    sid, payload = panes[0]
-    assert sid == "s42"
-    assert payload["title"] == "orch · новая задача"
-    assert any(b.get("method") == "orch.launch" for b in _flat(payload["blocks"]))
-
-
 def _flat(blocks):
     for b in blocks:
         yield b
@@ -390,9 +281,13 @@ def test_заявка_из_бэклога_не_запускается_щелчк
     assert "завела роль задачи T7" in заявка["sublabel"]
 
     методы = {a["method"] for a in _actions(pane)}
-    # «Запустить» ведёт в лист (автономия и ветка), а не сразу в работу.
-    assert {"orch.open_backlog", "orch.edit_text", "orch.close"} <= методы
+    # «В работу» ведёт к мастеру: цепочку, ветку и автономию спрашивают в чате.
+    assert методы == {"orch.wizard", "orch.close"}
     assert "orch.start" not in методы
+    режимы = {
+        a["params"].get("mode") for a in _actions(pane) if a["method"] == "orch.wizard"
+    }
+    assert режимы == {None, "text"}
 
 
 def test_снятая_задача_не_попадает_в_готово(engine, repo):
@@ -414,3 +309,24 @@ def test_снятая_задача_не_попадает_в_готово(engine,
     assert [r["label"] for r in разделы["Готово"]["children"]] == [f"{сделана} · сделана"]
     assert [r["label"] for r in разделы["Снято"]["children"]] == [f"{снята} · снята"]
     assert "работа не делалась" in разделы["Снято"]["children"][0]["sublabel"]
+
+
+def test_рабочие_копии_задач_не_считаются_проектами(tmp_path):
+    """Иначе список «Новая задача» зарастает копиями прошлых задач."""
+    import subprocess
+
+    from orch.plugin import _is_project_root
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q", "."], cwd=root, check=True)
+    copy = tmp_path / "repo-orch" / "t1-x"
+    copy.mkdir(parents=True)
+    subprocess.run(
+        ["git", "worktree", "add", "-q", str(copy), "-b", "t1-x"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+    assert _is_project_root(str(root))
+    assert not _is_project_root(str(copy))
