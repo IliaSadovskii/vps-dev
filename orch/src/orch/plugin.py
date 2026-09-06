@@ -150,6 +150,9 @@ class Worker:
         text = ((params.get("composer") or {}).get("text") or "").strip()
         if self.engine is None:
             return
+        if self.draft is not None and self.draft.get("awaiting") == "branch":
+            self.take_branch(session_id, text)
+            return
         if self.draft is not None:
             self.draft["text"] = text
             self.draft["session_id"] = session_id
@@ -193,6 +196,51 @@ class Worker:
             "session_id": session_id,
         }
 
+    def btn_pick_branch(self, session_id, params) -> None:
+        """Строка «ветка»: попросить ссылку, либо снять уже выбранную."""
+        if not self.draft:
+            return
+        if params.get("cancel") or self.draft.get("branch"):
+            self.draft.pop("branch", None)
+            self.draft.pop("branch_holder", None)
+            self.draft.pop("branch_error", None)
+            self.draft.pop("awaiting", None)
+            return
+        self.draft["awaiting"] = "branch"
+        self.draft.pop("branch_error", None)
+        self.notify(
+            "orch: жду ссылку на ветку",
+            "вставьте в поле ввода ссылку на ветку или на PR и нажмите кнопку у поля",
+        )
+
+    def take_branch(self, session_id: str, text: str) -> None:
+        """Ссылка из поля ввода стала веткой задачи."""
+        from .branchref import BranchRefError, parse
+
+        draft = self.draft
+        if draft is None or self.engine is None:
+            return
+        try:
+            branch = parse(text, draft.get("project_path"))
+        except BranchRefError as exc:
+            draft["branch_error"] = str(exc)
+            self.notify("orch: не понял ссылку", str(exc)[:200], tone="warn")
+            return
+        draft.pop("branch_error", None)
+        draft.pop("awaiting", None)
+        draft["branch"] = branch
+        busy = self.engine.task_on_branch(branch)
+        draft["branch_holder"] = busy["id"] if busy else None
+        if busy:
+            self.notify(
+                f"orch: ветка {branch} занята задачей {busy['id']}",
+                "закройте ту задачу или выберите другую ветку",
+                tone="warn",
+            )
+        else:
+            self.notify(f"orch: работаем в ветке {branch}", "теперь «Запустить»")
+        self.clear_composer(session_id)
+
     def btn_sheet_toggle(self, session_id, params) -> None:
         if not self.draft:
             return
@@ -216,6 +264,11 @@ class Worker:
         if not draft.get("project_path"):
             self.notify("orch", "не понял, в каком проекте задача", tone="warn")
             return
+        if draft.get("branch_holder"):
+            self.notify(
+                "orch", f"ветка занята задачей {draft['branch_holder']}", tone="warn"
+            )
+            return
         edits = {}
         for step, knobs in draft["sheet"].items():
             edits[f"{step}.after"] = knobs["after"]
@@ -227,6 +280,7 @@ class Worker:
                 text=draft["text"],
                 sheet_edits=edits,
                 backlog=backlog,
+                branch=draft.get("branch"),
             )
         except (ChainError, OSError) as exc:
             self.notify("orch", f"задача не создалась: {exc}", tone="danger")
@@ -366,6 +420,7 @@ class Worker:
                 panels.composer_action(
                     task,
                     draft_open=self.draft is not None,
+                    awaiting=(self.draft or {}).get("awaiting"),
                     clear_op=self._clear_op(session_id),
                 ),
                 "composer-action",

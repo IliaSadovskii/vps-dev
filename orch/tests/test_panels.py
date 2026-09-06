@@ -258,3 +258,57 @@ def test_путь_задачи_ведёт_в_сессии_заходов(engine,
     assert rows[0]["label"] == "one"
     assert rows[0]["href"] == f"http://127.0.0.1:8065/session/{sid}"
     assert rows[-1]["selected"] is True          # текущий шаг помечен
+
+
+def _draft(**kw):
+    from orch.chain import chains_dir, load
+
+    d = {
+        "chain": "smoke",
+        "project_path": "/projects/kandev-trial",
+        "text": "Доработать вход.",
+        "sheet": load(chains_dir() / "smoke.yml").default_sheet(),
+    }
+    d.update(kw)
+    return d
+
+
+def _row(pane, label):
+    for b in pane["blocks"]:
+        if b.get("kind") == "row" and b.get("label") == label:
+            return b
+    return None
+
+
+def test_строка_ветки_предлагает_взять_чужую(engine):
+    row = _row(panels.home_pane(engine.db, _draft()), "ветка")
+    assert row["value"] == "новая"
+    assert row["method"] == "orch.pick_branch"
+
+
+def test_ожидание_ссылки_блокирует_запуск(engine):
+    pane = panels.home_pane(engine.db, _draft(awaiting="branch"))
+    assert _row(pane, "ветка")["value"] == "жду ссылку"
+    launch = [a for a in _actions(pane) if a["method"] == "orch.launch"][0]
+    assert launch["disabled"] is True
+    # Кнопка у поля говорит, чего от неё ждут.
+    assert panels.composer_action(None, draft_open=True, awaiting="branch")["label"] == (
+        "Взять ветку из поля"
+    )
+
+
+def test_выбранная_ветка_видна_и_пускает(engine):
+    pane = panels.home_pane(engine.db, _draft(branch="feature/x"))
+    row = _row(pane, "ветка")
+    assert row["value"] == "feature/x" and row["value_tone"] == "success"
+    launch = [a for a in _actions(pane) if a["method"] == "orch.launch"][0]
+    assert launch["disabled"] is False
+
+
+def test_занятая_ветка_не_даёт_запустить(engine):
+    pane = panels.home_pane(engine.db, _draft(branch="feature/x", branch_holder="T9"))
+    row = _row(pane, "ветка")
+    assert "занята задачей T9" in row["sublabel"] and row["value_tone"] == "danger"
+    for a in _actions(pane):
+        if a["method"] in ("orch.launch", "orch.backlog"):
+            assert a["disabled"] is True

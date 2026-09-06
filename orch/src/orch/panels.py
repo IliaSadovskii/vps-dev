@@ -384,14 +384,26 @@ def task_pane(
     }
 
 
-def composer_action(task, draft_open: bool = False, clear_op: dict | None = None) -> dict:
+def composer_action(
+    task,
+    draft_open: bool = False,
+    awaiting: str | None = None,
+    clear_op: dict | None = None,
+) -> dict:
     """Кнопка у поля ввода.
 
     Она же — единственный способ передать оркестратору свободный текст без
     участия модели, поэтому висит в каждой сессии, а не только в сессиях
     задач: в чужой сессии ею набирают текст новой задачи.
     """
-    if draft_open:
+    if awaiting == "branch":
+        payload = {
+            "label": "Взять ветку из поля",
+            "method": "orch.move_with_text",
+            "icon": "git-branch",
+            "tooltip": "Ссылка на ветку или на PR из поля ввода станет веткой задачи",
+        }
+    elif draft_open:
         payload = {
             "label": "Взять этот текст в задачу",
             "method": "orch.move_with_text",
@@ -426,6 +438,55 @@ def composer_action(task, draft_open: bool = False, clear_op: dict | None = None
 
 
 # ── лист автономии новой задачи ──────────────────────────────────────────
+def _draft_ready(draft: dict) -> bool:
+    """Запускать нечего, пока нет текста, ждём ссылку или ветка занята."""
+    return bool(
+        draft.get("text")
+        and draft.get("awaiting") != "branch"
+        and not draft.get("branch_holder")
+    )
+
+
+def _branch_row(draft: dict) -> dict:
+    """Строка выбора ветки.
+
+    Списка веток нет нарочно: поле ввода — единственный способ дать
+    оркестратору свободный текст, и ссылку на ветку или на PR владелец
+    вставляет туда же, куда писал текст задачи.
+    """
+    branch = draft.get("branch")
+    error = draft.get("branch_error")
+    if draft.get("awaiting") == "branch":
+        return {
+            "kind": "row",
+            "label": "ветка",
+            "sublabel": error
+            or "вставьте в поле ввода ссылку на ветку или на PR и нажмите кнопку у поля",
+            "value": "жду ссылку",
+            "value_tone": "danger" if error else "warn",
+            "method": "orch.pick_branch",
+            "params": {"cancel": True},
+        }
+    if branch:
+        holder = draft.get("branch_holder")
+        return {
+            "kind": "row",
+            "label": "ветка",
+            "sublabel": f"занята задачей {holder}" if holder else "работаем в ней",
+            "value": branch,
+            "value_tone": "danger" if holder else "success",
+            "mono": True,
+            "method": "orch.pick_branch",
+        }
+    return {
+        "kind": "row",
+        "label": "ветка",
+        "sublabel": "щёлкните, чтобы работать в существующей ветке или в чужом PR",
+        "value": "новая",
+        "method": "orch.pick_branch",
+    }
+
+
 def new_task_pane(draft: dict) -> dict:
     """Лист автономии перед запуском: переключатели на каждый шаг."""
     blocks: list[dict] = [
@@ -451,6 +512,7 @@ def new_task_pane(draft: dict) -> dict:
             "value": draft.get("project_path", "—"),
             "mono": True,
         },
+        _branch_row(draft),
         {"kind": "divider"},
         {"kind": "heading", "text": "Лист автономии"},
     ]
@@ -487,10 +549,10 @@ def new_task_pane(draft: dict) -> dict:
                     "label": "Запустить",
                     "method": "orch.launch",
                     "variant": "primary",
-                    "disabled": not draft.get("text"),
+                    "disabled": not _draft_ready(draft),
                 },
                 {"kind": "action", "label": "В бэклог", "method": "orch.backlog",
-                 "disabled": not draft.get("text")},
+                 "disabled": not _draft_ready(draft)},
             ],
         },
         {"kind": "action", "label": "Отмена", "method": "orch.cancel_new"},
