@@ -1,0 +1,23 @@
+# orch — оркестратор ролей поверх Agent of Empires. Ставится после роли aoe:
+# движок и панели живут воркером плагина внутри `aoe serve`, своих процессов
+# и своих портов у orch нет (orch/PLAN.md §2).
+
+# Каталог пакета в репозитории — он же каталог плагина: манифест
+# `aoe-plugin.toml` лежит рядом с `pyproject.toml`.
+orch_src: /home/{{ base_deploy_user }}/projects/vps-dev/orch
+
+# Состояние: база задач, заявки, venv. Папки задач живут в рабочих копиях
+# проектов, а не здесь.
+orch_state_dir: /home/{{ base_deploy_user }}/.local/share/orch
+orch_venv: "{{ orch_state_dir }}/venv"
+
+orch_plugin_id: dev.sadovskii.orch
+
+# PATH демона и всех сессий агентов — без ~/.local/bin, поэтому точки входа
+# кладутся симлинками сюда (orch/HANDOFF.md).
+orch_bin_dir: /usr/local/bin
+
+# Бэкап базы задач рядом с бэкапом настроек aoe: без него после потери диска
+# остаются рабочие копии и транскрипты, но не поток задач.
+orch_backup_dir: /var/backups/vps-dev/orch
+orch_backup_keep: 14

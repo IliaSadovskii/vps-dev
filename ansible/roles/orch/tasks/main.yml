@@ -1,0 +1,190 @@
+# orch: venv, установка пакета, симлинки точек входа, плагин в aoe, бэкап базы.
+#
+# Роль не перезапускает `aoe serve`: рестарт демона обрывает живые сессии
+# агентов. Впервые поставленный плагин демон подхватывает при своём
+# следующем старте — реестр плагинов читается один раз за процесс
+# (`src/plugin/mod.rs`, `reload_registry`). Роль об этом говорит и не делает
+# вид, что панель появилась сама.
+
+- name: Каталог состояния orch
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ base_deploy_user }}"
+    group: "{{ base_deploy_user }}"
+    mode: '0755'
+  loop:
+    - "{{ orch_state_dir }}"
+    - "{{ orch_state_dir }}/inbox"
+
+- name: Есть ли исходники orch на машине
+  # Роль ставит пакет из рабочей копии репозитория, а не из PyPI: orch —
+  # часть этого репозитория и версионируется вместе с ним.
+  ansible.builtin.stat:
+    path: "{{ orch_src }}/pyproject.toml"
+  register: orch_sources
+  check_mode: false
+
+- name: Сказать, что без исходников ставить нечего
+  ansible.builtin.debug:
+    msg:
+      - "{{ orch_src }}/pyproject.toml не найден — orch не ставлю."
+      - "Исходники приезжают на машину ролью pull вместе с остальным репозиторием."
+  when: not orch_sources.stat.exists
+
+- name: Установка orch
+  when: orch_sources.stat.exists
+  become: true
+  become_user: "{{ base_deploy_user }}"
+  block:
+
+    - name: Python 3.12 и venv на месте
+      ansible.builtin.command:
+        cmd: python3.12 --version
+      register: orch_python
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Без Python 3.12 дальше нельзя
+      ansible.builtin.assert:
+        that: orch_python.rc == 0
+        fail_msg: >-
+          python3.12 не найден. Его ставит роль base; прогони site.yml
+          по порядку, без пропуска тегов.
+
+    - name: Виртуальное окружение orch
+      ansible.builtin.command:
+        cmd: "python3.12 -m venv {{ orch_venv }}"
+        creates: "{{ orch_venv }}/bin/python"
+
+    - name: Пакет orch поставлен из рабочей копии
+      # `-e`: правка кода в репозитории действует после перезапуска воркера
+      # плагина (`aoe plugin disable` / `enable`), без переустановки.
+      ansible.builtin.pip:
+        name: "{{ orch_src }}"
+        editable: true
+        virtualenv: "{{ orch_venv }}"
+        state: forcereinstall
+      register: orch_pip
+      changed_when: orch_pip is changed
+
+    - name: База задач заведена и мигрирована
+      # `orch doctor` открывает базу, применяет миграции и печатает, что
+      # не так. Ненулевой код — не повод падать: он бывает и когда демон
+      # AoE ещё не поднят.
+      ansible.builtin.command:
+        cmd: "{{ orch_venv }}/bin/orch doctor"
+      register: orch_doctor
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Что сказал doctor
+      ansible.builtin.debug:
+        var: orch_doctor.stdout_lines
+      when: orch_doctor.stdout_lines | default([]) | length > 0
+
+- name: Точки входа в PATH демона
+  # PATH демона и сессий агентов: /usr/local/sbin:/usr/local/bin:/usr/sbin:
+  # /usr/bin:/snap/bin — без ~/.local/bin. Роли зовут `orch` по имени, а
+  # манифест плагина — `orch-plugin` с `system = true`.
+  ansible.builtin.file:
+    src: "{{ orch_venv }}/bin/{{ item }}"
+    dest: "{{ orch_bin_dir }}/{{ item }}"
+    state: link
+    force: true
+  loop:
+    - orch
+    - orch-plugin
+  when: orch_sources.stat.exists
+
+- name: Настройки aoe, от которых зависит orch
+  # Ключи лежат в разных разделах, и это проверено по живому config.toml:
+  # rate_limit_auto_resume — в [acp], smart_rename — в [session]. Вписать
+  # оба в один раздел значит тихо не настроить ничего.
+  #
+  # rate_limit_auto_resume: после лимита провайдера AoE сам возобновляет
+  # сессию и один раз перевыдаёт прерванный промпт, а движок ничего не
+  # шлёт повторно (orch/PLAN.md §5).
+  # smart_rename: титул сессии ставит движок («T12 · plan»); переименование
+  # по первому ходу затирало бы имя шага.
+  ansible.builtin.lineinfile:
+    path: "/home/{{ base_deploy_user }}/.config/agent-of-empires/config.toml"
+    regexp: "^{{ item.key }}\\s*="
+    line: "{{ item.key }} = {{ item.value }}"
+    insertafter: "^\\[{{ item.section }}\\]\\s*$"
+    create: true
+    owner: "{{ base_deploy_user }}"
+    group: "{{ base_deploy_user }}"
+    mode: '0644'
+  loop:
+    - { section: acp, key: rate_limit_auto_resume, value: 'true' }
+    - { section: session, key: smart_rename, value: 'false' }
+  loop_control:
+    label: "[{{ item.section }}] {{ item.key }}"
+
+- name: Плагин orch
+  when: orch_sources.stat.exists and not ansible_check_mode
+  become: true
+  become_user: "{{ base_deploy_user }}"
+  block:
+
+    - name: Плагин уже установлен
+      ansible.builtin.command:
+        cmd: aoe plugin list
+      register: orch_plugin_list
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Поставить плагин orch
+      # `--yes` выдаёт объявленные в манифесте права без вопроса: на этой
+      # машине человек в консоли не сидит.
+      ansible.builtin.command:
+        cmd: "aoe plugin install --yes {{ orch_src }}"
+      register: orch_plugin_install
+      when: orch_plugin_id not in (orch_plugin_list.stdout | default(''))
+      changed_when: orch_plugin_install.rc == 0
+
+    - name: Обновить плагин, если манифест изменился
+      ansible.builtin.command:
+        cmd: "aoe plugin update {{ orch_plugin_id }} --yes"
+      register: orch_plugin_update
+      when: orch_plugin_id in (orch_plugin_list.stdout | default(''))
+      changed_when: "'updated' in (orch_plugin_update.stdout | default('') | lower)"
+      failed_when: false
+
+- name: Как включить панель, если демон её ещё не видит
+  # Демон читает реестр плагинов один раз за процесс. Роль его не
+  # перезапускает намеренно: рестарт оборвёт живые сессии агентов.
+  ansible.builtin.debug:
+    msg:
+      - "Плагин orch установлен на диск."
+      - "Панель появляется в дашборде после ближайшего перезапуска `aoe serve`:"
+      - "  systemctl restart aoe-web   — оборвёт живые сессии, делать осознанно."
+      - "Дальше правки кода подхватываются без рестарта: `aoe plugin disable`/`enable`."
+  when: orch_sources.stat.exists
+
+- name: Каталог бэкапов базы задач
+  ansible.builtin.file:
+    path: "{{ orch_backup_dir }}"
+    state: directory
+    owner: "{{ base_deploy_user }}"
+    group: "{{ base_deploy_user }}"
+    mode: '0750'
+
+- name: Ежедневный бэкап базы задач рядом с настройками aoe
+  # `sqlite3 .backup` вместо копирования файла: база в WAL, копия файла на
+  # ходу может оказаться нецелой.
+  ansible.builtin.cron:
+    name: "orch: бэкап базы задач"
+    user: "{{ base_deploy_user }}"
+    minute: "17"
+    hour: "4"
+    job: >-
+      sqlite3 {{ orch_state_dir }}/orch.db
+      ".backup '{{ orch_backup_dir }}/orch-$(date +\%F).db'"
+      && tar czf {{ orch_backup_dir }}/aoe-config-$(date +\%F).tgz
+      -C /home/{{ base_deploy_user }}/.config agent-of-empires
+      && find {{ orch_backup_dir }} -type f -mtime +{{ orch_backup_keep }} -delete
