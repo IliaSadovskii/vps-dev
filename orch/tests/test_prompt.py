@@ -123,3 +123,90 @@ def test_тяжёлый_промпт_вклеивает_пути_без_соде
 
 def test_сборка_детерминирована(ctx):
     assert build(ctx) == build(ctx)
+
+
+def test_первый_заход_не_врёт_про_продолжение(engine, fake, repo):
+    """Кнопку «ещё заход» жмут и на задаче, которая шаг ещё не начинала."""
+    from test_engine import monkey_chain, session_of
+
+    monkey_chain(engine)
+    task_id = engine.create_task(chain_name="t", project_path=str(repo), text="текст")
+    engine.reconcile()
+    task = engine.db.task(task_id)
+    # Останавливаем до первого хода и жмём «ещё заход», как владелец руками.
+    engine.stop(task_id, "no_worktree")
+    task = engine.db.task(task_id)
+    engine.button(task_id, task["revision"], "again")
+    engine.reconcile()
+    ws = engine.workspace(engine.db.task(task_id))
+    text = (ws.path / "prompts" / "one-1.md").read_text(encoding="utf-8")
+    assert "продолжи с места остановки" not in text
+    assert "заход 1" in text
+
+
+def test_общий_файл_шага_не_едет_ко_всем(engine, fake, repo):
+    """Правило для двух ролей из восьми — это `includes` шага, не цепочки."""
+    from orch.chain import parse
+    from orch import promptbuild
+
+    chain = parse(
+        "name: c\n"
+        "includes: [common-protocol]\n"
+        "steps:\n"
+        "  - id: one\n"
+        "    includes: [common-test-ownership]\n"
+        "    run: { agent: claude, model: haiku }\n"
+        "    next: done\n"
+        "  - id: two\n"
+        "    run: { agent: claude, model: haiku }\n"
+        "    next: done\n"
+    )
+    def text_of(step_id):
+        step = chain.step(step_id)
+        ctx = promptbuild.Context(
+            chain=chain, step=step, task_id="T1", task_text="т",
+            task_dir=repo / ".orch" / "T1", root=repo, run_n=1,
+        )
+        return promptbuild.build(ctx)
+
+    assert "Кто трогал тесты" in text_of("one")
+    assert "Кто трогал тесты" not in text_of("two")
+
+
+def test_правило_ворот_только_шагу_с_воротами(engine, fake, repo):
+    """Команда `orch gate` без ворот — способ, которым роль не вправе пользоваться."""
+    from test_engine import monkey_chain
+
+    monkey_chain(engine)
+    task_id = engine.create_task(
+        chain_name="t", project_path=str(repo), text="текст",
+        sheet_edits={"one.after": True},
+    )
+    engine.reconcile()
+    ws = engine.workspace(engine.db.task(task_id))
+    with_gate = (ws.path / "prompts" / "one-1.md").read_text(encoding="utf-8")
+    assert "orch gate accept" in with_gate
+
+    другая = engine.create_task(
+        chain_name="t", project_path=str(repo), text="вторая",
+        sheet_edits={"one.after": False},
+    )
+    engine.reconcile()
+    ws2 = engine.workspace(engine.db.task(другая))
+    без = (ws2.path / "prompts" / "one-1.md").read_text(encoding="utf-8")
+    assert "orch gate accept" not in без
+
+
+def test_пустая_рубрика_файлов_не_выводится(engine, fake, repo):
+    from orch.chain import parse
+    from orch import promptbuild
+
+    chain = parse(
+        "name: c\nsteps:\n  - id: one\n    run: { agent: claude, model: haiku }\n"
+        "    next: done\n"
+    )
+    ctx = promptbuild.Context(
+        chain=chain, step=chain.step("one"), task_id="T1", task_text="т",
+        task_dir=repo / ".orch" / "T1", root=repo, run_n=1,
+    )
+    assert "## Файлы" not in promptbuild.build(ctx)

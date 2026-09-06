@@ -36,6 +36,10 @@ class Step:
     prompt_file: str = ""
     instructions: str = ""
     reads: list[str] = field(default_factory=list)
+    # Общие файлы только для этого шага: правило, которое нужно двум ролям из
+    # восьми, приклеенное ко всем, — сорок строк не по адресу (наблюдение
+    # прогона T16, `PROMPT-NOTES.md`).
+    includes: list[str] = field(default_factory=list)
     context: str = "fresh"
     artifact: list[str] = field(default_factory=list)
     next: dict[str, str] = field(default_factory=dict)
@@ -184,6 +188,7 @@ def _step(raw: dict, chain_name: str) -> Step:
         prompt_file=str(prompt.get("file") or f"role-{step_id}"),
         instructions=str(prompt.get("instructions") or ""),
         reads=list(prompt.get("reads") or []),
+        includes=list(raw.get("includes") or []),
         context=str(raw.get("context", "fresh")),
         artifact=list(artifact),
         next=next_map,

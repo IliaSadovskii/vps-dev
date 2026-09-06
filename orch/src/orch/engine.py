@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -267,6 +268,16 @@ class Engine:
         """
         project = str(Path(project_path).resolve())
         task = self.db.task(task_id) if task_id else None
+        # Свободный мастер этого проекта, если он есть. По ключу
+        # идемпотентности его не найти: ключ живёт вечно и вернул бы сессию,
+        # которая уже уехала в группу заведённой задачи.
+        free = self.free_wizard(project)
+        if free is not None:
+            self.send_wizard_prompt(free, project, task, mode)
+            self.db.event(
+                task_id, "wizard_reused", {"project": project, "session": free, "mode": mode}
+            )
+            return free
         try:
             session = self.aoe.create(
                 path=project,
@@ -275,7 +286,10 @@ class Engine:
                 effort=None,
                 title=f"Мастер · {Path(project).name}",
                 group=f"{GROUP_ROOT}/мастер",
-                idempotency_key=f"wizard/{project}",
+                # Ключ уникален на вызов: повтор мастера не страшен, а вот
+                # вернуть по вечному ключу сессию, уехавшую в группу задачи,
+                # — страшно. От лишних сессий бережёт поиск свободного выше.
+                idempotency_key=f"wizard/{project}/{uuid.uuid4().hex[:8]}",
             )
         except AoeError as exc:
             self.db.event(None, "wizard_failed", {"project": project, "error": str(exc)})
@@ -439,6 +453,7 @@ class Engine:
                 "created",
                 {"chain": chain.name, "preset": preset, "branch": branch, "base": base},
             )
+        self.move_wizard_to(task_id, str(Path(project_path).resolve()))
         if from_backlog:
             # Заявка, из которой выросла задача, закрывается: работа поехала
             # под новым номером, держать её ветку за старой незачем.
@@ -447,6 +462,44 @@ class Engine:
                 self.button(old["id"], old["revision"], "close")
                 self.db.event(task_id, "from_backlog", {"task": from_backlog})
         return task_id
+
+    def free_wizard(self, project: str) -> str | None:
+        """Живая сессия мастера этого проекта, ещё не занятая задачей."""
+        try:
+            sessions = self.aoe.sessions()
+        except AoeError:
+            return None
+        for session in sessions.values():
+            if session.group != f"{GROUP_ROOT}/мастер":
+                continue
+            if str(Path(session.project_path).resolve()) == project:
+                return session.id
+        return None
+
+    def move_wizard_to(self, task_id: str, project: str) -> None:
+        """Сессию мастера переселить в группу заведённой задачи.
+
+        Иначе разговор о постановке остаётся отдельной строкой в сайдбаре,
+        которая уже не нужна, а сама задача уезжает в свою группу. Мастер —
+        нулевой шаг задачи: там записано, чего владелец хотел, и читать это
+        удобнее рядом с ходами, а не в стороне.
+        """
+        task = self.db.task(task_id)
+        if task is None:
+            return
+        try:
+            sessions = self.aoe.sessions()
+        except AoeError:
+            return
+        for session in sessions.values():
+            if session.group != f"{GROUP_ROOT}/мастер":
+                continue
+            if str(Path(session.project_path).resolve()) != project:
+                continue
+            self.aoe.set_group(session.id, task["group_path"] or f"{GROUP_ROOT}/{task_id}")
+            self.aoe.set_title(session.id, f"{task_id} · постановка")
+            self.db.event(task_id, "wizard_moved", {"session": session.id})
+            return
 
     def promote_queue(self) -> None:
         """Одновременно `running` не больше `max_running`; остальные ждут."""
@@ -1115,6 +1168,16 @@ class Engine:
         )
         self.aoe.set_notify(session_id, bool(gated))
 
+    def extra_includes(self, task, step: Step) -> list[str]:
+        """Общие файлы, которые движок добавляет по состоянию, а не по цепочке.
+
+        Правило про ворота нужно только роли, после которой задача встанет:
+        остальным оно даёт команду, которой они всё равно не смогут
+        воспользоваться (`PROMPT-NOTES.md`, прогон T16).
+        """
+        after = (self.sheet(task).get(step.id) or {}).get("after", step.human_after)
+        return ["common-gate"] if after else []
+
     def assemble(self, task, chain: Chain, step: Step, run, ws: Workspace):
         """Собрать промпт и вернуть (текст, sha, id доставленных комментариев)."""
         import hashlib
@@ -1143,6 +1206,7 @@ class Engine:
             later_artifacts=self.later_artifacts(ws, step, prev),
             owner_edited=self.owner_edited(task, ws, chain),
             sub_prompts=self.sub_prompts(step),
+            extra_includes=self.extra_includes(task, step),
         )
         text = promptbuild.build(ctx)
         if ctx.oversized:
@@ -1168,6 +1232,17 @@ class Engine:
     def came_from(self, task, step: Step, run) -> str:
         if run["n"] == 1 and not self.db.moves(task["id"], limit=2):
             return ""
+        # Первый заход шага: продолжать нечего, даже если сюда привела кнопка
+        # «ещё заход» (её жмут и на вставшей задаче, которая шаг не начинала).
+        # Фраза «продолжи с места остановки» отправила бы роль искать свой
+        # прошлый файл, которого нет.
+        if run["n"] == 1:
+            past = self.db.conn.execute(
+                "SELECT COUNT(*) c FROM run WHERE task_id = ? AND step = ? AND id <> ?",
+                (task["id"], step.id, run["id"]),
+            ).fetchone()["c"]
+            if not past:
+                return ""
         last = next(
             (m for m in self.db.moves(task["id"], limit=10) if m["to_step"] == step.id), None
         )

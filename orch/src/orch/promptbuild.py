@@ -41,6 +41,8 @@ class Context:
     later_artifacts: list[str] = field(default_factory=list)
     owner_edited: list[str] = field(default_factory=list)
     sub_prompts: list[str] = field(default_factory=list)
+    # Общие файлы сверх цепочки: движок добавляет их по состоянию задачи.
+    extra_includes: list[str] = field(default_factory=list)
     oversized: bool = False
 
 
@@ -56,6 +58,7 @@ def build(ctx: Context) -> str:
         _questions(ctx),
         _finish(ctx),
     ]
+    parts = [_drop_empty_files(p) for p in parts]
     text = "\n\n".join(p for p in parts if p).strip() + "\n"
     if len(text) / CHARS_PER_TOKEN <= TOKEN_LIMIT:
         return text
@@ -65,10 +68,25 @@ def build(ctx: Context) -> str:
     return "\n\n".join(p for p in parts if p).strip() + "\n"
 
 
+def _drop_empty_files(part: str) -> str:
+    """Рубрика «Файлы», в которой не оказалось ни строки, не нужна вовсе."""
+    return "" if part.strip() == "## Файлы" else part
+
+
 # ── блоки ────────────────────────────────────────────────────────────────
 def _includes(ctx: Context) -> str:
+    """Общие правила: цепочки, шага и добавленные движком по состоянию.
+
+    Порядок постоянный, повторов нет: один и тот же файл, названный дважды,
+    вклеивается один раз.
+    """
     texts = []
-    for name in ctx.chain.includes:
+    seen: set[str] = set()
+    names = [*ctx.chain.includes, *ctx.step.includes, *ctx.extra_includes]
+    for name in names:
+        if name in seen:
+            continue
+        seen.add(name)
         path = prompts_dir() / f"{name}.md"
         if path.exists():
             texts.append(path.read_text(encoding="utf-8").strip())
@@ -118,6 +136,8 @@ def _where(ctx: Context) -> str:
 
 
 def _files(ctx: Context, inline: bool) -> str:
+    """Файлы шага. Пустую рубрику не выводим: заголовок без содержания
+    читается как «что-то потеряли» (наблюдение прогона T16)."""
     lines = ["## Файлы", ""]
     base = ctx.task_dir / "artifacts"
     missing: list[str] = []

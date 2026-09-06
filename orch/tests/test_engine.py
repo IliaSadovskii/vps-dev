@@ -789,3 +789,28 @@ def test_ветку_берём_второй_копией_если_старую_�
     assert task["status"] == "running", task["wait_reason"]
     assert старая.exists(), "чужую копию не трогаем, раз снять её не вышло"
     assert Path(task["worktree_path"]).is_dir()
+
+
+def test_мастер_переезжает_в_группу_своей_задачи(engine, fake, repo):
+    """Иначе разговор о постановке висит отдельной ненужной строкой."""
+    monkey_chain(engine)
+    sid = engine.open_wizard(str(repo))
+    assert fake.rows[sid]["group_path"] == "orch/мастер"
+    task_id = engine.create_task(chain_name="t", project_path=str(repo), text="новая")
+    assert fake.rows[sid]["group_path"].startswith(f"orch/{task_id}")
+    assert fake.titles[sid] == f"{task_id} · постановка"
+
+
+def test_следующая_задача_получает_нового_мастера(engine, fake, repo):
+    """Уехавшая в задачу сессия не должна возвращаться по ключу."""
+    monkey_chain(engine)
+    первый = engine.open_wizard(str(repo))
+    engine.create_task(chain_name="t", project_path=str(repo), text="первая")
+    второй = engine.open_wizard(str(repo))
+    assert второй != первый
+
+
+def test_свободный_мастер_переиспользуется(engine, fake, repo):
+    """Пока мастер не занят задачей, второй раз его не плодим."""
+    первый = engine.open_wizard(str(repo))
+    assert engine.open_wizard(str(repo)) == первый
