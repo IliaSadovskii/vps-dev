@@ -504,3 +504,15 @@ def test_отказ_поставить_модель_не_останавлива�
     kinds = [e["kind"] for e in engine.db.events(task_id, limit=10)]
     assert "model_not_applied" in kinds
     assert engine.db.task(task_id)["status"] == RUNNING
+
+
+def test_имя_ветки_не_кончается_дефисом(engine, repo):
+    """Обрезка длинного титула не должна оставлять дефис на хвосте: имя ветки
+    в базе разойдётся с настоящей веткой и `orch push` откажет."""
+    from orch.engine import _slug
+
+    assert _slug("Разработать модуль аутентификации и авторизации") == "razrabotat-modul-autentifikacii"
+    assert not _slug("Разработать модуль аутентификации и авторизации").endswith("-")
+    for title in ("а" * 40, "Проверка модели в сессии", "!!!", "one two three four five six"):
+        got = _slug(title)
+        assert got and not got.startswith("-") and not got.endswith("-"), (title, got)

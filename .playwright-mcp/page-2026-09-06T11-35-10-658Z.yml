@@ -1,0 +1,9 @@
+- generic [ref=f48e3]:
+  - banner [ref=f48e4]:
+    - generic [ref=f48e5]: Listate
+    - generic [ref=f48e6]:
+      - generic [ref=f48e7]: Владелец
+      - button "Выйти" [ref=f48e9] [cursor=pointer]
+  - main [ref=f48e11]:
+    - heading "Панель" [level=2] [ref=f48e12]
+    - paragraph [ref=f48e13]: Здесь появятся застройщики, комплексы и лоты. Пока пусто.

@@ -976,5 +976,8 @@ def _slug(title: str) -> str:
         "abvgdeejzijklmnoprstufhccss'y'eua",
     )
     s = title.lower().translate(table)
-    s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
-    return (s or "task")[:32]
+    s = re.sub(r"[^a-z0-9]+", "-", s)
+    # Обрезаем сначала, чистим дефисы потом: наоборот обрезка снова оставляет
+    # дефис на конце, и имя ветки в базе расходится с именем настоящей ветки
+    # (`orch push` отвечает «src refspec does not match any»).
+    return s[:32].strip("-") or "task"

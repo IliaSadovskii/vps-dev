@@ -1,0 +1,25 @@
+- main [ref=f48e14]:
+  - generic [ref=f48e15]:
+    - generic [ref=f48e16]:
+      - heading "Listate" [level=1] [ref=f48e17]
+      - paragraph [ref=f48e18]: CRM агентства недвижимости
+    - generic [ref=f48e19]:
+      - generic [ref=f48e20]:
+        - generic [ref=f48e21]: Рабочая почта
+        - textbox "Рабочая почта" [active] [ref=f48e23]
+      - generic [ref=f48e24]:
+        - generic [ref=f48e25]:
+          - generic [ref=f48e26]: Пароль
+          - link "Забыли пароль?" [ref=f48e27] [cursor=pointer]:
+            - /url: /forgot-password
+        - generic [ref=f48e28]:
+          - textbox "Пароль" [ref=f48e29]
+          - button "Показать пароль" [ref=f48e30] [cursor=pointer]
+          - generic: Enter a password
+      - generic [ref=f48e33]:
+        - checkbox "Запомнить меня" [ref=f48e35] [cursor=pointer]
+        - generic [ref=f48e37]: Запомнить меня
+      - button "Войти" [ref=f48e38] [cursor=pointer]
+    - generic [ref=f48e40]: или
+    - link "Войти по коду из письма" [ref=f48e44] [cursor=pointer]:
+      - /url: /login/code
