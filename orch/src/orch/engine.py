@@ -301,6 +301,8 @@ class Engine:
             step.id, run["n"], session.id, "running", task["branch"], list(step.reads)
         )
 
+        self.apply_model(task, step, session)
+
         text, sha, comment_ids = self.assemble(task, chain, step, run, ws)
         (ws.prompts / f"{step.id}-{run['n']}.md").write_text(text, encoding="utf-8")
 
@@ -355,7 +357,6 @@ class Engine:
             if prev and prev["session_id"]:
                 session = self.aoe.session(prev["session_id"])
                 if session:
-                    self.switch_model(task, chain, step, prev, session)
                     return session
 
         # Ключ идемпотентности — задача/шаг/заход плюс время создания задачи.
@@ -386,23 +387,27 @@ class Engine:
             return None
         return session
 
-    def switch_model(self, task, chain: Chain, step: Step, prev, session: Session) -> None:
-        """Другая модель того же агента при `continue`; отказ — едем на прежней.
+    def apply_model(self, task, step: Step, session: Session) -> None:
+        """Поставить модель шага и убедиться, что адаптер её принял.
 
-        Какая модель стоит в сессии, AoE в строке сессии не сообщает, поэтому
-        сравниваем с моделью шага, который эту сессию завёл.
+        Обязательно **до** промпта и на каждом заходе, а не только при смене
+        модели в `continue`: `agent_model` при создании сессии до Claude не
+        доезжает вовсе, и сессия молча работает на модели адаптера по
+        умолчанию — у Claude это Opus, а не то, что записано в цепочке.
+        Отказ не останавливает задачу: ход пойдёт на модели по умолчанию, но
+        это будет видно в журнале, а не тихо.
         """
-        try:
-            was = chain.step(prev["step"]).model
-        except ChainError:
-            was = None
-        if was == step.model:
+        if self.aoe.apply_model(session.id, step.model):
             return
-        ok = self.aoe.set_model(session.id, step.model)
         self.db.event(
             task["id"],
-            "model_switch",
-            {"session": session.id, "was": was, "want": step.model, "ok": ok},
+            "model_not_applied",
+            {
+                "session": session.id,
+                "want": step.model,
+                "got": self.aoe.model_now(session.id),
+                "step": step.id,
+            },
         )
 
     # ── наблюдение за ходом ──────────────────────────────────────────────
@@ -449,6 +454,7 @@ class Engine:
         ws = self.workspace(task)
         ws.ensure(task["text"], task["chain_yaml"])
         ws.write_current(step.id, run["n"], session.id, "running", task["branch"], list(step.reads))
+        self.apply_model(task, step, session)
         text, sha, comment_ids = self.assemble(task, chain, step, run, ws)
         (ws.prompts / f"{step.id}-{run['n']}.md").write_text(text, encoding="utf-8")
         try:

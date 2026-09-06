@@ -486,3 +486,21 @@ def test_роли_подагентов_берутся_из_текста_роли
     assert names == ["sub-review-defects.md", "sub-review-security.md"]
     # У шага без подагентов список пуст.
     assert engine.sub_prompts(deep.step("scoping")) == []
+
+
+def test_модель_ставится_до_промпта(engine, fake, repo):
+    """`agent_model` при создании сессии до Claude не доезжает: без явной
+    установки ход пошёл бы на модели адаптера по умолчанию."""
+    task_id = start(engine, repo)
+    sid = session_of(engine, task_id)
+    assert fake.model_now(sid) == "haiku"        # модель шага из цепочки
+    # Модель ставится раньше промпта, а не после него.
+    assert fake.prompts and fake.prompts[0][0] == sid
+
+
+def test_отказ_поставить_модель_не_останавливает_но_виден(engine, fake, repo):
+    fake.model_apply_fails = True
+    task_id = start(engine, repo)
+    kinds = [e["kind"] for e in engine.db.events(task_id, limit=10)]
+    assert "model_not_applied" in kinds
+    assert engine.db.task(task_id)["status"] == RUNNING

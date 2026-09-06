@@ -245,6 +245,48 @@ class Aoe:
         except AoeError:
             return False
 
+    def model_now(self, sid: str) -> str | None:
+        """Какая модель стоит в сессии на самом деле.
+
+        В строке сессии AoE модель не показывает, зато адаптер объявляет её
+        в событии `ConfigOptionsUpdated`. Берём последнее такое событие.
+        """
+        try:
+            data = self.call("GET", f"/api/sessions/{sid}/acp/replay?view=raw&limit=400")
+        except AoeError:
+            return None
+        current = None
+        for frame in data.get("frames", []) if isinstance(data, dict) else []:
+            event = frame.get("event") or {}
+            update = event.get("ConfigOptionsUpdated")
+            if not update:
+                continue
+            for option in _options_of(update):
+                if option.get("id") == "model" or option.get("category") == "model":
+                    current = option.get("current_value")
+        return current
+
+    def apply_model(self, sid: str, model: str, tries: int = 2, wait_s: float = 20.0) -> bool:
+        """Поставить модель и дождаться, что адаптер её принял.
+
+        `agent_model` при создании сессии до Claude не доезжает: AoE передаёт
+        его переменной `AOE_AGENT_MODEL` (`src/acp/supervisor.rs`), а
+        `claude-agent-acp` её не читает — переменная для встроенного
+        `aoe-agent`. Сессия молча остаётся на модели адаптера по умолчанию
+        (у Claude это Opus 1M). Единственный работающий путь — тот же вызов,
+        которым меняют модель живой сессии, и проверка по `ConfigOptionsUpdated`.
+        """
+        for attempt in range(tries):
+            if self.model_now(sid) == model:
+                return True
+            self.set_model(sid, model)
+            deadline = time.time() + wait_s
+            while time.time() < deadline:
+                if self.model_now(sid) == model:
+                    return True
+                time.sleep(2)
+        return self.model_now(sid) == model
+
     # ── оформление (всегда безвредно, ставится каждый проход) ────────────
     def set_title(self, sid: str, title: str) -> None:
         self._quiet("PATCH", f"/api/sessions/{sid}", {"title": title})
@@ -310,6 +352,19 @@ class Aoe:
             self.call(method, path, body)
         except AoeError:
             pass
+
+
+def _options_of(update) -> list[dict]:
+    """Список настроек из `ConfigOptionsUpdated`: форма события не обещана."""
+    if isinstance(update, dict):
+        for key in ("options", "config_options", "configOptions"):
+            value = update.get(key)
+            if isinstance(value, list):
+                return [o for o in value if isinstance(o, dict)]
+        return [update] if "current_value" in update else []
+    if isinstance(update, list):
+        return [o for o in update if isinstance(o, dict)]
+    return []
 
 
 def _dig_number(obj, keys: tuple[str, ...]) -> float | None:

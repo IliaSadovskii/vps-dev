@@ -33,6 +33,7 @@ class FakeAoe:
         self.next_id = 1
         self.worktree_root = "/tmp/fake-worktree"
         self.fail_create = False
+        self.model_apply_fails = False
         self.cost: float | None = None
 
     # чтение
@@ -76,7 +77,9 @@ class FakeAoe:
             "project_path": project,
             "acp_worker_state": "running",
             "idle_entered_at": None,
-            "acp_agent_model": model,
+            # Модель адаптер получает не при создании: движок ставит её
+            # отдельным вызовом до промпта (см. Aoe.apply_model).
+            "acp_agent_model": None,
         }
         self.by_key[idempotency_key] = sid
         return self.session(sid)
@@ -91,6 +94,15 @@ class FakeAoe:
 
     def set_model(self, sid: str, model: str) -> bool:
         self.rows[sid]["acp_agent_model"] = model
+        return True
+
+    def model_now(self, sid: str) -> str | None:
+        return self.rows.get(sid, {}).get("acp_agent_model")
+
+    def apply_model(self, sid: str, model: str, tries: int = 2, wait_s: float = 20.0) -> bool:
+        if self.model_apply_fails:
+            return False
+        self.set_model(sid, model)
         return True
 
     # оформление
