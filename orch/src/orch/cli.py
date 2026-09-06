@@ -150,6 +150,8 @@ def cmd_task_new(args: argparse.Namespace) -> int:
         "chain": args.chain,
         "project_path": str(project),
         "text": text,
+        "branch": args.branch,
+        "base": args.base,
         "preset": args.preset,
         "sheet_edits": sheet_edits,
         "backlog": bool(args.backlog),
@@ -481,6 +483,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--after", action="append", metavar="ШАГ=on|off")
     p.add_argument("--ask", action="append", metavar="ШАГ=on|off")
     p.add_argument("--backlog", action="store_true")
+    p.add_argument(
+        "--branch",
+        help="работать в этой ветке вместо новой: так задача садится на уже открытый PR",
+    )
+    p.add_argument(
+        "--base",
+        help="от чего ответвляться, если ветки ещё нет (по умолчанию origin/HEAD)",
+    )
     p.set_defaults(func=cmd_task_new)
 
     p = sub.add_parser("log", help="журнал событий")

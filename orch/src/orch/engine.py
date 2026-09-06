@@ -152,6 +152,8 @@ class Engine:
                         preset=request.get("preset"),
                         sheet_edits=request.get("sheet_edits") or {},
                         backlog=bool(request.get("backlog")),
+                        branch=request.get("branch"),
+                        base=request.get("base"),
                     )
                     self.db.event(task_id, "task_created", {"from": "inbox", "file": path.name})
             except (ChainError, KeyError, OSError) as exc:
@@ -198,7 +200,16 @@ class Engine:
         sheet_edits: dict | None = None,
         backlog: bool = False,
         title: str | None = None,
+        branch: str | None = None,
+        base: str | None = None,
     ) -> str:
+        """Завести задачу.
+
+        `branch` — работать в названной ветке вместо новой: так задача
+        садится на уже открытый PR. Ветка есть — движок подключится к ней,
+        нет — заведёт с этим именем. `base` — от чего ответвляться, если
+        ветки ещё нет.
+        """
         chain = load_chain(chains_dir() / f"{chain_name}.yml")
         sheet = chain.sheet_with_preset(preset)
         if sheet_edits:
@@ -207,12 +218,21 @@ class Engine:
             sheet = apply_preset(sheet, sheet_edits)
         task_id = self.db.next_task_id()
         title = title or _title_from(text)
-        branch = f"{task_id.lower()}-{_slug(title)}"
+        if branch:
+            busy = self.task_on_branch(branch)
+            if busy:
+                raise ChainError(
+                    f"ветка {branch} занята задачей {busy['id']} ({busy['status']}). "
+                    "Одна рабочая копия — одна задача: закройте ту или возьмите "
+                    "другую ветку"
+                )
+        else:
+            branch = f"{task_id.lower()}-{_slug(title)}"
         with self.db.tx():
             self.db.conn.execute(
                 "INSERT INTO task (id, chain, chain_yaml, title, text, project_path, branch, "
-                "group_path, step, status, human_sheet, revision, created_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,1,?)",
+                "group_path, step, status, human_sheet, base_branch, revision, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?)",
                 (
                     task_id,
                     chain.name,
@@ -225,10 +245,15 @@ class Engine:
                     None,
                     BACKLOG if backlog else QUEUED,
                     json.dumps(sheet, ensure_ascii=False),
+                    base or None,
                     now(),
                 ),
             )
-            self.db.event(task_id, "created", {"chain": chain.name, "preset": preset})
+            self.db.event(
+                task_id,
+                "created",
+                {"chain": chain.name, "preset": preset, "branch": branch, "base": base},
+            )
         return task_id
 
     def promote_queue(self) -> None:
@@ -326,6 +351,18 @@ class Engine:
             )
         self.dress(task, chain, step, session.id)
 
+    def task_on_branch(self, branch: str):
+        """Задача, которая уже работает в этой ветке, или None.
+
+        Две задачи в одной рабочей копии писали бы `.orch/` друг поверх
+        друга, и `orch` в сессии не смог бы понять, чей он.
+        """
+        return self.db.conn.execute(
+            "SELECT id, status FROM task WHERE branch = ? "
+            "AND status IN ('backlog','queued','running','waiting') LIMIT 1",
+            (branch,),
+        ).fetchone()
+
     def ensure_worktree(self, task) -> bool:
         """Рабочая копия задачи существует. False — не смогли, задача встала.
 
@@ -337,7 +374,9 @@ class Engine:
         """
         if task["worktree_path"] and Path(task["worktree_path"]).is_dir():
             return True
-        path, error = create_worktree(task["project_path"], task["branch"])
+        path, error = create_worktree(
+            task["project_path"], task["branch"], base=task["base_branch"] or ""
+        )
         if error:
             self.db.event(
                 task["id"], "worktree_failed", {"path": str(path), "error": error[:500]}

@@ -516,3 +516,56 @@ def test_имя_ветки_не_кончается_дефисом(engine, repo):
     for title in ("а" * 40, "Проверка модели в сессии", "!!!", "one two three four five six"):
         got = _slug(title)
         assert got and not got.startswith("-") and not got.endswith("-"), (title, got)
+
+
+def test_задача_на_существующей_ветке(engine, fake, repo, tmp_path):
+    """Доработка открытого PR: задача садится на его ветку, а не заводит свою."""
+    import subprocess
+
+    monkey_chain(engine)
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path),
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    subprocess.run(["git", "branch", "feature/pr-4"], cwd=repo, check=True, env=env)
+
+    task_id = engine.create_task(
+        chain_name="t", project_path=str(repo), text="доработать PR", branch="feature/pr-4"
+    )
+    assert engine.db.task(task_id)["branch"] == "feature/pr-4"
+
+    engine.reconcile()
+    task = engine.db.task(task_id)
+    assert task["status"] == RUNNING
+    # Копия сделана из существующей ветки, а не заведена новая.
+    assert task["worktree_path"].endswith("feature/pr-4")
+    heads = subprocess.run(["git", "branch", "--format=%(refname:short)"],
+                           cwd=repo, capture_output=True, text=True, env=env).stdout.split()
+    assert heads.count("feature/pr-4") == 1
+
+
+def test_ветка_занятая_живой_задачей_отклоняется(engine, repo):
+    """Две задачи в одной копии писали бы `.orch/` друг поверх друга."""
+    from orch.chain import ChainError
+
+    monkey_chain(engine)
+    engine.create_task(chain_name="t", project_path=str(repo), text="первая", branch="общая")
+    with pytest.raises(ChainError) as exc:
+        engine.create_task(chain_name="t", project_path=str(repo), text="вторая", branch="общая")
+    assert "занята задачей" in str(exc.value)
+
+
+def test_закрытая_задача_ветку_не_держит(engine, fake, repo):
+    monkey_chain(engine)
+    first = engine.create_task(chain_name="t", project_path=str(repo), text="первая", branch="общая")
+    with engine.db.tx():
+        engine.db.bump(first, status="done")
+    second = engine.create_task(chain_name="t", project_path=str(repo), text="вторая", branch="общая")
+    assert engine.db.task(second)["branch"] == "общая"
+
+
+def test_база_ответвления_запоминается(engine, repo):
+    monkey_chain(engine)
+    task_id = engine.create_task(
+        chain_name="t", project_path=str(repo), text="от релиза", base="release/1.2"
+    )
+    assert engine.db.task(task_id)["base_branch"] == "release/1.2"
