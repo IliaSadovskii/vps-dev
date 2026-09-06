@@ -218,11 +218,42 @@ class Worker:
             return
         self.draft["awaiting"] = "branch"
         self.draft.pop("branch_error", None)
-        self.notify(
-            "orch: жду ссылку на ветку",
-            "вставьте в поле ввода ссылку на ветку или на PR и нажмите кнопку у поля",
-        )
-        self.open_pane_hint()
+        self.draft["branches"] = self.branches_of(self.draft.get("project_path") or "")
+        self.notify("orch: выберите ветку", "список открыт в листе задачи")
+
+    def branches_of(self, project: str) -> list[dict]:
+        """Свежие ветки проекта с пометкой, кто из них занят живой задачей."""
+        from .branchref import recent
+
+        if not project or self.engine is None:
+            return []
+        try:
+            items = recent(project)
+        except Exception as exc:  # noqa: BLE001 — список веток не должен ронять панель
+            log(f"orch-plugin: не собрал список веток: {exc!r}")
+            return []
+        for item in items:
+            busy = self.engine.task_on_branch(item["branch"])
+            item["holder"] = busy["id"] if busy else None
+        return items
+
+    def btn_set_branch(self, session_id, params) -> None:
+        """Щелчок по строке ветки в списке."""
+        if not self.draft:
+            return
+        branch = (params.get("branch") or "").strip()
+        self.draft.pop("awaiting", None)
+        self.draft.pop("branches", None)
+        self.draft.pop("branch_error", None)
+        if not branch:
+            self.draft.pop("branch", None)
+            self.draft.pop("branch_holder", None)
+            self.notify("orch: ветка новая", "как обычно, своя под эту задачу")
+            return
+        busy = self.engine.task_on_branch(branch) if self.engine else None
+        self.draft["branch"] = branch
+        self.draft["branch_holder"] = busy["id"] if busy else None
+        self.notify(f"orch: работаем в ветке {branch}", "теперь «Запустить»")
 
     def take_branch(self, session_id: str, text: str) -> None:
         """Ссылка из поля ввода стала веткой задачи."""
@@ -239,6 +270,7 @@ class Worker:
             return
         draft.pop("branch_error", None)
         draft.pop("awaiting", None)
+        draft.pop("branches", None)
         draft["branch"] = branch
         busy = self.engine.task_on_branch(branch)
         draft["branch_holder"] = busy["id"] if busy else None

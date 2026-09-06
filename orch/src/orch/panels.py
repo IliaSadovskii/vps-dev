@@ -438,6 +438,58 @@ def composer_action(
 
 
 # ── лист автономии новой задачи ──────────────────────────────────────────
+def _branch_choices(draft: dict) -> list[dict]:
+    """Ветки проекта строками: щелчок вместо набора текста.
+
+    Поле ввода в AoE делает две вещи сразу — Enter отправляет текст агенту,
+    а оркестратору его отдаёт отдельная маленькая кнопка у поля. Человек про
+    кнопку не знает и жмёт Enter; ссылка уходит агенту, а лист остаётся
+    ждать. Щелчок по строке этой двусмысленности не имеет, поэтому список —
+    основной путь, а ссылка в поле — запасной.
+    """
+    if draft.get("awaiting") != "branch":
+        return []
+    rows: list[dict] = [
+        {
+            "kind": "row",
+            "label": "новая ветка от базовой",
+            "sublabel": "как обычно: своя ветка под эту задачу",
+            "value": "новая",
+            "method": "orch.set_branch",
+            "params": {"branch": ""},
+        }
+    ]
+    for item in draft.get("branches") or []:
+        holder = item.get("holder")
+        badges = []
+        if item.get("pr"):
+            badges.append({"text": f"PR #{item['pr']}", "tone": "info"})
+        if holder:
+            badges.append({"text": f"занята {holder}", "tone": "danger"})
+        row = {
+            "kind": "row",
+            "label": item["branch"],
+            "sublabel": item.get("subject", "")[:70],
+            "value": item.get("when", ""),
+            "mono": True,
+            "badges": badges,
+            "tone": "danger" if holder else "neutral",
+        }
+        if not holder:
+            row["method"] = "orch.set_branch"
+            row["params"] = {"branch": item["branch"]}
+        rows.append(row)
+    rows.append(
+        {
+            "kind": "note",
+            "text": "Ветки нет в списке — вставьте ссылку на неё или на PR в поле "
+            "ввода и нажмите там кнопку «Взять ветку из поля» (не Enter: "
+            "Enter отправит текст агенту).",
+        }
+    )
+    return rows
+
+
 def _draft_ready(draft: dict) -> bool:
     """Запускать нечего, пока нет текста, ждём ссылку или ветка занята."""
     return bool(
@@ -460,9 +512,8 @@ def _branch_row(draft: dict) -> dict:
         return {
             "kind": "row",
             "label": "ветка",
-            "sublabel": error
-            or "вставьте в поле ввода ссылку на ветку или на PR и нажмите кнопку у поля",
-            "value": "жду ссылку",
+            "sublabel": error or "выберите строкой ниже — или отмените щелчком здесь",
+            "value": "выбор",
             "value_tone": "danger" if error else "warn",
             "method": "orch.pick_branch",
             "params": {"cancel": True},
@@ -513,6 +564,7 @@ def new_task_pane(draft: dict) -> dict:
             "mono": True,
         },
         _branch_row(draft),
+        *_branch_choices(draft),
         {"kind": "divider"},
         {"kind": "heading", "text": "Лист автономии"},
     ]

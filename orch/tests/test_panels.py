@@ -286,9 +286,26 @@ def test_строка_ветки_предлагает_взять_чужую(engi
     assert row["method"] == "orch.pick_branch"
 
 
-def test_ожидание_ссылки_блокирует_запуск(engine):
-    pane = panels.home_pane(engine.db, _draft(awaiting="branch"))
-    assert _row(pane, "ветка")["value"] == "жду ссылку"
+def test_выбор_ветки_блокирует_запуск_и_даёт_список(engine):
+    pane = panels.home_pane(
+        engine.db,
+        _draft(
+            awaiting="branch",
+            branches=[
+                {"branch": "feature/x", "when": "вчера", "subject": "правки", "pr": 4},
+                {"branch": "занятая", "when": "давно", "subject": "", "holder": "T9"},
+            ],
+        ),
+    )
+    assert _row(pane, "ветка")["value"] == "выбор"
+    # Ветку выбирают щелчком, а не набором: поле ввода уходит агенту по Enter.
+    выбор = {r["label"]: r for r in pane["blocks"] if r.get("kind") == "row"}
+    assert выбор["новая ветка от базовой"]["method"] == "orch.set_branch"
+    assert выбор["feature/x"]["method"] == "orch.set_branch"
+    assert any(b["text"] == "PR #4" for b in выбор["feature/x"]["badges"])
+    # Занятую щёлкнуть нельзя, и видно кем.
+    assert "method" not in выбор["занятая"]
+    assert any("занята T9" in b["text"] for b in выбор["занятая"]["badges"])
     launch = [a for a in _actions(pane) if a["method"] == "orch.launch"][0]
     assert launch["disabled"] is True
     # Кнопка у поля говорит, чего от неё ждут.
