@@ -5,6 +5,9 @@
 #
 # Формат — orch/PLAN.md §4. Роль шага — orch/prompts/role-<id>.md,
 # подагенты — sub-*.md, общие правила — common-*.md, навыки — skill-*.md.
+# Пробный период: все шаги на Claude Sonnet, усилие high. Целевые модели
+# (Opus на решении, плане и ревью кода, Codex на ревью плана, Haiku на PR)
+# записаны комментарием у каждого шага и включаются одной правкой.
 name: deep
 includes: [common-protocol, common-git-safety, common-test-ownership]
 
@@ -24,7 +27,7 @@ steps:
     human: { ask: true }
 
   - id: solution
-    run: { agent: claude, model: "opus[1m]", effort: xhigh }
+    run: { agent: claude, model: sonnet, effort: high }   # пробный прогон; целевое: { agent: claude, model: "opus[1m]", effort: xhigh }
     context: fresh
     prompt: { reads: [scoping.md] }
     artifact: [solution.md]
@@ -37,7 +40,7 @@ steps:
       moves: [scoping]
 
   - id: plan
-    run: { agent: claude, model: "opus[1m]", effort: xhigh }
+    run: { agent: claude, model: sonnet, effort: high }   # пробный прогон; целевое: { agent: claude, model: "opus[1m]", effort: xhigh }
     context: fresh
     prompt: { reads: [scoping.md, solution.md] }
     artifact: [plan.md]
@@ -45,7 +48,7 @@ steps:
     human: { ask: true }         # инструмент тестов, которого нет в проекте
 
   - id: plan-review
-    run: { agent: codex, model: gpt-5.6-sol, effort: high }
+    run: { agent: claude, model: sonnet, effort: high }   # пробный прогон; целевое: { agent: codex, model: gpt-5.6-sol, effort: high }
     context: fresh
     prompt: { reads: [plan.md, scoping.md, solution.md] }
     artifact: [plan-review.md]
@@ -67,7 +70,7 @@ steps:
     human: { ask: false }        # вопрос здесь — признак плохого плана: в «Не решено»
 
   - id: code-review
-    run: { agent: claude, model: "opus[1m]", effort: high }
+    run: { agent: claude, model: sonnet, effort: high }   # пробный прогон; целевое: { agent: claude, model: "opus[1m]", effort: high }
     context: fresh
     prompt: { reads: [scoping.md, implementation.md] }
     artifact: [review.md, review-defects.md, review-security.md]
@@ -86,7 +89,7 @@ steps:
     human: { ask: false }
 
   - id: pr
-    run: { agent: claude, model: haiku }
+    run: { agent: claude, model: sonnet, effort: high }   # пробный прогон; целевое: { agent: claude, model: haiku }
     context: fresh
     prompt: { reads: [scoping.md, plan.md, plan-review.md, implementation.md, review.md, review-fixes.md] }
     artifact: [pull-request.md]
