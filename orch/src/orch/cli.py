@@ -145,8 +145,16 @@ def cmd_task_new(args: argparse.Namespace) -> int:
     for item in args.ask or []:
         key, _, value = item.partition("=")
         sheet_edits[f"{key}.ask"] = _flag(value)
+    # Заявку могла завести роль изнутри задачи — тогда владелец должен
+    # видеть в панели, что писал не он.
+    author = None
+    try:
+        author = find_task().task_id
+    except NotInTask:
+        pass
     request = {
         "id": uuid.uuid4().hex[:12],
+        "author": author,
         "chain": args.chain,
         "project_path": str(project),
         "text": text,

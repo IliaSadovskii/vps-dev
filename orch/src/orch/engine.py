@@ -154,6 +154,7 @@ class Engine:
                         backlog=bool(request.get("backlog")),
                         branch=request.get("branch"),
                         base=request.get("base"),
+                        author=request.get("author"),
                     )
                     self.db.event(task_id, "task_created", {"from": "inbox", "file": path.name})
             except (ChainError, KeyError, OSError) as exc:
@@ -202,6 +203,7 @@ class Engine:
         title: str | None = None,
         branch: str | None = None,
         base: str | None = None,
+        author: str | None = None,
     ) -> str:
         """Завести задачу.
 
@@ -231,8 +233,8 @@ class Engine:
         with self.db.tx():
             self.db.conn.execute(
                 "INSERT INTO task (id, chain, chain_yaml, title, text, project_path, branch, "
-                "group_path, step, status, human_sheet, base_branch, revision, created_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?)",
+                "group_path, step, status, human_sheet, base_branch, author, revision, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)",
                 (
                     task_id,
                     chain.name,
@@ -246,6 +248,7 @@ class Engine:
                     BACKLOG if backlog else QUEUED,
                     json.dumps(sheet, ensure_ascii=False),
                     base or None,
+                    author or None,
                     now(),
                 ),
             )

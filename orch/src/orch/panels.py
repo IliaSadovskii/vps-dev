@@ -113,6 +113,41 @@ def home_pane(db: Db, draft: dict | None = None, cost_warn: float = 5.0) -> dict
             }
         )
     if backlog:
+        children: list[dict] = []
+        for t in backlog[:MAX_TASKS]:
+            children.append(
+                {
+                    "kind": "row",
+                    "label": f"{t['id']} · {t['title']}",
+                    "sublabel": _who_filed(t),
+                    "value": t["branch"] or "",
+                    "mono": True,
+                }
+            )
+            # Кнопки отдельно, а строка не кликается: раньше нажатие по
+            # строке запускало задачу без спроса, и случайный тык уводил в
+            # работу, которую владелец не заказывал.
+            children.append(
+                {
+                    "kind": "columns",
+                    "children": [
+                        {
+                            "kind": "action",
+                            "label": "Запустить",
+                            "method": "orch.start",
+                            "variant": "primary",
+                            "params": {"task": t["id"], "revision": t["revision"]},
+                        },
+                        {
+                            "kind": "action",
+                            "label": "Закрыть",
+                            "method": "orch.close",
+                            "tooltip": "снять заявку и освободить её ветку",
+                            "params": {"task": t["id"], "revision": t["revision"]},
+                        },
+                    ],
+                }
+            )
         blocks.append(
             {
                 "kind": "section",
@@ -120,26 +155,10 @@ def home_pane(db: Db, draft: dict | None = None, cost_warn: float = 5.0) -> dict
                 "badges": [{"text": str(len(backlog))}],
                 "collapsible": True,
                 "collapsed": True,
-                "children": [
-                    {
-                        "kind": "row",
-                        "label": f"{t['id']} · {t['title']}",
-                        "sublabel": f"ветка {t['branch']}" if t["branch"] else "",
-                        "value": "Запустить",
-                        "method": "orch.start",
-                        "params": {"task": t["id"], "revision": t["revision"]},
-                        "badges": [
-                            {
-                                "text": "закрыть",
-                                "tone": "neutral",
-                                "tooltip": "снять заявку и освободить её ветку",
-                            }
-                        ],
-                    }
-                    for t in backlog[:MAX_TASKS]
-                ],
+                "children": children,
             }
         )
+
     if lost:
         blocks.append(
             {
@@ -208,6 +227,18 @@ def _footer(db: Db, waiting: list, running: list) -> dict:
     if running:
         return {"text": "едут", "value": str(len(running)), "tone": "info", "icon": "play"}
     return {"text": "тихо", "value": "0", "tone": "neutral"}
+
+
+def _who_filed(task) -> str:
+    """Кто завёл заявку: роль сама или владелец.
+
+    Роли имеют право заводить задачи в бэклог (`PLAN.md` §6), и в панели
+    такая заявка выглядит как своя. Владелец должен видеть, что писал не он.
+    """
+    author = task["author"] if "author" in task.keys() else None
+    if author:
+        return f"завела роль задачи {author} — вы это не писали"
+    return "завели вы"
 
 
 def _waiting_row(db: Db, task) -> dict:

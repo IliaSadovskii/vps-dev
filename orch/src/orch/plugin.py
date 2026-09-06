@@ -123,6 +123,7 @@ class Worker:
     def btn_again(self, session_id, params): self._move(params, "again")
     def btn_back(self, session_id, params): self._move(params, "back")
     def btn_start(self, session_id, params): self._move(params, "start")
+    def btn_close(self, session_id, params): self._move(params, "close")
 
     def btn_focus(self, session_id, params) -> None:
         """Строка ждущей задачи в общей панели: ничего не меняет, только жест."""

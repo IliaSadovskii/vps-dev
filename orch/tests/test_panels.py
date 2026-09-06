@@ -371,3 +371,22 @@ def _flat(blocks):
         for key in ("children",):
             if isinstance(b.get(key), list):
                 yield from _flat(b[key])
+
+
+def test_заявка_из_бэклога_не_запускается_щелчком_по_строке(engine, repo):
+    """Раньше строка целиком запускала задачу: случайный тык уводил в работу."""
+    from test_engine import monkey_chain
+
+    monkey_chain(engine)
+    engine.create_task(
+        chain_name="t", project_path=str(repo), text="заявка роли",
+        backlog=True, author="T7",
+    )
+    pane = panels.home_pane(engine.db)
+    строки = [b for b in _flat(pane["blocks"]) if b.get("kind") == "row"]
+    заявка = [r for r in строки if "заявка роли" in r["label"]][0]
+    assert "method" not in заявка, "строка бэклога не должна запускать задачу"
+    assert "завела роль задачи T7" in заявка["sublabel"]
+
+    методы = {a["method"] for a in _actions(pane)}
+    assert "orch.start" in методы and "orch.close" in методы
