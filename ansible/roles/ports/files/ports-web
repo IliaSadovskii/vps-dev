@@ -106,12 +106,16 @@ DB_RE='postgres|mysql|mariadb|mongo|redis|valkey'
 # <title> страницы — только как описание, на классификацию не влияет.
 http_title(){ curl -sL -m 3 "http://127.0.0.1:$1/" 2>/dev/null | grep -oiE '<title>[^<]*' | head -1 | sed -E 's/<title>//i; s/^[[:space:]]+//; s/[[:space:]]+$//'; }
 
-# строки: "port<TAB>group<TAB>name<TAB>desc<TAB>web(1/0)"
+# строки: "port|group|name|desc|web(1/0)|stand", разделитель — US (0x1f).
+# `group` — проект, `stand` — стенд внутри него: у `myapp-t16` это «t16», у
+# самого проекта пусто. Так у проекта одна секция, сколько бы задач ни шло
+# параллельно, а не по секции на аренду.
 rows=""
 for p in $(printf '%s\n' "${!PORT_IMAGE[@]}" | sort -un); do
-  img="${PORT_IMAGE[$p]}"; proj="${PORT_PROJECT[$p]:-}"; label="${PORT_LABEL[$p]:-}"
+  img="${PORT_IMAGE[$p]}"; proj="${PORT_PROJECT[$p]:-}"; label="${PORT_LABEL[$p]:-}"; stand=""
   if [[ -n "${INFRA_LABEL[$p]:-}" ]]; then group="инфраструктура"; name="${INFRA_LABEL[$p]}"; desc="${INFRA_DESC[$p]:-}"
-  elif [[ -n "$proj" ]];              then group="$proj";           name="${label:-сервис}"; desc=""
+  elif [[ -n "$proj" ]];              then group="${proj%-t[0-9]*}"; name="${label:-сервис}"; desc=""
+                                           stand="${proj#"${proj%-t[0-9]*}"}"; stand="${stand#-}"
   else                                     group="без реестра";     name="?"; desc="порт не застолблён (ports claim)"
   fi
   if grep -qiE "$DB_RE" <<<"$img"; then
@@ -121,7 +125,7 @@ for p in $(printf '%s\n' "${!PORT_IMAGE[@]}" | sort -un); do
   fi
   # Разделитель — US (0x1f), НЕ таб: таб пробельный, и read со IFS=$'\t'
   # схлопывает соседние табы, теряя пустые поля (пустой desc сдвигал бы web).
-  printf -v r '%s\x1f%s\x1f%s\x1f%s\x1f%s' "$p" "$group" "$name" "$desc" "$web"
+  printf -v r '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s' "$p" "$group" "$name" "$desc" "$web" "$stand"
   rows+="$r"$'\n'
 done
 # дашборд не docker-порт (его отдаёт tailscaled) — добавляем строку явно
@@ -133,10 +137,10 @@ rows+="$(printf '%s\x1f%s\x1f%s\x1f%s\x1f%s' "$DASH_PORT" "инфраструк�
 # INFRA_ORDER (у проектов ранга нет — все равны и сортируются по порту).
 # Ранг приписываем первым полем, сортируем и снимаем.
 ordered_rows(){
-  while IFS=$'\x1f' read -r p group name desc web; do
+  while IFS=$'\x1f' read -r p group name desc web stand; do
     [[ -n "$p" ]] || continue
-    printf '%03d\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
-      "${INFRA_RANK[$p]:-999}" "$p" "$group" "$name" "$desc" "$web"
+    printf '%03d\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+      "${INFRA_RANK[$p]:-999}" "$p" "$group" "$name" "$desc" "$web" "$stand"
   done <<<"$rows" | sort -t$'\x1f' -k6,6r -k1,1n -k2,2n | cut -d$'\x1f' -f2-
 }
 
@@ -343,6 +347,24 @@ cat <<HEAD
  .port{margin-top:auto;padding-top:.5rem;font-variant-numeric:tabular-nums;opacity:.45;font-size:.75rem}
  /* Внутренний сервис (база, кэш) наружу не отдан — карточка неактивна. */
  .card.int{opacity:.6;border-style:dashed;background:none}
+ /* Сервисы проекта — строками, а не карточками: их до десяти на проект, и
+    десять карточек 3×N вытесняли со страницы всё остальное. Строка — тот же
+    прямоугольник во всю ширину, попасть пальцем не сложнее. */
+ .rows{display:flex;flex-direction:column;gap:.3rem}
+ .stand{margin:.9rem 0 .35rem;font-size:.72rem;letter-spacing:.04em;text-transform:uppercase;opacity:.5}
+ .stand:first-child{margin-top:0}
+ .row{display:flex;align-items:center;gap:.6rem;padding:.5rem .7rem;border-radius:10px;
+      border:1px solid color-mix(in srgb,var(--accent) 20%,var(--line));
+      background:color-mix(in srgb,var(--accent) 4%,transparent);color:inherit;text-decoration:none}
+ a.row:hover{border-color:color-mix(in srgb,var(--accent) 60%,transparent);
+             background:color-mix(in srgb,var(--accent) 10%,transparent)}
+ .row .icon{font-size:1rem;line-height:1;flex:none}
+ .row .name{font-weight:600;flex:none}
+ a.row .name{color:var(--accent)}
+ .row .desc{opacity:.55;font-size:.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto}
+ .row .port{font-variant-numeric:tabular-nums;opacity:.45;font-size:.78rem;flex:none}
+ .row.int{opacity:.55;border-style:dashed;background:none}
+ @media(max-width:430px){.row .desc{display:none}}
  .infra{--accent:#2563eb}
  .proj{--accent:#0d9488}
  .nores{--accent:#f59e0b}
@@ -373,9 +395,39 @@ while IFS= read -r g; do
     "без реестра")    gclass=nores ;;
     *)                gclass=proj ;;
   esac
+  # Инфраструктура — карточками (их дюжина, они разные и нужны глазами),
+  # сервисы проекта — строками: их до десяти на проект, и десять карточек
+  # вытесняли со страницы всё остальное.
+  if [[ "$gclass" == "proj" ]]; then
+    printf '<section class="%s"><h2>%s</h2><div class="rows">\n' "$gclass" "$(esc <<<"$g")"
+    last_stand="__нет__"
+    while IFS=$'\x1f' read -r p group name desc web stand; do
+      [[ "$group" == "$g" ]] || continue
+      if [[ "$stand" != "$last_stand" ]]; then
+        if [[ -n "$stand" ]]; then
+          printf '  <div class="stand">задача %s</div>\n' "$(printf '%s' "$stand" | esc)"
+        else
+          printf '  <div class="stand">основной стенд</div>\n'
+        fi
+        last_stand="$stand"
+      fi
+      ename="$(printf '%s' "$name" | esc)"; edesc="$(printf '%s' "$desc" | esc)"
+      eicon="$(icon_for "$p" "$web" "$group" | esc)"
+      if [[ "$web" == 1 ]]; then
+        printf '  <a class="row" href="https://%s:%s/" target="_blank" rel="noopener"><span class="icon">%s</span><span class="name">%s</span><span class="desc">%s</span><span class="port">%s</span></a>\n' \
+          "$dnsname" "$p" "$eicon" "$ename" "$edesc" "$p"
+      else
+        printf '  <div class="row int"><span class="icon">%s</span><span class="name">%s</span><span class="desc">%s</span><span class="port">%s</span></div>\n' \
+          "$eicon" "$ename" "$edesc" "$p"
+      fi
+    done < <(ordered_rows | sort -t$'\x1f' -k6,6 -k1,1n)
+    printf '</div></section>\n'
+    continue
+  fi
+
   printf '<section class="%s"><h2>%s</h2><div class="grid">\n' "$gclass" "$(esc <<<"$g")"
   # внутри группы: сначала веб, по возрастанию порта
-  while IFS=$'\x1f' read -r p group name desc web; do
+  while IFS=$'\x1f' read -r p group name desc web stand; do
     [[ "$group" == "$g" ]] || continue
     ename="$(printf '%s' "$name" | esc)"; edesc="$(printf '%s' "$desc" | esc)"
     eicon="$(icon_for "$p" "$web" "$group" | esc)"
