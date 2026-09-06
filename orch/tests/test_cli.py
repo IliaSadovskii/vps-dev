@@ -246,3 +246,44 @@ def test_заявка_из_корня_проекта_не_подписана_ч�
     assert code == 0
     request = json.loads(next(inbox.glob("*.json")).read_text(encoding="utf-8"))
     assert request["author"] is None
+
+
+def test_gc_показывает_сирот_и_не_трогает_без_согласия(tmp_path, capsys, monkeypatch):
+    """Копия без живой задачи — сирота; удалять её молча нельзя."""
+    import sqlite3
+    import subprocess
+
+    import orch.cli as mod
+
+    project = tmp_path / "repo"
+    project.mkdir()
+    subprocess.run(["git", "init", "-q", "."], cwd=project, check=True)
+    (project / "f.txt").write_text("x", encoding="utf-8")
+    subprocess.run(["git", "add", "f.txt"], cwd=project, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "x"],
+        cwd=project, check=True,
+    )
+    сирота = tmp_path / "repo-orch" / "t1-x"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", str(сирота), "-b", "t1-x"],
+        cwd=project, check=True, capture_output=True,
+    )
+
+    db = tmp_path / "orch.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE task (id TEXT, project_path TEXT, worktree_path TEXT, archived_at TEXT)"
+    )
+    conn.execute("INSERT INTO task VALUES ('T1', ?, NULL, NULL)", (str(project),))
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(mod, "DB_PATH", db)
+
+    code, text = run(["gc"], capsys)
+    assert code == 0 and "t1-x" in text and "это показ" in text
+    assert сирота.exists(), "показ не должен ничего удалять"
+
+    code, text = run(["gc", "--yes"], capsys)
+    assert code == 0 and "убрана" in text
+    assert not сирота.exists()

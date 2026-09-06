@@ -821,3 +821,17 @@ def test_свободный_мастер_переиспользуется(engine
     """Пока мастер не занят задачей, второй раз его не плодим."""
     первый = engine.open_wizard(str(repo))
     assert engine.open_wizard(str(repo)) == первый
+
+
+def test_брошенная_задача_убирает_за_собой_копию(engine, fake, repo):
+    """Сессии удалили руками — ждать от задачи нечего, копия только занимает диск."""
+    task_id = start(engine, repo)
+    copy = Path(engine.db.task(task_id)["worktree_path"])
+    assert copy.is_dir()
+    fake.rows.clear()               # владелец удалил сессии
+    engine.reconcile()
+    assert engine.db.task(task_id)["status"] == "abandoned"
+    engine.reconcile()              # уборка на следующем проходе
+    task = engine.db.task(task_id)
+    assert task["archived_at"]
+    assert not copy.exists()

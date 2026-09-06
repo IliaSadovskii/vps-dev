@@ -472,6 +472,54 @@ def cmd_task_edit(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_gc(args: argparse.Namespace) -> int:
+    """Сироты на диске: рабочие копии, которым не соответствует живая задача.
+
+    Копию задачи убирает движок — при архиве и сразу, если задача брошена.
+    Но сессии удаляют руками, базу пересоздают, движок падает; тогда каталог
+    остаётся навсегда. Команда показывает такие каталоги и, с `--yes`,
+    убирает. Ветки не трогает никогда: в них работа.
+    """
+    from .workspace import remove_worktree
+
+    conn = _ro_db()
+    живые = {
+        row["worktree_path"]
+        for row in conn.execute(
+            "SELECT worktree_path FROM task WHERE worktree_path IS NOT NULL "
+            "AND archived_at IS NULL"
+        )
+    }
+    projects = {
+        row["project_path"]
+        for row in conn.execute("SELECT DISTINCT project_path FROM task")
+        if row["project_path"]
+    }
+    сироты: list[tuple[str, Path]] = []
+    for project in sorted(projects):
+        base = Path(project).parent / f"{Path(project).name}-orch"
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob(".git")):
+            copy = path.parent
+            if str(copy) in живые:
+                continue
+            сироты.append((project, copy))
+    if not сироты:
+        print("сирот нет: все рабочие копии принадлежат живым задачам")
+        return 0
+    for project, copy in сироты:
+        size = sum(f.stat().st_size for f in copy.rglob("*") if f.is_file()) // 1024 // 1024
+        print(f"{copy}  ~{size} МиБ  (проект {project})")
+    if not args.yes:
+        print("\nэто показ; чтобы убрать — `orch gc --yes`. Ветки не трогаются.")
+        return 0
+    for project, copy in сироты:
+        error = remove_worktree(project, copy)
+        print(f"{copy}: {'убрана' if not error else 'осталась — ' + error[:120]}")
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Что должно работать, чтобы движок ехал."""
     import shutil
@@ -663,6 +711,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("branches", help="ветки проекта и кто их занял")
     p.add_argument("--project")
     p.set_defaults(func=cmd_branches)
+
+    p = sub.add_parser("gc", help="рабочие копии, которым не соответствует живая задача")
+    p.add_argument("--yes", action="store_true", help="убрать найденное, а не только показать")
+    p.set_defaults(func=cmd_gc)
 
     p = sub.add_parser("doctor", help="проверить окружение")
     p.set_defaults(func=cmd_doctor)

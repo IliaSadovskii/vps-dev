@@ -522,10 +522,29 @@ class Engine:
                 self.db.event(task["id"], "started", {"step": chain.first.id})
 
     def archive_old(self) -> None:
-        """Через `ARCHIVE_AFTER_H` после Done сессии задачи уходят в архив."""
+        """Через `ARCHIVE_AFTER_H` после Done сессии задачи уходят в архив.
+
+        Брошенная задача убирается сразу: её сессий уже нет (владелец удалил
+        их руками или AoE потерял), ждать от них нечего, а рабочая копия
+        занимает диск и держит ветку. Ветку не трогаем никогда — в ней работа.
+        """
         import time
 
         from .db import epoch
+
+        for task in self.db.tasks((ABANDONED,)):
+            if task["archived_at"]:
+                continue
+            error = ""
+            if task["worktree_path"] and Path(task["worktree_path"]).is_dir():
+                error = remove_worktree(task["project_path"], task["worktree_path"])
+            with self.db.tx():
+                self.db.bump(task["id"], archived_at=now())
+                self.db.event(
+                    task["id"],
+                    "abandoned_cleaned",
+                    {"worktree_removed": not error, "error": error[:300]},
+                )
 
         for task in self.db.tasks((ST_DONE,)):
             if task["archived_at"] or not task["closed_at"]:
