@@ -14,6 +14,7 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 from _common import (  # noqa: E402
     archive,
+    key,
     create,
     drop_branch,
     main_guard,
@@ -46,7 +47,7 @@ def one(agent: str, model: str, branch: str) -> tuple[bool, list[str]]:
             worktree_enabled=True,
             worktree_branch=branch,
             create_new_branch=True,
-            idempotency_key=f"spike1/{agent}",
+            idempotency_key=key(f"spike1/{agent}"),
         )
         sid = s["id"]
         root = s.get("project_path")

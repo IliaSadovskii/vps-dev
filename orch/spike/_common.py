@@ -19,6 +19,15 @@ GROUP = "orch-test"
 TRIAL = "/projects/kandev-trial"
 DAEMON_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin"
 
+# Метка прогона в ключе идемпотентности: без неё повторный запуск проверки
+# получил бы старую сессию (AoE отдаёт её по ключу даже после архива), а с
+# ней — мёртвый воркер и удалённую рабочую копию.
+RUN = str(int(time.time()))
+
+
+def key(name: str) -> str:
+    return f"{name}/{RUN}"
+
 
 class HttpError(Exception):
     def __init__(self, status: int, body: str):
@@ -151,8 +160,9 @@ def now_iso() -> str:
 
 
 def archive(sid: str) -> None:
+    # Маршрут архива — PATCH с телом; POST отвечает 405.
     try:
-        call("POST", f"/api/sessions/{sid}/archive", {})
+        call("PATCH", f"/api/sessions/{sid}/archive", {"archived": True})
     except HttpError:
         pass
 
@@ -173,7 +183,7 @@ def write_task_dir(root: str | Path, task: str, current: dict) -> Path:
     return path
 
 
-def git(*args: str, cwd: str | Path = TRIAL) -> str:
+def git(*args: str, cwd: str | Path = TRIAL) -> str:  # noqa: D401
     out = subprocess.run(
         ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=60
     )
@@ -181,17 +191,30 @@ def git(*args: str, cwd: str | Path = TRIAL) -> str:
 
 
 def drop_branch(branch: str) -> None:
-    """Убрать worktree и ветку прогона; `main` полигона не трогаем."""
+    """Убрать рабочую копию и ветку прогона; `main` полигона не трогаем.
+
+    Каталог worktree AoE держит под замком, поэтому сначала снимаем замок и
+    удаляем каталог, и только потом ветку: удалить ветку, оставив каталог,
+    значит сломать следующий прогон («Worktree already exists»).
+    """
     if branch in ("main", "master", ""):
         return
+
+    def run(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=TRIAL, capture_output=True, text=True)
+
     for line in git("worktree", "list", "--porcelain").splitlines():
-        pass
-    subprocess.run(
-        ["git", "worktree", "prune"], cwd=TRIAL, capture_output=True, text=True
-    )
-    subprocess.run(
-        ["git", "branch", "-D", branch], cwd=TRIAL, capture_output=True, text=True
-    )
+        if not line.startswith("worktree "):
+            continue
+        path = line.split(" ", 1)[1]
+        if not path.startswith("/projects/kandev-trial-worktrees/"):
+            continue
+        head = git("rev-parse", "--abbrev-ref", "HEAD", cwd=path)
+        if head == branch or path.rsplit("/", 1)[-1] == branch:
+            run("worktree", "unlock", path)
+            run("worktree", "remove", "--force", path)
+    run("worktree", "prune")
+    run("branch", "-D", branch)
 
 
 def report(name: str, ok: bool, lines: list[str]) -> int:

@@ -151,6 +151,12 @@ def test_нет_сигнала(engine, fake, repo):
     sid = session_of(engine, task_id)
     fake.finish_turn(sid)          # ход кончился, сигнала нет
     engine.reconcile()
+    # Первый раз движок сам просит закончить и подать сигнал.
+    assert "подай сигнал" in fake.prompts[-1][1]
+    assert engine.db.task(task_id)["status"] == RUNNING
+
+    fake.finish_turn(sid)          # роль снова молчит
+    engine.reconcile()
     task = engine.db.task(task_id)
     assert task["status"] == WAITING and task["wait_reason"] == "no_signal"
     assert fake.urgent[sid] is True
@@ -170,7 +176,16 @@ def test_артефакта_нет_сигнал_не_принимается(engi
     signals.write_done(ws_of(engine, task_id).signals, "one", 1, None)
     fake.finish_turn(sid)
     engine.reconcile()
-    assert engine.db.task(task_id)["wait_reason"] == "no_signal"
+    # Сигнал был, файла нет — это не «нет сигнала», причина другая.
+    assert engine.db.task(task_id)["wait_reason"] == "artifact"
+
+
+def test_четыре_состояния_после_рестарта_idle_сначала_просит_закончить(engine, fake, repo):
+    """`Idle` без сигнала — сначала просьба закончить, остановка потом."""
+    task_id = start(engine, repo)
+    fake.finish_turn(session_of(engine, task_id))
+    engine.reconcile()
+    assert engine.db.task(task_id)["status"] == RUNNING
 
 
 def test_исход_не_из_списка(engine, fake, repo):
@@ -236,7 +251,7 @@ def test_падение_между_транзакцией_и_созданием_
     "status, worker, ждём",
     [
         ("Running", "running", RUNNING),   # ждём, ничего не делаем
-        ("Idle", "running", WAITING),      # ход кончился без сигнала
+        ("Idle", "running", RUNNING),      # без сигнала: сначала просим закончить
         ("Error", "running", RUNNING),     # первый раз «продолжай»
         ("Stopped", "absent", RUNNING),    # воркер умер — будим промптом
     ],
@@ -378,6 +393,32 @@ def test_continue_продолжает_сессию_того_же_агента(e
     engine.reconcile()
     # Шаг three с `context: continue` не создаёт новую сессию.
     assert session_of(engine, task_id) == sid
+
+
+def test_continue_берёт_сессию_убранную_из_живых(engine, fake, repo):
+    """Сессия предыдущего шага может быть уже не в `state=live`.
+
+    В AoE нет `GET /api/sessions/{id}`, а полный список отдаёт и архив;
+    движок обязан её найти, иначе `continue` молча заводит чистую сессию и
+    роль теряет память.
+    """
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    sid = session_of(engine, task_id)
+    turn(engine, fake, task_id, "two", 1, "ok")
+    fake.archived.append(sid)          # сессия ушла из живых
+    task = engine.db.task(task_id)
+    engine.button(task_id, task["revision"], "accept")
+    engine.reconcile()
+    assert session_of(engine, task_id) == sid
+
+
+def test_исчезнувшая_из_живых_но_живая_сессия_не_брошена(engine, fake, repo):
+    task_id = start(engine, repo)
+    sid = session_of(engine, task_id)
+    fake.archived.append(sid)
+    engine.reconcile()
+    assert engine.db.task(task_id)["status"] == RUNNING
 
 
 def test_заявка_из_inbox_становится_задачей(engine, fake, repo, tmp_path, monkeypatch):

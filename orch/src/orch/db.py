@@ -29,6 +29,55 @@ def now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def epoch(value: str | None) -> float | None:
+    """Наше время в секунды эпохи. `time.mktime` тут неверен: он считает
+    строку местным временем, а мы пишем UTC."""
+    if not value:
+        return None
+    import datetime
+
+    try:
+        return datetime.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+class EngineLock:
+    """Один движок на машину.
+
+    Воркер плагина и запущенный руками `orch-plugin --no-rpc` пишут в одну
+    базу; два писателя нарушают главное правило (`PLAN.md` §2, правило 1) и
+    ведут одну задачу дважды. Замок — flock на файле рядом с базой: он
+    снимается сам, когда процесс умирает, поэтому «забытый замок» невозможен.
+    """
+
+    def __init__(self, path: Path | str = DB_PATH) -> None:
+        self.path = Path(str(path) + ".lock")
+        self.fh = None
+
+    def acquire(self) -> bool:
+        import fcntl
+
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.fh = self.path.open("w")
+        try:
+            fcntl.flock(self.fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            self.fh.close()
+            self.fh = None
+            return False
+        import os
+
+        self.fh.write(f"{os.getpid()}\n")
+        self.fh.flush()
+        return True
+
+    def release(self) -> None:
+        if self.fh:
+            self.fh.close()
+            self.fh = None
+
+
 class Db:
     def __init__(self, path: Path | str = DB_PATH) -> None:
         self.path = Path(path)
@@ -140,18 +189,16 @@ class Db:
         )
         return cur.lastrowid
 
-    def end_run(self, run_id: int, outcome: str | None, end_sha: str | None) -> None:
+    def end_run(
+        self, run_id: int, outcome: str | None, end_sha: str | None, signalled: bool = False
+    ) -> None:
         row = self.conn.execute("SELECT started_at FROM run WHERE id = ?", (run_id,)).fetchone()
-        duration = None
-        if row and row["started_at"]:
-            try:
-                started = time.mktime(time.strptime(row["started_at"], "%Y-%m-%dT%H:%M:%SZ"))
-                duration = max(0.0, time.mktime(time.gmtime()) - started)
-            except ValueError:
-                duration = None
+        started = epoch(row["started_at"]) if row else None
+        duration = max(0.0, time.time() - started) if started else None
         self.conn.execute(
-            "UPDATE run SET ended_at = ?, outcome = ?, end_sha = ?, duration_s = ? WHERE id = ?",
-            (now(), outcome, end_sha, duration, run_id),
+            "UPDATE run SET ended_at = ?, outcome = ?, end_sha = ?, duration_s = ?, "
+            "signalled = ? WHERE id = ?",
+            (now(), outcome, end_sha, duration, int(signalled), run_id),
         )
 
     def sessions_of_task(self, task_id: str) -> list[str]:

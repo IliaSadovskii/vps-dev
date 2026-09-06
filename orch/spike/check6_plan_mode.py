@@ -17,6 +17,7 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 from _common import (  # noqa: E402
     archive,
+    key,
     call,
     create,
     drop_branch,
@@ -54,7 +55,7 @@ def run() -> int:
             worktree_branch=BRANCH,
             create_new_branch=True,
             yolo_mode=False,
-            idempotency_key="spike6/main",
+            idempotency_key=key("spike6/main"),
         )
         sid = s["id"]
         root = s["project_path"]

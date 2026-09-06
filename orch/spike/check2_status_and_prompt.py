@@ -15,6 +15,7 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 from _common import (  # noqa: E402
     archive,
+    key,
     call,
     create,
     drop_branch,
@@ -43,7 +44,7 @@ def run() -> int:
             worktree_enabled=True,
             worktree_branch=BRANCH,
             create_new_branch=True,
-            idempotency_key="spike2/main",
+            idempotency_key=key("spike2/main"),
         )
         sid = s["id"]
         lines.append(f"создана {sid}, статус {s.get('status')}, копия {s.get('project_path')}")

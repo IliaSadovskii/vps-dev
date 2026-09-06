@@ -15,6 +15,7 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 from _common import (  # noqa: E402
     archive,
+    key,
     create,
     drop_branch,
     main_guard,
@@ -40,7 +41,7 @@ def run() -> int:
             worktree_enabled=True,
             worktree_branch=BRANCH,
             create_new_branch=True,
-            idempotency_key="spike3/a",
+            idempotency_key=key("spike3/a"),
         )
         ids.append(a["id"])
         b = create(
@@ -51,7 +52,7 @@ def run() -> int:
             worktree_enabled=True,
             worktree_branch=BRANCH,
             create_new_branch=False,
-            idempotency_key="spike3/b",
+            idempotency_key=key("spike3/b"),
         )
         ids.append(b["id"])
         pa, pb = a.get("project_path"), b.get("project_path")
@@ -69,7 +70,7 @@ def run() -> int:
             worktree_enabled=True,
             worktree_branch=BRANCH,
             create_new_branch=False,
-            idempotency_key="spike3/c",
+            idempotency_key=key("spike3/c"),
         )
         ids.append(c["id"])
         pc = c.get("project_path")

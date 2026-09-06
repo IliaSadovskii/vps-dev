@@ -37,7 +37,15 @@ WAIT_REASONS = {
     "bad_outcome": "роль назвала исход не из списка",
     "chain_broken": "замороженная цепочка не читается",
     "path_mismatch": "рабочая копия сессии не совпала с задачей",
+    "no_worker": "у сессии не поднялся воркер агента",
+    "artifact": "роль сдала ход, но её файла нет или он не той формы",
+    "abandoned": "сессия задачи исчезла",
 }
+
+# Пробуждение уснувшего воркера: сколько раз пробуем и сколько ждём после
+# отправки промпта, прежде чем считать воркер уснувшим.
+WAKE_LIMIT = 3
+WAKE_GRACE_S = 30.0
 
 
 @dataclass
@@ -222,14 +230,13 @@ class Engine:
         """Через `ARCHIVE_AFTER_H` после Done сессии задачи уходят в архив."""
         import time
 
+        from .db import epoch
+
         for task in self.db.tasks((ST_DONE,)):
             if task["archived_at"] or not task["closed_at"]:
                 continue
-            try:
-                closed = time.mktime(time.strptime(task["closed_at"], "%Y-%m-%dT%H:%M:%SZ"))
-            except ValueError:
-                continue
-            if (time.mktime(time.gmtime()) - closed) / 3600 < ARCHIVE_AFTER_H:
+            closed = epoch(task["closed_at"])
+            if closed is None or (time.time() - closed) / 3600 < ARCHIVE_AFTER_H:
                 continue
             for sid in self.db.sessions_of_task(task["id"]):
                 self.aoe.archive(sid)
@@ -245,9 +252,15 @@ class Engine:
             self.stop(task["id"], "max_runs")
             return
 
-        ws = self.workspace(task)
-        ws.ensure(task["text"], task["chain_yaml"])
-        start_sha = ws.head() if ws.root.exists() else None
+        # Рабочей копии задачи может ещё не быть: её создаёт первая сессия.
+        # Тогда файлы задачи пишутся сразу после создания сессии и всё равно
+        # до промпта — роль не увидит полузаписанного состояния.
+        if task["worktree_path"]:
+            ws = self.workspace(task)
+            ws.ensure(task["text"], task["chain_yaml"])
+            start_sha = ws.head()
+        else:
+            start_sha = None
 
         with self.db.tx():
             run_id = self.db.start_run(task["id"], step.id, step.context, start_sha)
@@ -257,8 +270,15 @@ class Engine:
         if session is None:
             return
 
-        ws = self.workspace(task)  # путь мог появиться вместе с worktree
+        task = self.db.task(task["id"])   # worktree_path появился вместе с сессией
+        ws = self.workspace(task)
         ws.ensure(task["text"], task["chain_yaml"])
+        if start_sha is None:
+            start_sha = ws.head()
+            with self.db.tx():
+                self.db.conn.execute(
+                    "UPDATE run SET start_sha = ? WHERE id = ?", (start_sha, run_id)
+                )
         ws.write_current(
             step.id, run["n"], session.id, "running", task["branch"], list(step.reads)
         )
@@ -294,12 +314,14 @@ class Engine:
             if prev and prev["session_id"]:
                 session = self.aoe.session(prev["session_id"])
                 if session:
-                    if prev["step"] != step.id or True:
-                        self.switch_model(task, step, session)
+                    self.switch_model(task, chain, step, prev, session)
                     return session
 
         first = _first_session_run(self.db, task["id"])
-        key = f"{task['id']}/{step.id}/{run['n']}"
+        # Ключ идемпотентности — задача/шаг/заход плюс время создания задачи.
+        # Без времени пересозданная база наткнулась бы на старую сессию с тем
+        # же именем и получила её вместе с мёртвым воркером.
+        key = f"{task['id']}@{task['created_at']}/{step.id}/{run['n']}"
         try:
             session = self.aoe.create(
                 path=task["project_path"],
@@ -329,16 +351,23 @@ class Engine:
                 self.db.bump(task["id"], worktree_path=session.project_path)
         return session
 
-    def switch_model(self, task, step: Step, session: Session) -> None:
-        """Другая модель того же агента при `continue`; отказ — едем на прежней."""
-        current = session.raw.get("acp_agent_model") or session.raw.get("agent_model")
-        if current and current == step.model:
+    def switch_model(self, task, chain: Chain, step: Step, prev, session: Session) -> None:
+        """Другая модель того же агента при `continue`; отказ — едем на прежней.
+
+        Какая модель стоит в сессии, AoE в строке сессии не сообщает, поэтому
+        сравниваем с моделью шага, который эту сессию завёл.
+        """
+        try:
+            was = chain.step(prev["step"]).model
+        except ChainError:
+            was = None
+        if was == step.model:
             return
         ok = self.aoe.set_model(session.id, step.model)
         self.db.event(
             task["id"],
             "model_switch",
-            {"session": session.id, "want": step.model, "ok": ok},
+            {"session": session.id, "was": was, "want": step.model, "ok": ok},
         )
 
     # ── наблюдение за ходом ──────────────────────────────────────────────
@@ -366,7 +395,9 @@ class Engine:
             return
 
         if session.status == STOPPED or session.worker_state in ("absent", "stopped"):
-            # Воркер умер: промпт — сам путь пробуждения (спайк 2).
+            # Воркер умер: промпт — сам путь пробуждения (спайк 2). Но если
+            # адаптер упал ещё на `session/new`, будить нечего: сессия так и
+            # останется без воркера, поэтому попыток не больше трёх.
             if not session.turn_ended(run["prompt_sent_at"]):
                 self.wake(task, run, session)
                 return
@@ -379,6 +410,7 @@ class Engine:
         session = self.attach_session(task, chain, step, run)
         if session is None:
             return
+        task = self.db.task(task["id"])
         ws = self.workspace(task)
         ws.ensure(task["text"], task["chain_yaml"])
         ws.write_current(step.id, run["n"], session.id, "running", task["branch"], list(step.reads))
@@ -431,7 +463,26 @@ class Engine:
             self.stop(task["id"], "error", urgent=True)
 
     def wake(self, task, run, session: Session) -> None:
-        self.db.event(task["id"], "worker_wake", {"session": session.id})
+        """Разбудить уснувший воркер промптом. Не больше `WAKE_LIMIT` раз."""
+        from .aoe import parse_time
+
+        sent = parse_time(run["prompt_sent_at"])
+        if sent and _epoch_now() - sent < WAKE_GRACE_S:
+            return          # воркер ещё поднимается после создания сессии
+        tried = self.db.conn.execute(
+            "SELECT COUNT(*) c FROM event WHERE task_id = ? AND kind = 'worker_wake' "
+            "AND payload LIKE ?",
+            (task["id"], f'%"run": {run["id"]}%'),
+        ).fetchone()["c"]
+        if tried >= WAKE_LIMIT:
+            self.db.event(
+                task["id"],
+                "wake_gave_up",
+                {"run": run["id"], "session": session.id, "tries": tried},
+            )
+            self.stop(task["id"], "no_worker", urgent=True)
+            return
+        self.db.event(task["id"], "worker_wake", {"run": run["id"], "session": session.id})
         try:
             self.aoe.prompt(session.id, "Продолжай с места остановки и закончи ход `orch done`.")
         except AoeError as exc:
@@ -444,13 +495,13 @@ class Engine:
         end_sha = ws.head()
 
         if signal is None:
-            self.end_without_signal(task, step, run, ws, end_sha)
+            self.end_without_signal(task, step, run, ws, end_sha, session)
             return
 
         outcome = signal.get("outcome")
         if step.single_next is None and outcome not in step.next:
             with self.db.tx():
-                self.db.end_run(run["id"], None, end_sha)
+                self.db.end_run(run["id"], None, end_sha, signalled=True)
                 self.db.bump(task["id"], status=ST_WAITING, wait_reason="bad_outcome")
                 self.db.event(task["id"], "bad_outcome", {"outcome": outcome, "step": step.id})
             self.mark_stopped(task, session.id)
@@ -459,8 +510,8 @@ class Engine:
         problems = art.check_all(ws.artifacts, step.artifact)
         if problems:
             with self.db.tx():
-                self.db.end_run(run["id"], None, end_sha)
-                self.db.bump(task["id"], status=ST_WAITING, wait_reason="no_signal")
+                self.db.end_run(run["id"], None, end_sha, signalled=True)
+                self.db.bump(task["id"], status=ST_WAITING, wait_reason="artifact")
                 self.db.event(task["id"], "artifact_missing", {"problems": problems})
             self.mark_stopped(task, session.id)
             return
@@ -468,9 +519,11 @@ class Engine:
         cost, _ = self.aoe.usage(session.id)
         ws.save_history(step.id, run["n"], run["start_sha"])
         sha = _artifact_sha(ws, step)
+        # У шага с одним переходом исхода нет — не пиши «outcome:None».
+        trigger = f"outcome:{outcome}" if outcome else "signal"
 
         with self.db.tx():
-            self.db.end_run(run["id"], outcome, end_sha)
+            self.db.end_run(run["id"], outcome, end_sha, signalled=True)
             if cost is not None:
                 self.db.conn.execute(
                     "UPDATE run SET cost_usd = ? WHERE id = ?", (cost, run["id"])
@@ -478,7 +531,7 @@ class Engine:
             if self.gates_on(task, step, outcome):
                 revision = self.db.bump(task["id"], status=ST_WAITING, wait_reason="gate")
                 self.db.move(
-                    task["id"], step.id, step.id, "agent", f"outcome:{outcome}", revision,
+                    task["id"], step.id, step.id, "agent", trigger, revision,
                     artifact_sha=sha,
                 )
                 self.db.event(task["id"], "gate", {"step": step.id, "outcome": outcome})
@@ -491,14 +544,14 @@ class Engine:
                         task["id"], status=ST_DONE, step=None, closed_at=now()
                     )
                     self.db.move(
-                        task["id"], step.id, DONE, "agent", f"outcome:{outcome}", revision,
+                        task["id"], step.id, DONE, "agent", trigger, revision,
                         artifact_sha=sha,
                     )
                     self.db.event(task["id"], "done", {})
                 else:
                     revision = self.db.bump(task["id"], step=target)
                     self.db.move(
-                        task["id"], step.id, target, "agent", f"outcome:{outcome}", revision,
+                        task["id"], step.id, target, "agent", trigger, revision,
                         artifact_sha=sha,
                     )
         if gated:
@@ -507,7 +560,32 @@ class Engine:
             row = self.db.task(task["id"])
             self.aoe.set_color(session.id, "green" if row["status"] == ST_DONE else "amber")
 
-    def end_without_signal(self, task, step: Step, run, ws: Workspace, end_sha: str | None) -> None:
+    def end_without_signal(
+        self, task, step: Step, run, ws: Workspace, end_sha: str | None, session: Session
+    ) -> None:
+        """Ход кончился без сигнала.
+
+        Один раз просим закончить автоматически — роль часто просто забыла
+        последнюю команду (`PLAN.md` §5 п. 4). Второй раз задача встаёт.
+        """
+        nudged = self.db.conn.execute(
+            "SELECT COUNT(*) c FROM event WHERE task_id = ? AND kind = 'auto_continue' "
+            "AND payload LIKE ?",
+            (task["id"], f'%"run": {run["id"]}%'),
+        ).fetchone()["c"]
+        if not nudged:
+            self.db.event(task["id"], "auto_continue", {"run": run["id"], "step": step.id})
+            try:
+                self.aoe.prompt(
+                    session.id,
+                    "Ход закончился без сигнала. Заверши работу и подай сигнал: "
+                    "последнее действие — `orch done`. Если закончить нечем, "
+                    "запиши в `## Не решено`, чего не хватает.",
+                )
+                return
+            except AoeError:
+                pass
+
         last = signals.latest(ws.signals, step.id, run["n"])
         ws.save_history(step.id, run["n"], run["start_sha"])
         with self.db.tx():
@@ -688,15 +766,19 @@ class Engine:
         return text, hashlib.sha256(text.encode()).hexdigest(), [c["id"] for c in comments]
 
     def path_steps(self, task_id: str) -> list[str]:
+        """Путь задачи по шагам; повторный вход в шаг помечен `⟲`."""
         steps = [
             m["to_step"]
             for m in reversed(self.db.moves(task_id, limit=40))
             if m["to_step"] and m["to_step"] != DONE
         ]
         out: list[str] = []
+        seen: set[str] = set()
         for s in steps:
-            if not out or out[-1] != s:
-                out.append(s)
+            if out and out[-1].lstrip("⟲ ") == s:
+                continue
+            out.append(f"⟲ {s}" if s in seen else s)
+            seen.add(s)
         return out
 
     def came_from(self, task, step: Step, run) -> str:
@@ -720,11 +802,11 @@ class Engine:
         if not prev or not prev["ended_at"]:
             return []
         import os
-        import time
 
-        try:
-            cutoff = time.mktime(time.strptime(prev["ended_at"], "%Y-%m-%dT%H:%M:%SZ"))
-        except ValueError:
+        from .db import epoch
+
+        cutoff = epoch(prev["ended_at"])
+        if cutoff is None:
             return []
         out = []
         for name in step.reads:
@@ -766,6 +848,12 @@ class Engine:
 
 
 # ── свободные функции ────────────────────────────────────────────────────
+def _epoch_now() -> float:
+    import time
+
+    return time.time()
+
+
 def _first_session_run(db: Db, task_id: str):
     return db.conn.execute(
         "SELECT * FROM run WHERE task_id = ? AND session_id IS NOT NULL ORDER BY id LIMIT 1",

@@ -75,13 +75,32 @@ class Session:
 
         Сразу после `POST /acp/prompt` статус несколько секунд остаётся
         прежним `Idle` (спайк 2), поэтому одного `Idle` мало: нужно, чтобы в
-        него вошли позже отправки промпта.
+        него вошли позже отправки промпта. Времена сравниваются числами:
+        AoE отдаёт RFC3339 с долями секунды и `+00:00`, мы пишем `...Z` — как
+        строки они сравниваются неверно.
         """
         if self.status != IDLE:
             return False
         if not prompt_sent_at:
             return True
-        return bool(self.idle_entered_at and self.idle_entered_at > prompt_sent_at)
+        entered = parse_time(self.idle_entered_at)
+        sent = parse_time(prompt_sent_at)
+        if entered is None or sent is None:
+            return False
+        return entered > sent
+
+
+def parse_time(value: str | None) -> float | None:
+    """RFC3339 в секунды эпохи. `...Z`, `+00:00` и доли секунды — всё одно."""
+    if not value:
+        return None
+    import datetime
+
+    text = value.strip().replace("Z", "+00:00")
+    try:
+        return datetime.datetime.fromisoformat(text).timestamp()
+    except ValueError:
+        return None
 
 
 class Aoe:
@@ -114,10 +133,21 @@ class Aoe:
         return {s["id"]: Session.of(s) for s in data.get("sessions", [])}
 
     def session(self, sid: str) -> Session | None:
+        """Одна сессия, включая заархивированную.
+
+        Маршрута `GET /api/sessions/{id}` в AoE нет — только `PATCH` и
+        `DELETE`. Поэтому ищем в полном списке: без `state=live` он отдаёт и
+        архив, а именно там оказывается сессия предыдущего шага, когда её
+        успели убрать из живых.
+        """
         try:
-            return Session.of(self.call("GET", f"/api/sessions/{sid}"))
+            data = self.call("GET", "/api/sessions")
         except AoeError:
             return None
+        for raw in data.get("sessions", []):
+            if raw.get("id") == sid:
+                return Session.of(raw)
+        return None
 
     def usage(self, sid: str) -> tuple[float | None, float | None]:
         """Стоимость и длительность последнего хода из событий `UsageUpdated`.
@@ -202,7 +232,7 @@ class Aoe:
             self.call(
                 "POST",
                 f"/api/sessions/{sid}/acp/config-option",
-                {"option_id": "model", "value": model},
+                {"config_id": "model", "value": model},
             )
             return True
         except AoeError:
@@ -237,7 +267,9 @@ class Aoe:
             pass
 
     def archive(self, sid: str) -> None:
-        self._quiet("POST", f"/api/sessions/{sid}/archive", {})
+        # Именно PATCH с телом: POST на этот маршрут отвечает 405 и молча
+        # ничего не архивирует.
+        self._quiet("PATCH", f"/api/sessions/{sid}/archive", {"archived": True})
 
     def answer_question(self, sid: str, nonce: str, answers: dict) -> bool:
         try:

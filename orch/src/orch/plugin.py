@@ -14,7 +14,7 @@ import threading
 import time
 from pathlib import Path
 
-from .db import Db
+from .db import Db, EngineLock
 from .engine import Engine, Settings
 from .rpc import Rpc, RpcError, log
 
@@ -215,6 +215,14 @@ class Worker:
         self.push_all()
 
     def start_engine(self) -> None:
+        self.lock = EngineLock()
+        if not self.lock.acquire():
+            log(
+                "orch-plugin: движок уже занят другим процессом — этот воркер "
+                "рисует панели, но задачи не двигает"
+            )
+            self.engine = None
+            return
         self.engine = Engine(
             Db(),
             settings=Settings(
@@ -231,6 +239,10 @@ def run_standalone(poll_secs: float) -> int:
 
     Тот же `reconcile`, что и в воркере, — отдельного кода нет.
     """
+    lock = EngineLock()
+    if not lock.acquire():
+        log("orch-plugin: движок уже запущен другим процессом; выхожу")
+        return 1
     engine = Engine(Db())
     log(f"orch-plugin: движок без панели, опрос {poll_secs} с")
     try:
@@ -244,6 +256,10 @@ def run_standalone(poll_secs: float) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if "--once" in args:
+        lock = EngineLock()
+        if not lock.acquire():
+            log("orch-plugin: движок уже запущен другим процессом; выхожу")
+            return 1
         Engine(Db()).reconcile()
         return 0
     if "--no-rpc" in args:

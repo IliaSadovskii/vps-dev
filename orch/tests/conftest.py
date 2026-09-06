@@ -37,9 +37,15 @@ class FakeAoe:
 
     # чтение
     def sessions(self) -> dict[str, Session]:
-        return {sid: Session.of(raw) for sid, raw in self.rows.items()}
+        """Только живые: заархивированные из списка пропадают, как в AoE."""
+        return {
+            sid: Session.of(raw)
+            for sid, raw in self.rows.items()
+            if sid not in self.archived
+        }
 
     def session(self, sid: str) -> Session | None:
+        """Одна сессия, включая заархивированную."""
         raw = self.rows.get(sid)
         return Session.of(raw) if raw else None
 

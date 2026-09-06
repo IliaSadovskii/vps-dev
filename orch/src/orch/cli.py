@@ -207,7 +207,12 @@ def cmd_task_show(args: argparse.Namespace) -> int:
     for run in conn.execute(
         "SELECT * FROM run WHERE task_id = ? ORDER BY id", (args.task,)
     ):
-        outcome = run["outcome"] or ("нет сигнала" if run["ended_at"] else "идёт")
+        outcome = run["outcome"]
+        if not outcome:
+            if not run["ended_at"]:
+                outcome = "идёт"
+            else:
+                outcome = "сдан" if run["signalled"] else "нет сигнала"
         cost = f"  ${run['cost_usd']:.2f}" if run["cost_usd"] else ""
         dur = f"  {run['duration_s']:.0f} с" if run["duration_s"] else ""
         print(f"  {run['step']:<18} заход {run['n']}  {outcome}{dur}{cost}")
@@ -286,7 +291,7 @@ def cmd_stats(args: argparse.Namespace) -> int:
     for step, runs in sorted(by_step.items()):
         with_task = len({r["task_id"] for r in runs})
         per_task = len(runs) / max(1, with_task)
-        silent = sum(1 for r in runs if r["ended_at"] and not r["outcome"])
+        silent = sum(1 for r in runs if r["ended_at"] and not r["signalled"])
         share = silent / max(1, len(runs))
         durations = sorted(r["duration_s"] for r in runs if r["duration_s"])
         median = durations[len(durations) // 2] if durations else 0

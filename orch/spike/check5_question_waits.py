@@ -22,6 +22,7 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 from _common import (  # noqa: E402
     archive,
+    key,
     call,
     create,
     drop_branch,
@@ -46,14 +47,21 @@ ASK = (
 
 
 def find_elicitation(sid: str) -> dict | None:
-    """Найти висящий вопрос в сыром транскрипте: нужен nonce и ключи формы."""
+    """Найти висящий вопрос в сыром транскрипте: нужен nonce и ключи формы.
+
+    Сырые события лежат под ключом `frames` (не `rows` и не `events`), а
+    сам вопрос — в `event.ElicitationRequested.elicitation`.
+    """
     data = call("GET", f"/api/sessions/{sid}/acp/replay?view=raw&limit=200")
-    events = data if isinstance(data, list) else data.get("events", data.get("rows", []))
-    for ev in reversed(events):
-        blob = json.dumps(ev, ensure_ascii=False)
-        if "nonce" in blob and "licitation" in blob:
-            return ev
-    return None
+    frames = data.get("frames", []) if isinstance(data, dict) else data
+    pending = None
+    for frame in frames:
+        event = frame.get("event") or {}
+        if "ElicitationRequested" in event:
+            pending = event["ElicitationRequested"]["elicitation"]
+        elif "ElicitationResolved" in event:
+            pending = None
+    return pending
 
 
 def start() -> int:
@@ -65,7 +73,7 @@ def start() -> int:
         worktree_enabled=True,
         worktree_branch=BRANCH,
         create_new_branch=True,
-        idempotency_key="spike5/main",
+        idempotency_key=key("spike5/main"),
     )
     sid = s["id"]
     sent = now_iso()
@@ -99,13 +107,19 @@ def finish(min_wait_s: float = 600.0) -> int:
         if not ev:
             lines.append("не нашёл nonce вопроса в сыром транскрипте")
             return report("5 (вопрос ждёт, ответ через API)", False, lines)
-        blob = json.dumps(ev, ensure_ascii=False)
-        lines.append(f"событие вопроса: {blob[:400]}")
-        nonce = _dig(ev, "nonce")
-        keys = _form_keys(ev)
-        lines.append(f"nonce {nonce}, ключи формы {keys}")
-
-        answers = {k: "красный" for k in keys} or {"question_0": "красный"}
+        nonce = ev.get("nonce")
+        questions = ev.get("questions") or []
+        lines.append(
+            f"nonce {nonce}, вопрос «{ev.get('message')}», "
+            f"поля {[q.get('field_key') for q in questions]}"
+        )
+        answers = {}
+        for q in questions:
+            if q.get("kind") == "free_text":
+                continue          # свободные поля оставляем пустыми
+            options = q.get("options") or []
+            if options:
+                answers[q["field_key"]] = options[0]["value"]
         sent = now_iso()
         resp = call(
             "POST",
