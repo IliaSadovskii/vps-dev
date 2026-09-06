@@ -46,6 +46,10 @@ BUTTON_LABELS = {
     "start": "Запустить",
 }
 
+# Причины, где «принять как есть» — это выбор исхода владельцем: роль либо не
+# назвала исход, либо назвала тот, что ведёт по кругу (`PLAN.md` §5 п. 4, 7).
+PICK_OUTCOME_REASONS = ("no_signal", "max_runs", "bad_outcome")
+
 
 # ── главная панель ───────────────────────────────────────────────────────
 def home_pane(db: Db, draft: dict | None = None, cost_warn: float = 5.0) -> dict:
@@ -568,6 +572,23 @@ def _buttons(db: Db, task) -> list[dict]:
     chain = _chain(task)
     actions: list[dict] = []
     for action in BUTTONS_BY_REASON.get(reason, ("again",)):
+        if action == "accept_as_is" and reason in PICK_OUTCOME_REASONS:
+            # Не «повторить прошлый исход», а «выберите, каким считать ход»:
+            # прошлый исход у предела заходов как раз и ведёт по кругу.
+            for outcome, target in _outcomes_of(chain, task).items():
+                actions.append(
+                    {
+                        "kind": "action",
+                        "label": f"Принять как «{outcome}» → {target}",
+                        "method": "orch.accept_as_is",
+                        "params": {
+                            "task": task["id"],
+                            "revision": task["revision"],
+                            "target": outcome,
+                        },
+                    }
+                )
+            continue
         if action == "back":
             if not chain or not task["step"]:
                 continue
@@ -599,6 +620,18 @@ def _buttons(db: Db, task) -> list[dict]:
             }
         )
     return [{k: v for k, v in a.items() if v is not None} for a in actions]
+
+
+def _outcomes_of(chain: Chain | None, task) -> dict[str, str]:
+    if not chain or not task["step"]:
+        return {}
+    try:
+        step = chain.step(task["step"])
+    except ChainError:
+        return {}
+    if step.single_next is not None:
+        return {"дальше": step.single_next}
+    return dict(step.next)
 
 
 def _trail(db: Db, task, chain: Chain) -> str:

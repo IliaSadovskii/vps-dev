@@ -474,3 +474,15 @@ def test_заявка_из_inbox_становится_задачей(engine, fak
     engine.reconcile()
     assert [t["text"] for t in engine.db.tasks()] == ["из заявки"]
     assert not list(inbox.glob("*.json"))
+
+
+def test_роли_подагентов_берутся_из_текста_роли(engine, repo):
+    """Маска по имени шага не находит `sub-review-*` для шага `code-review`."""
+    from orch.chain import chains_dir, load
+
+    deep = load(chains_dir() / "deep.yml")
+    paths = engine.sub_prompts(deep.step("code-review"))
+    names = sorted(p.rsplit("/", 1)[-1] for p in paths)
+    assert names == ["sub-review-defects.md", "sub-review-security.md"]
+    # У шага без подагентов список пуст.
+    assert engine.sub_prompts(deep.step("scoping")) == []

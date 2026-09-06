@@ -650,9 +650,17 @@ class Engine:
         return handler(task, chain, target, comment)
 
     def _btn_accept(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
+        """Принять ход владельцем.
+
+        `target` — исход, который владелец выбрал сам («принять как есть» на
+        пределе заходов или после хода без сигнала). Без него берём исход,
+        которым роль закончила.
+        """
         step = chain.step(task["step"])
         last = self.db.last_run_of_step(task["id"], step.id)
         outcome = target or (last["outcome"] if last else None)
+        if outcome == "дальше":
+            outcome = None
         to = step.target(outcome) or step.target(None)
         if to is None:
             return "не понял, каким исходом принимать: назовите исход"
@@ -894,9 +902,24 @@ class Engine:
         return out
 
     def sub_prompts(self, step: Step) -> list[str]:
+        """Пути к ролям подагентов, которые называет сама роль шага.
+
+        Угадывать по имени шага нельзя: шаг `code-review` пользуется файлами
+        `sub-review-defects.md` и `sub-review-security.md`, и никакая маска по
+        имени шага их не находит. Роль называет их прямо в своём тексте —
+        оттуда и берём, тогда список не разъедется с промптом.
+        """
+        import re
+
         from .chain import prompts_dir
 
-        return [str(p) for p in sorted(prompts_dir().glob(f"sub-{step.id.split('-')[0]}*.md"))]
+        role = prompts_dir() / f"{step.prompt_file}.md"
+        try:
+            text = role.read_text(encoding="utf-8")
+        except OSError:
+            return []
+        names = sorted(set(re.findall(r"\bsub-[a-z0-9-]+\.md\b", text)))
+        return [str(prompts_dir() / n) for n in names if (prompts_dir() / n).exists()]
 
 
 # ── свободные функции ────────────────────────────────────────────────────

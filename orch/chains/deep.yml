@@ -76,6 +76,7 @@ steps:
     artifact: [review.md, review-defects.md, review-security.md]
     next:
       findings: review-fixes
+      tests: implementation     # находка про тесты: их правит только Реализация
       clean: pr
     human: { ask: false }
     limits: { max_runs: 3 }

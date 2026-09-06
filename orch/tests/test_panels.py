@@ -221,3 +221,22 @@ def test_прикреплённый_комментарий_виден_в_пан�
     )
     assert "Комментарий к следующему движению" in blocks_text(pane)
     assert "Верни одну строку." in blocks_text(pane)
+
+
+def test_на_пределе_заходов_владелец_выбирает_исход(engine, fake, repo):
+    """«Принять как есть» не повторяет прошлый исход: он и ведёт по кругу."""
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "back")
+    turn(engine, fake, task_id, "one", 2, None)
+    turn(engine, fake, task_id, "two", 2, "back")
+    turn(engine, fake, task_id, "one", 3, None)
+    assert engine.db.task(task_id)["wait_reason"] == "max_runs"
+
+    labels = [a["label"] for a in _actions(panels.home_pane(engine.db))]
+    assert "Принять как «ok» → three" in labels
+    assert "Принять как «back» → one" in labels
+
+    task = engine.db.task(task_id)
+    engine.button(task_id, task["revision"], "accept_as_is", target="ok")
+    assert engine.db.task(task_id)["step"] == "three"
