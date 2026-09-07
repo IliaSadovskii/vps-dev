@@ -146,7 +146,7 @@ ordered_rows(){
 
 # --- веб-сервисы, которые надо отдать наружу -------------------------------
 web_ports=()
-while IFS=$'\x1f' read -r p group name desc web; do
+while IFS=$'\x1f' read -r p group name desc web stand; do
   [[ "$web" == 1 && "$p" != "$DASH_PORT" ]] && web_ports+=("$p")
 done <<<"$rows"
 
