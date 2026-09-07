@@ -223,6 +223,33 @@ def create_worktree(project: Path | str, branch: str, base: str = "") -> tuple[P
     return path, ""
 
 
+def is_project_root(path: str | Path) -> bool:
+    """Корень проекта, а не рабочая копия задачи.
+
+    У копии, сделанной `git worktree add`, `.git` — файл со ссылкой на общий
+    каталог, у настоящего корня — каталог. Без этой проверки список проектов
+    зарастает копиями прошлых задач: они тоже сессии со своим `project_path`.
+    """
+    return (Path(path) / ".git").is_dir()
+
+
+def projects_on_disk(projects_dir: str | Path) -> list[str]:
+    """Репозитории первого уровня в каталоге проектов.
+
+    Нужен и мастеру (когда проект ещё не выбран), и панели (строки «завести»).
+    Рабочие копии задач (`<repo>-orch`, `<repo>-worktrees`) отсеиваются сами:
+    у них `.git` — файл, а не каталог.
+    """
+    base = Path(str(projects_dir or "")).expanduser()
+    if not base.is_dir():
+        return []
+    try:
+        items = sorted(base.iterdir())
+    except OSError:
+        return []
+    return [str(p) for p in items if p.is_dir() and is_project_root(p)]
+
+
 def has_remote(project: Path | str) -> bool:
     return bool(git(project, "remote"))
 

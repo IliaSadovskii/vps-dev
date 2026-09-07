@@ -13,17 +13,15 @@ import queue
 import sys
 import threading
 import time
-from pathlib import Path
 
 from . import panels
-from .chain import ChainError, chains_dir, load as load_chain
-from .engine import _title_from as _title_of
+from .aoe import BASE, Aoe
 from .db import Db, EngineLock
 from .engine import Engine, Settings
 from .rpc import Rpc, RpcError, log
+from .workspace import is_project_root as _is_project_root, projects_on_disk
 
 PLUGIN_ID = "dev.sadovskii.orch"
-STATE_DIR = Path.home() / ".local" / "share" / "orch"
 
 
 class Worker:
@@ -44,13 +42,18 @@ class Worker:
         # следующего опроса.
         self.pending: queue.Queue[tuple[str, str, dict]] = queue.Queue()
         self.wake = threading.Event()
+        # Смена настроек приходит тем же чужим потоком — тоже откладывается
+        # до `tick`. Строка состояния отдаётся из последней перерисовки:
+        # ответ хосту нужен сразу, а базу из этого потока трогать нельзя.
+        self.settings_dirty = threading.Event()
+        self.status_text = "orch: движок ещё не запущен"
 
     # ── входящие вызовы хоста ────────────────────────────────────────────
     def handle(self, method: str, params: dict):
         tail = method.rsplit(".", 1)[-1]
         if method == "plugin.settings.changed":
-            self.read_settings()
-            self.push_all(force=True)
+            self.settings_dirty.set()
+            self.wake.set()
             return {}
         if tail == "new":
             self.on_action("wizard", {"session_id": params.get("session_id") or ""})
@@ -60,7 +63,7 @@ class Worker:
             if command.endswith("new"):
                 self.on_action("wizard", {"session_id": params.get("session_id") or ""})
                 return {"ok": True, "message": "мастер задачи открывается"}
-            return {"ok": True, "message": self.status_line()}
+            return {"ok": True, "message": self.status_text}
         if method.startswith("orch."):
             self.on_action(tail, params)
             return {}
@@ -68,6 +71,7 @@ class Worker:
         return NotImplemented
 
     def status_line(self) -> str:
+        """Строка для палитры. Только из потока движка: читает базу."""
         if self.engine is None:
             return "orch: панели рисую, задачи двигает другой процесс"
         db = self.engine.db
@@ -107,7 +111,7 @@ class Worker:
             self.notify("orch", "движок ведёт другой процесс", tone="warn")
             return
         task_id = params["task"]
-        comment = params.get("comment") or self.comments.pop(task_id, None)
+        comment = params.get("comment") or None
         answer = self.engine.button(
             task_id, params["revision"], action, params.get("target"), comment
         )
@@ -214,8 +218,6 @@ class Worker:
 
     @property
     def base_url(self) -> str:
-        from .aoe import BASE
-
         return str(self.settings.get("aoe_url") or BASE).rstrip("/")
 
     def ui_set(self, slot: str, ident: str, payload: dict, session_id: str | None = None) -> None:
@@ -242,6 +244,7 @@ class Worker:
 
     # ── перерисовка ──────────────────────────────────────────────────────
     def push_all(self, force: bool = False) -> None:
+        self.status_text = self.status_line()
         if self.engine is None:
             self.ui_set("home-pane", "tasks", _no_engine_pane())
             return
@@ -308,8 +311,7 @@ class Worker:
         читаем ещё каталог проектов (настройка `projects_dir`).
         """
         out: list[str] = []
-        for root in self.projects_on_disk():
-            out.append(root)
+        out.extend(self.projects_on_disk())
         if self.engine is not None:
             for row in self.engine.db.conn.execute(
                 "SELECT DISTINCT project_path FROM task WHERE project_path IS NOT NULL"
@@ -323,20 +325,7 @@ class Worker:
         return sorted(out)
 
     def projects_on_disk(self) -> list[str]:
-        """Репозитории первого уровня в каталоге проектов.
-
-        Рабочие копии задач (`<repo>-orch`, `<repo>-worktrees`) отсеиваются
-        сами: у них `.git` — файл, а не каталог.
-        """
-        base = Path(str(self.settings.get("projects_dir") or "")).expanduser()
-        if not base.is_dir():
-            return []
-        try:
-            items = sorted(base.iterdir())
-        except OSError as exc:
-            log(f"orch-plugin: каталог проектов {base} не читается: {exc!r}")
-            return []
-        return [str(p) for p in items if p.is_dir() and _is_project_root(str(p))]
+        return projects_on_disk(str(self.settings.get("projects_dir") or ""))
 
     def _project_of_session(self, session_id: str) -> str | None:
         for row in self.sessions_now():
@@ -379,12 +368,14 @@ class Worker:
         self.engine = self._new_engine()
 
     def _new_engine(self) -> Engine:
-        from .aoe import Aoe
-
         settings = self._settings_object()
         return Engine(Db(), Aoe(self.base_url), settings)
 
     def tick(self) -> None:
+        if self.settings_dirty.is_set():
+            self.settings_dirty.clear()
+            self.read_settings()
+            self.drawn.clear()
         if self.engine is None:
             # Замок мог освободиться: движок из терминала выключили.
             if self.lock and self.lock.acquire():
@@ -400,17 +391,6 @@ class Worker:
         except Exception as exc:  # noqa: BLE001 — воркер не падает от одной задачи
             log(f"orch-plugin: проход движка упал: {exc!r}")
         self.push_all(force=clicked)
-
-
-def _is_project_root(path: str) -> bool:
-    """Корень проекта, а не рабочая копия задачи.
-
-    У копии, сделанной `git worktree add`, `.git` — файл со ссылкой на общий
-    каталог, у настоящего корня — каталог. Без этой проверки список проектов
-    зарастает копиями прошлых задач: они тоже сессии со своим `project_path`.
-    """
-    root = Path(path)
-    return (root / ".git").is_dir()
 
 
 def _next_knobs(after: bool, ask: bool) -> tuple[bool, bool]:
