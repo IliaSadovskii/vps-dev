@@ -82,6 +82,14 @@ type = "string"
 default = "/projects"
 
 [[settings]]
+key = "cheap_model"
+label = "Модель служебных ходов"
+description = "Чем убирать стенд закрытой задачи — там нечего решать, нужна самая дешёвая."
+type = "string"
+default = "haiku"
+advanced = true
+
+[[settings]]
 key = "default_chain"
 label = "Цепочка по умолчанию"
 type = "string"

@@ -35,6 +35,10 @@ from .workspace import (
 INBOX = Path.home() / ".local" / "share" / "orch" / "inbox"
 GROUP_ROOT = "orch"
 ARCHIVE_AFTER_H = 168
+# Сколько ждём уборщика стенда, прежде чем убрать самим. Пятнадцати минут
+# хватает на `docker compose down` даже с тяжёлыми томами; дольше ждать —
+# значит держать порты и контейнеры за закрытой задачей.
+TEARDOWN_GRACE_MIN = 15
 
 # Причины остановки. Код лежит в `task.wait_reason`, текст рисует панель.
 WAIT_REASONS = {
@@ -67,6 +71,8 @@ class Settings:
     default_chain: str = "deep"
     aoe_url: str = ""
     projects_dir: str = "/projects"
+    # Модель для служебных ходов, где думать не о чем: уборка стенда.
+    cheap_model: str = "haiku"
 
 
 class Engine:
@@ -88,6 +94,7 @@ class Engine:
             self.db.event(None, "aoe_unreachable", {"error": str(exc)})
             return
         self.adopt_wizards(sessions)
+        self.watch_teardown()
         for row in self.db.tasks(LIVE):
             try:
                 self.step_task(row, sessions)
@@ -155,9 +162,15 @@ class Engine:
                     )
                     self.db.event(request["task"], "button_from_cli", {"answer": answer})
                 elif kind == "stand":
-                    self.stand_result(
-                        request["task"], request.get("port"), request.get("error")
-                    )
+                    if request.get("gone"):
+                        row = self.db.task(request["task"])
+                        if row is not None:
+                            # Слово уборщика проверяем: блок должен быть отдан.
+                            self.watch_teardown()
+                    else:
+                        self.stand_result(
+                            request["task"], request.get("port"), request.get("error")
+                        )
                 elif kind == "edit_text":
                     self.edit_text(request["task"], request["text"])
                 elif kind == "wizard":
@@ -544,6 +557,10 @@ class Engine:
             if task["archived_at"]:
                 continue
             self.drop_stand(task)
+            if task["stand_teardown"] or self.db.task(task["id"])["stand_teardown"]:
+                # Уборщик стенда работает в этой копии — снесём её на
+                # следующем проходе, когда он закончит.
+                continue
             error = ""
             if task["worktree_path"] and Path(task["worktree_path"]).is_dir():
                 error = remove_worktree(task["project_path"], task["worktree_path"])
@@ -562,6 +579,8 @@ class Engine:
             if closed is None or (time.time() - closed) / 3600 < ARCHIVE_AFTER_H:
                 continue
             self.drop_stand(task)
+            if self.db.task(task["id"])["stand_teardown"]:
+                continue
             for sid in self.db.sessions_of_task(task["id"]):
                 self.aoe.archive(sid)
             # Рабочую копию убирает движок: AoE о ней не знает. Ветку не
@@ -1142,19 +1161,101 @@ class Engine:
                 self.db.event(task_id, "stand_ready", {"port": port})
 
     def drop_stand(self, task) -> None:
-        """Погасить стенд задачи и вернуть блок портов.
+        """Позвать роль убрать стенд. Ждать её движок не будет вечно.
 
-        Зовётся, когда задача больше не живая: закрыта, доведена до конца или
-        брошена. Стенд, переживший задачу, держит порты и тома, а найти его
-        потом некому.
+        Гасит не движок: стенд мог подняться не только докером, и что именно
+        поднялось, знает тот, кто поднимал (записка `stand.md`). Но уборка
+        обязана случиться, поэтому за ролью следит `watch_teardown`: не
+        справилась за `TEARDOWN_GRACE_MIN` — движок добивает сам.
         """
+        from .chain import prompts_dir
+
         name = task["stand"] if "stand" in task.keys() else None
-        if not name:
+        if not name or task["stand_teardown"]:
             return
-        error = stands.down(task, name)
+        prompt = prompts_dir() / "role-stand-down.md"
+        text = prompt.read_text(encoding="utf-8") if prompt.exists() else ""
+        text += "\n\n" + self.teardown_context(task, name)
+        session = None
+        try:
+            session = self.aoe.create(
+                path=task["worktree_path"] or task["project_path"],
+                agent="claude",
+                model=self.settings.cheap_model,
+                effort=None,
+                title=f"{task['id']} · уборка стенда",
+                group=task["group_path"] or f"{GROUP_ROOT}/{task['id']}",
+                idempotency_key=f"{task['id']}@{task['created_at']}/teardown/{uuid.uuid4().hex[:8]}",
+            )
+            self.aoe.apply_model(session.id, self.settings.cheap_model)
+            self.aoe.prompt(session.id, text)
+        except AoeError as exc:
+            self.db.event(task["id"], "teardown_failed", {"stage": "session", "error": str(exc)})
+            # Сессии нет — убираем сами, тянуть нечего.
+            self.force_drop_stand(task, name, "сессия уборщика не создалась")
+            return
         with self.db.tx():
-            self.db.bump(task["id"], stand=None, stand_port=None, stand_session=None)
-            self.db.event(task["id"], "stand_down", {"name": name, "error": error[:300]})
+            self.db.bump(
+                task["id"], stand_teardown=session.id, stand_teardown_at=now(), stand_port=None
+            )
+            self.db.event(
+                task["id"], "teardown_started", {"name": name, "session": session.id}
+            )
+
+    def teardown_context(self, task, name: str) -> str:
+        """Что уборщику нужно знать: блок, копия, где записка стенда."""
+        ports = stands.ports_of(name)
+        root = task["worktree_path"] or task["project_path"]
+        note = Path(root) / ".orch" / task["id"] / "artifacts" / "stand.md"
+        lines = [
+            "# Блок задачи",
+            "",
+            f"Задача {task['id']}: {task['title']} — закрыта, убираем за ней.",
+            f"Имя блока портов: `{name}`",
+            f"Рабочая копия: `{root}`",
+            f"Записка стенда, если она есть: `{note}`",
+        ]
+        if ports:
+            lines.append("Порты блока: " + ", ".join(str(v) for v in sorted(ports.values())))
+        return "\n".join(lines)
+
+    def watch_teardown(self) -> None:
+        """Проверить за уборщиком и добить, если он не справился."""
+        import time
+
+        from .db import epoch
+
+        rows = self.db.conn.execute(
+            "SELECT * FROM task WHERE stand_teardown IS NOT NULL"
+        ).fetchall()
+        for task in rows:
+            name = task["stand"]
+            if not name or stands.gone(name):
+                self.finish_teardown(task, "убрано")
+                continue
+            started = epoch(task["stand_teardown_at"])
+            if started is None or (time.time() - started) / 60 < TEARDOWN_GRACE_MIN:
+                continue
+            self.force_drop_stand(task, name, "уборщик не успел")
+
+    def force_drop_stand(self, task, name: str, why: str) -> None:
+        """Добить уборку самим: команды `ports`, без агента."""
+        error = stands.down(task, name)
+        self.db.event(
+            task["id"], "teardown_forced", {"name": name, "why": why, "error": error[:300]}
+        )
+        self.finish_teardown(task, "добито движком")
+
+    def finish_teardown(self, task, how: str) -> None:
+        """Уборка закончена: сессию в архив, поля стенда очищены."""
+        if task["stand_teardown"]:
+            self.aoe.archive(task["stand_teardown"])
+        with self.db.tx():
+            self.db.bump(
+                task["id"], stand=None, stand_port=None, stand_session=None,
+                stand_teardown=None, stand_teardown_at=None,
+            )
+            self.db.event(task["id"], "teardown_done", {"how": how})
 
     def _btn_accept(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
         """Принять ход владельцем.

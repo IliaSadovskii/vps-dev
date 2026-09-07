@@ -482,7 +482,10 @@ def cmd_stand(args: argparse.Namespace) -> int:
         "task": task.task_id,
         "at": signals.now(),
     }
-    if args.action == "ready":
+    if args.action == "gone":
+        request["gone"] = True
+        message = f"стенд задачи {task.task_id} убран"
+    elif args.action == "ready":
         if not args.port:
             raise Refused("назовите порт: orch stand ready 8020")
         request["port"] = int(args.port)
@@ -755,7 +758,7 @@ def build_parser() -> argparse.ArgumentParser:
         "stand",
         help="роль «Стенд»: сообщить адрес поднятого окружения или причину отказа",
     )
-    p.add_argument("action", choices=["ready", "failed"])
+    p.add_argument("action", choices=["ready", "failed", "gone"])
     p.add_argument("port", nargs="?", type=int, help="порт для «ready»")
     p.add_argument("--reason", help="одной строкой, что мешает (для «failed»)")
     p.set_defaults(func=cmd_stand)

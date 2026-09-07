@@ -184,6 +184,7 @@ class Worker:
         "default_chain": "deep",
         "aoe_url": "",
         "projects_dir": "/projects",
+        "cheap_model": "haiku",
     }
 
     def read_settings(self) -> None:
@@ -208,6 +209,7 @@ class Worker:
             default_chain=str(self.settings.get("default_chain", "deep")),
             aoe_url=str(self.settings.get("aoe_url") or ""),
             projects_dir=str(self.settings.get("projects_dir") or "/projects"),
+            cheap_model=str(self.settings.get("cheap_model") or "haiku"),
         )
 
     @property

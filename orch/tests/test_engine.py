@@ -884,9 +884,18 @@ def test_стенд_поднимает_роль_а_движок_даёт_ей_п
 
     assert "8020" in json.dumps(panels.task_pane(engine.db, task, "s9", "http://x"), ensure_ascii=False)
 
+    # Закрытие задачи зовёт уборщика, а не гасит само.
+    name = task["stand"]
     engine.button(task_id, task["revision"], "close")
-    assert downs == [task["stand"]]
-    assert engine.db.task(task_id)["stand"] is None
+    task = engine.db.task(task_id)
+    assert task["stand_teardown"], "уборку должна делать роль"
+    assert downs == [], "движок не гасит, пока уборщик работает"
+
+    # Уборщик отдал блок — движок это увидел и закрыл вопрос.
+    monkeypatch.setattr(stands, "gone", lambda n: n == name)
+    engine.watch_teardown()
+    task = engine.db.task(task_id)
+    assert task["stand"] is None and task["stand_teardown"] is None
 
 
 def test_роль_стенда_сообщает_о_неудаче(engine, fake, repo, monkeypatch):
@@ -920,3 +929,59 @@ def test_заказанный_стенд_поднимается_к_ворота�
     task = engine.db.task(task_id)
     assert task["status"] == "waiting" and task["wait_reason"] == "gate"
     assert task["stand_session"], "к воротам стенд должен уже подниматься"
+
+
+def test_движок_добивает_уборку_если_роль_не_справилась(engine, fake, repo, monkeypatch):
+    """Стенд обязан погаснуть: агент — предпочтительный путь, но не единственный."""
+    from orch import stand as stands
+
+    monkeypatch.setattr(stands, "claim", lambda task: (stands.name_of(task), ""))
+    monkeypatch.setattr(stands, "ports_of", lambda name: {"APP_PORT": 8020})
+    monkeypatch.setattr(stands, "gone", lambda name: False)
+    downs = []
+    monkeypatch.setattr(stands, "down", lambda task, name: downs.append(name) or "")
+
+    task_id = start(engine, repo)
+    task = engine.db.task(task_id)
+    engine.button(task_id, task["revision"], "stand")
+    engine.stand_result(task_id, 8020, None)
+    task = engine.db.task(task_id)
+    name = task["stand"]
+    engine.button(task_id, task["revision"], "close")
+
+    engine.watch_teardown()                      # уборщик ещё в силе — ждём
+    assert downs == []
+
+    with engine.db.tx():                         # прошло больше отпущенного
+        engine.db.bump(task_id, stand_teardown_at="2020-01-01T00:00:00Z")
+    engine.watch_teardown()
+    assert downs == [name]
+    task = engine.db.task(task_id)
+    assert task["stand"] is None and task["stand_teardown"] is None
+    kinds = [e["kind"] for e in engine.db.events(task_id, limit=6)]
+    assert "teardown_forced" in kinds
+
+
+def test_копия_живёт_пока_убирают_стенд(engine, fake, repo, monkeypatch):
+    """Уборщик работает в этой копии: снести её раньше — оставить стенд живым."""
+    from orch import stand as stands
+
+    monkeypatch.setattr(stands, "claim", lambda task: (stands.name_of(task), ""))
+    monkeypatch.setattr(stands, "ports_of", lambda name: {"APP_PORT": 8020})
+    monkeypatch.setattr(stands, "gone", lambda name: False)
+    monkeypatch.setattr(stands, "down", lambda task, name: "")
+
+    task_id = start(engine, repo)
+    copy = Path(engine.db.task(task_id)["worktree_path"])
+    task = engine.db.task(task_id)
+    engine.button(task_id, task["revision"], "stand")
+    fake.rows.clear()                       # сессии удалили — задача брошена
+    engine.reconcile()
+    assert engine.db.task(task_id)["status"] == "abandoned"
+    engine.reconcile()
+    assert copy.is_dir(), "копию нельзя сносить, пока уборщик в ней работает"
+
+    monkeypatch.setattr(stands, "gone", lambda name: True)
+    engine.reconcile()                      # уборщик отчитался
+    engine.reconcile()                      # теперь можно и копию
+    assert not copy.exists()

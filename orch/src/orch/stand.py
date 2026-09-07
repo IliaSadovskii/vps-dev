@@ -113,3 +113,20 @@ def down(task, name: str) -> str:
     if out.returncode != 0 and "нет закреплённого блока" not in (out.stdout + out.stderr):
         errors.append((out.stdout + out.stderr).strip()[-300:])
     return "; ".join(errors)
+
+
+def alive(name: str) -> bool:
+    """Блок ещё за кем-то числится или на его портах кто-то слушает."""
+    out = _run([PORTS, "which", name], timeout=30)
+    if out.returncode != 0:
+        return False
+    listening = _run(["ss", "-ltnH"], timeout=30).stdout
+    for port in ports_of(name).values():
+        if f"127.0.0.1:{port}" in listening:
+            return True
+    return True
+
+
+def gone(name: str) -> bool:
+    """Блок отдан: за именем больше ничего не числится."""
+    return _run([PORTS, "which", name], timeout=30).returncode != 0
