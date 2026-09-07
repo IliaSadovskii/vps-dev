@@ -132,7 +132,7 @@ cmd_claim(){
     base="$(file_base "$f")"; base="${base:-?}"
     # Блок уже есть, но пустой (так бывает после старого claim без имён) —
     # дописываем набор, раз его наконец знаем.
-    local have; have="$(port_lines "$f" | cut -d= -f1 | grep -vx 'BASE_PORT' | wc -l)"
+    local have; have="$(port_lines "$f" | cut -d= -f1 | grep -cvx 'BASE_PORT')"
     if (( ${#vars[@]} && have == 0 )); then
       local i=0 v
       for v in "${vars[@]}"; do echo "$v=$((base + i))" >> "$f"; i=$((i+1)); done
