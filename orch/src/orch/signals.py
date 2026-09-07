@@ -10,14 +10,11 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-import time
 from pathlib import Path
 
-KINDS = ("done", "ask", "note", "refused")
+from .clock import now  # noqa: F401 — команда `orch` берёт отметку отсюда
 
-
-def now() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+KINDS = ("done", "note", "refused")
 
 
 def done_path(signals: Path, step: str, run: int) -> Path:

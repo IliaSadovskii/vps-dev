@@ -1,6 +1,6 @@
 """CLI `orch`: для ролей внутри сессии и для владельца.
 
-Роли зовут `done`, `ask`, `note`, `whoami`, `push`, `task new`. База в
+Роли зовут `done`, `note`, `whoami`, `push`, `task new`. База в
 сессиях не открывается (`PLAN.md` §2, правило 1): команда пишет файлы в папке
 задачи и заявки в `~/.local/share/orch/inbox/`. Все тексты по-русски: их
 читают роли и владелец.
@@ -10,19 +10,23 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
+import shutil
+import sqlite3
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 import uuid
 from pathlib import Path
 
 from . import artifacts, signals
-from .chain import ChainError, load as load_chain
-from .taskdir import NotInTask, TaskDir, find_task
-
-INBOX = Path.home() / ".local" / "share" / "orch" / "inbox"
-DB_PATH = Path.home() / ".local" / "share" / "orch" / "orch.db"
+from .aoe import hooks_dir
+from .chain import ChainError, catalog, chains_dir, load as load_chain
+from .branchref import recent
+from .db import DB_PATH, INBOX
+from .taskdir import NotInTask, TaskDir, find_task, git_toplevel
+from .workspace import remove_worktree
 
 
 class Refused(Exception):
@@ -92,13 +96,6 @@ def cmd_done(args: argparse.Namespace) -> int:
     named = f" с исходом {outcome}" if outcome else ""
     print(f"ход сдан{named}. Сигнал: {path}")
     print("Дальше двигает движок; правки владельца после остановки вноси в свой файл.")
-    return 0
-
-
-def cmd_ask(args: argparse.Namespace) -> int:
-    task = find_task()
-    signals.write_aux(task.signals, "ask", task.step, task.run, args.text)
-    print("вопрос записан, задача встала и ждёт владельца")
     return 0
 
 
@@ -197,8 +194,6 @@ def _author_here(project: Path) -> str | None:
 
 def _ro_db():
     """База только на чтение: единственный писатель — движок."""
-    import sqlite3
-
     if not DB_PATH.exists():
         raise Refused(f"базы нет: {DB_PATH}. Движок ещё ни разу не запускался?")
     conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=10)
@@ -261,10 +256,8 @@ def cmd_task_show(args: argparse.Namespace) -> int:
 
 def cmd_log(args: argparse.Namespace) -> int:
     conn = _ro_db()
-    seen = 0
 
     def show(limit: int, after: int) -> int:
-        nonlocal seen
         sql = "SELECT * FROM event WHERE seq > ?"
         params: list = [after]
         if args.task:
@@ -417,8 +410,6 @@ def cmd_gate(args: argparse.Namespace) -> int:
 
 def cmd_chains(args: argparse.Namespace) -> int:
     """Какие цепочки есть — мастеру, чтобы показать владельцу выбор."""
-    from .chain import catalog
-
     for item in catalog():
         if item.get("error"):
             print(f"{item['name']}: не читается — {item['error']}")
@@ -432,8 +423,6 @@ def cmd_chains(args: argparse.Namespace) -> int:
 
 def cmd_branches(args: argparse.Namespace) -> int:
     """Свежие ветки проекта с пометкой, какие заняты живыми задачами."""
-    from .branchref import recent
-
     project = Path(args.project).resolve() if args.project else _project_here()
     conn = _ro_db()
     busy = {
@@ -511,10 +500,8 @@ def cmd_gc(args: argparse.Namespace) -> int:
     остаётся навсегда. Команда показывает такие каталоги и, с `--yes`,
     убирает. Ветки не трогает никогда: в них работа.
     """
-    from .workspace import remove_worktree
-
     conn = _ro_db()
-    живые = {
+    alive = {
         row["worktree_path"]
         for row in conn.execute(
             "SELECT worktree_path FROM task WHERE worktree_path IS NOT NULL "
@@ -526,7 +513,7 @@ def cmd_gc(args: argparse.Namespace) -> int:
         for row in conn.execute("SELECT DISTINCT project_path FROM task")
         if row["project_path"]
     }
-    сироты: list[tuple[str, Path]] = []
+    orphans: list[tuple[str, Path]] = []
     for project in sorted(projects):
         # Смотрим обе папки: свою (`<repo>-orch`) и ту, куда копии клал сам
         # AoE (`<repo>-worktrees`) — там остаются копии ночных прогонов, а в
@@ -539,19 +526,19 @@ def cmd_gc(args: argparse.Namespace) -> int:
                 continue
             for path in sorted(base.rglob(".git")):
                 copy = path.parent
-                if str(copy) in живые or str(copy.resolve()) in живые:
+                if str(copy) in alive or str(copy.resolve()) in alive:
                     continue
-                сироты.append((project, copy))
-    if not сироты:
+                orphans.append((project, copy))
+    if not orphans:
         print("сирот нет: все рабочие копии принадлежат живым задачам")
         return 0
-    for project, copy in сироты:
+    for project, copy in orphans:
         size = sum(f.stat().st_size for f in copy.rglob("*") if f.is_file()) // 1024 // 1024
         print(f"{copy}  ~{size} МиБ  (проект {project})")
     if not args.yes:
         print("\nэто показ; чтобы убрать — `orch gc --yes`. Ветки не трогаются.")
         return 0
-    for project, copy in сироты:
+    for project, copy in orphans:
         error = remove_worktree(project, copy)
         print(f"{copy}: {'убрана' if not error else 'осталась — ' + error[:120]}")
     return 0
@@ -559,10 +546,6 @@ def cmd_gc(args: argparse.Namespace) -> int:
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Что должно работать, чтобы движок ехал."""
-    import shutil
-    import urllib.error
-    import urllib.request
-
     ok = True
 
     def check(name: str, good: bool, detail: str = "") -> None:
@@ -582,8 +565,17 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         check("демон AoE", True, f"живых сессий {live}")
     except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
         check("демон AoE", False, str(exc))
-    from .chain import chains_dir
-
+    # Флаг «срочно» едет к хосту файлом в его каталоге — договорённость из
+    # исходников AoE, не из документации. Проверяем, что каталог пишется.
+    hooks = hooks_dir()
+    try:
+        hooks.mkdir(parents=True, exist_ok=True)
+        probe = hooks / ".orch-doctor"
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+        check("каталог флагов AoE", True, str(hooks))
+    except OSError as exc:
+        check("каталог флагов AoE", False, f"{hooks}: {exc}")
     for path in sorted(chains_dir().glob("*.yml")):
         try:
             load_chain(path)
@@ -632,8 +624,6 @@ def _git(root: Path, *args: str) -> str:
 
 
 def _project_here() -> Path:
-    from .taskdir import git_toplevel
-
     root = git_toplevel()
     if root is None:
         raise Refused("не понял, какой это проект: вызови с --project <корень>")
@@ -661,10 +651,6 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("done", help="закончить ход (последнее действие роли)")
     p.add_argument("outcome", nargs="?", help="исход шага; у шага с одним переходом не нужен")
     p.set_defaults(func=cmd_done)
-
-    p = sub.add_parser("ask", help="запасной канал вопроса владельцу")
-    p.add_argument("text")
-    p.set_defaults(func=cmd_ask)
 
     p = sub.add_parser("note", help="запасной канал комментария")
     p.add_argument("text")

@@ -117,11 +117,13 @@ def test_шаг_с_одним_переходом_не_принимает_исх�
     assert code == 0
 
 
-def test_ask_и_note_пишут_сигналы(task, capsys):
-    assert run(["ask", "Какой цвет?"], capsys)[0] == 0
+def test_note_пишет_сигнал_а_ask_нет(task, capsys):
+    """`orch ask` снят: движок сигнал вопроса не читал, а команда обещала,
+    что задача встанет. Вопрос владельцу — только интерактивный."""
     assert run(["note", "заметка"], capsys)[0] == 0
-    assert list((task / "signals").glob("two-1-ask-*.json"))
     assert list((task / "signals").glob("two-1-note-*.json"))
+    with pytest.raises(SystemExit):
+        run(["ask", "Какой цвет?"], capsys)
 
 
 def test_push_не_пушит_главную_ветку(task, capsys, monkeypatch):
