@@ -107,8 +107,10 @@
   # rate_limit_auto_resume: после лимита провайдера AoE сам возобновляет
   # сессию и один раз перевыдаёт прерванный промпт, а движок ничего не
   # шлёт повторно (orch/PLAN.md §5).
-  # smart_rename: титул сессии ставит движок («T12 · plan»); переименование
-  # по первому ходу затирало бы имя шага.
+  # smart_rename: включено. Сессиям движок сам ставит титул при создании
+  # («T12 · plan»), а AoE переименовывает только сессии с дефолтным именем
+  # цивилизации (SkipReason::NameNotDefault), так что имя шага не трогается.
+  # Выключать его значило лишать имён ручные сессии владельца.
   ansible.builtin.lineinfile:
     path: "/home/{{ base_deploy_user }}/.config/agent-of-empires/config.toml"
     regexp: "^{{ item.key }}\\s*="
@@ -120,7 +122,7 @@
     mode: '0644'
   loop:
     - { section: acp, key: rate_limit_auto_resume, value: 'true' }
-    - { section: session, key: smart_rename, value: 'false' }
+    - { section: session, key: smart_rename, value: 'true' }
   loop_control:
     label: "[{{ item.section }}] {{ item.key }}"
 

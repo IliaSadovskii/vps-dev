@@ -423,7 +423,7 @@ done/ask/whoami/note/push, log, stats, doctor). Цепочка `smoke`
 с доской).
 
 **5. Выкатка.** Роль Ansible `orch`: venv, `pip install -e`,
-`aoe plugin install`, `rate_limit_auto_resume = true`, `smart_rename = false`,
+`aoe plugin install`, `rate_limit_auto_resume = true`, `smart_rename = true`,
 бэкап базы вместе с `~/.config/agent-of-empires`.
 
 ## 11. Тесты
