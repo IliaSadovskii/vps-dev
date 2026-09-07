@@ -13,6 +13,8 @@ from pathlib import Path
 
 import yaml
 
+from .db import STATE_DIR
+
 DONE = "done"
 DEFAULT_MAX_RUNS = 3
 VALID_CONTEXT = ("fresh", "continue")
@@ -289,9 +291,12 @@ def catalog() -> list[dict]:
     помнить имена файлов. Описание — верхний блок комментариев файла, там оно
     и так написано для человека; отдельного поля в схеме заводить не стали.
     Битая цепочка попадает в список с пометкой, а не роняет весь выбор.
+    Правленая владельцем цепочка показывается вместо заводской и помечена
+    `custom`: выбор один и тот же, отличается только содержимое.
     """
     out: list[dict] = []
-    for path in sorted(chains_dir().glob("*.yml")):
+    for name in names():
+        path = path_of(name)
         head = []
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.startswith("#"):
@@ -301,11 +306,12 @@ def catalog() -> list[dict]:
         try:
             chain = load(path)
         except ChainError as exc:
-            out.append({"name": path.stem, "error": str(exc)})
+            out.append({"name": name, "error": str(exc), "custom": is_custom(name)})
             continue
         out.append(
             {
                 "name": chain.name,
+                "custom": is_custom(name),
                 "description": " ".join(head).strip(),
                 "steps": [s.id for s in chain.steps],
                 "presets": sorted(chain.presets),
@@ -316,8 +322,41 @@ def catalog() -> list[dict]:
 
 
 def chains_dir() -> Path:
-    """Каталог `orch/chains/` рядом с исходниками пакета."""
+    """Каталог `orch/chains/` рядом с исходниками пакета — заводские цепочки."""
     return _repo_dir() / "chains"
+
+
+def user_chains_dir() -> Path:
+    """Каталог правленых владельцем цепочек — рядом с базой, вне репозитория.
+
+    Правки цепочек — настройка машины, а не работа над кодом: в рабочей копии
+    они засоряли бы `git status` и уезжали бы в чужие коммиты. Заводской файл
+    при этом не трогается никогда, «Сбросить до заводских» = удалить файл
+    отсюда (`UX-PLAN.md`, страница «Цепочки»).
+    """
+    return STATE_DIR / "chains"
+
+
+def path_of(name: str) -> Path:
+    """Файл цепочки, по которому она сейчас едет: правленый, иначе заводской."""
+    user = user_chains_dir() / f"{name}.yml"
+    return user if user.exists() else chains_dir() / f"{name}.yml"
+
+
+def is_custom(name: str) -> bool:
+    return (user_chains_dir() / f"{name}.yml").exists()
+
+
+def names() -> list[str]:
+    """Имена всех цепочек: заводские плюс те, что владелец завёл сам."""
+    found = {p.stem for p in chains_dir().glob("*.yml")}
+    if user_chains_dir().exists():
+        found |= {p.stem for p in user_chains_dir().glob("*.yml")}
+    return sorted(found)
+
+
+def load_by_name(name: str) -> Chain:
+    return load(path_of(name))
 
 
 def prompts_dir() -> Path:

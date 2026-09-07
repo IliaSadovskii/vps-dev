@@ -1,0 +1,639 @@
+#!/usr/bin/env python3
+# orch-chains — страница настройки цепочек оркестратора: три заводские
+# цепочки (Deep, Blueprint, Conventions) свёрнутыми списками, внутри —
+# шаги с параметрами, порядком и воротами.
+#
+# Ставит роль orch, запускает systemd (orch-chains.service). Открывается
+# шестерёнкой на карточке Agent of Empires на дашборде :8062; своей
+# карточки у страницы нет намеренно — это настройка одной службы, а не
+# отдельная служба.
+#
+# ЧТО ДЕЛАЕТ. Читает заводские `orch/chains/*.yml` из рабочей копии
+# репозитория и правленые `~/.local/share/orch/chains/*.yml`. Сохранение
+# НЕ трогает заводской файл: правки складываются в пользовательскую копию
+# рядом с базой задач. «Сбросить до заводских» — удалить эту копию.
+# Дальше цепочку по имени всюду выдаёт `orch.chain.path_of`: движок,
+# мастер и CLI берут пользовательскую версию, если она есть.
+#
+# ПОЧЕМУ ПРАВКИ КЛАДУТСЯ ПОВЕРХ ЗАВОДСКОГО ФАЙЛА, А НЕ ПОВЕРХ ПРЕЖНЕЙ
+# КОПИИ. Меняются только порядок шагов и параметры внутри шага; всё
+# остальное (переходы, артефакты, что читает роль, комментарии) берётся из
+# заводского файла при каждом сохранении. Поэтому правки не расходятся с
+# репозиторием: `git pull` с новым шагом или новым артефактом действует
+# сразу, а сброс всегда возвращает ровно то, что в репозитории.
+#
+# ПОЧЕМУ ИДУЩИЕ ЗАДАЧИ НЕ МЕНЯЮТСЯ. Структура цепочки замораживается при
+# создании задачи (`orch/PLAN.md` §4). Правка действует на задачи, которые
+# заведут после неё.
+#
+# ЗАЩИТА ОТ ЧУЖОЙ ФОРМЫ. Как на странице обновлений: запись только если
+# Origin (или Referer) совпадает с Host запроса.
+#
+# Зависимости: пакет `orch` из венва машины (разбор и линтер цепочек — те
+# же, что у движка, второй реализации нет) и PyYAML из него же.
+
+import html
+import json
+import os
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+import yaml
+
+from orch.chain import (
+    VALID_AGENTS,
+    VALID_CONTEXT,
+    ChainError,
+    chains_dir,
+    is_custom,
+    load,
+    names,
+    parse,
+    path_of,
+    user_chains_dir,
+)
+
+PORT = int(os.environ.get("ORCH_CHAINS_PORT", "8073"))
+DASHBOARD = os.environ.get("ORCH_CHAINS_DASHBOARD", "")
+# Каталог настроек AoE: оттуда берём модели и усилия, которые агенты
+# объявили на этой машине, — чтобы список в выпадашке не расходился с тем,
+# что хост на самом деле умеет запустить.
+AOE_CONFIG = Path(
+    os.environ.get("ORCH_CHAINS_AOE_CONFIG", str(Path.home() / ".config" / "agent-of-empires"))
+)
+CATALOG_FILE = AOE_CONFIG / "acp_option_catalog.json"
+
+# Запасные списки: каталог появляется после первого разговора с агентом, а
+# страница должна работать и на свежей машине.
+FALLBACK_MODELS = {
+    "claude": ["opus[1m]", "sonnet", "haiku"],
+    "codex": ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.5"],
+    "opencode": ["zai-coding-plan/glm-5.3"],
+}
+FALLBACK_EFFORTS = ["low", "medium", "high"]
+
+CONTEXT_TEXT = {
+    "fresh": "свежая память",
+    "own": "своя прошлая сессия",
+    "continue": "сессия прошлого шага",
+}
+
+
+def log(msg):
+    print(f"orch-chains: {msg}", flush=True)
+
+
+# ------------------------------------------------------- что предлагаем --
+
+def catalog_options():
+    """Модели и усилия по агентам — из каталога AoE, иначе запасные."""
+    models = {a: list(FALLBACK_MODELS.get(a, [])) for a in VALID_AGENTS}
+    efforts = {a: list(FALLBACK_EFFORTS) for a in VALID_AGENTS}
+    try:
+        with open(CATALOG_FILE, encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        log(f"каталог моделей не прочитан ({exc}) — показываю запасной список")
+        return models, efforts
+    for agent, body in (raw.get("agents") or {}).items():
+        if agent not in models:
+            continue
+        for option in body.get("options") or []:
+            values = [o.get("value") for o in (option.get("options") or []) if o.get("value")]
+            # У claude «default» в списке моделей — это «как в настройках
+            # хоста»; цепочка называет модель явно, поэтому такой выбор
+            # здесь означал бы «неизвестно что» и не предлагается.
+            values = [v for v in values if v != "default"]
+            if not values:
+                continue
+            if option.get("id") == "model":
+                models[agent] = values
+            elif option.get("id") in ("effort", "reasoning_effort"):
+                efforts[agent] = values
+    return models, efforts
+
+
+# ---------------------------------------------------------- чтение YAML --
+
+def header_comment(path):
+    """Первый абзац шапки файла — описание цепочки одной мыслью.
+
+    Дальше в шапке идут подробности для того, кто правит файл руками
+    (формат, откуда роли, почему такая модель); на странице они заняли бы
+    пол-экрана и оттеснили сами шаги.
+    """
+    out = []
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.startswith("#"):
+                break
+            body = line.lstrip("#").strip()
+            if not body:            # пустая строка комментария — конец абзаца
+                break
+            out.append(body)
+    except OSError:
+        return []
+    return out
+
+
+def factory_raw(name):
+    path = chains_dir() / f"{name}.yml"
+    return yaml.safe_load(path.read_text(encoding="utf-8")), path
+
+
+def step_view(step):
+    """Шаг для страницы: что правим — полями, что показываем — текстом."""
+    next_map = step.next
+    return {
+        "id": step.id,
+        "agent": step.agent,
+        "model": step.model,
+        "effort": step.effort or "",
+        "context": step.context,
+        "ask": step.human_ask,
+        "after": step.human_after,
+        "max_runs": step.max_runs,
+        # Дальше — только для чтения: в первой версии правятся параметры и
+        # порядок, а переходы, артефакты и роль остаются как в репозитории.
+        "outcomes": [o for o in next_map if o != "*"],
+        "next": next_map,
+        "artifact": step.artifact,
+        "reads": step.reads,
+        "prompt_file": step.prompt_file,
+        "moves": step.human_moves,
+        "includes": step.includes,
+        "instructions": bool(step.instructions),
+    }
+
+
+def chain_view(name):
+    path = path_of(name)
+    custom = is_custom(name)
+    view = {
+        "name": name,
+        "custom": custom,
+        "description": " ".join(header_comment(chains_dir() / f"{name}.yml")).strip(),
+        "path": str(path),
+        "factory_only": not (chains_dir() / f"{name}.yml").exists(),
+    }
+    try:
+        chain = load(path)
+    except ChainError as exc:
+        view["error"] = str(exc)
+        view["steps"] = []
+        return view
+    view["steps"] = [step_view(s) for s in chain.steps]
+    return view
+
+
+# Порядок на странице — заданный, а не по алфавиту: сверху та цепочка, по
+# которой едет обычная работа, служебная проверка механики — в конце.
+CHAIN_ORDER = ["deep", "conventions", "blueprint", "smoke"]
+
+
+def ordered_names():
+    known = names()
+    first = [n for n in CHAIN_ORDER if n in known]
+    return first + [n for n in known if n not in first]
+
+
+def picture():
+    models, efforts = catalog_options()
+    return {
+        "chains": [chain_view(n) for n in ordered_names()],
+        "options": {
+            "agents": list(VALID_AGENTS),
+            "models": models,
+            "efforts": efforts,
+            "contexts": [{"value": c, "label": CONTEXT_TEXT.get(c, c)} for c in VALID_CONTEXT],
+        },
+        "user_dir": str(user_chains_dir()),
+        "dashboard": DASHBOARD,
+    }
+
+
+# ----------------------------------------------------------- сохранение --
+
+def apply_edits(name, edits):
+    """Наложить правки страницы на заводскую цепочку и вернуть текст YAML.
+
+    Основа всегда заводская: страница правит порядок шагов и параметры
+    внутри шага, остальное берётся из репозитория (см. шапку файла).
+    """
+    raw, path = factory_raw(name)
+    by_id = {s.get("id"): s for s in (raw.get("steps") or [])}
+    order = [e.get("id") for e in edits]
+    if sorted(order) != sorted(by_id):
+        raise ChainError(
+            "список шагов не совпал с заводским: перезагрузите страницу — "
+            "цепочка в репозитории изменилась"
+        )
+
+    steps = []
+    for edit in edits:
+        step = dict(by_id[edit["id"]])
+        run = dict(step.get("run") or {})
+        run["agent"] = edit["agent"]
+        run["model"] = edit["model"]
+        if edit.get("effort"):
+            run["effort"] = edit["effort"]
+        else:
+            run.pop("effort", None)
+        step["run"] = run
+
+        step["context"] = edit["context"]
+
+        human = dict(step.get("human") or {})
+        after = edit.get("after", False)
+        if after is False:
+            human.pop("after", None)
+            # Линтер: кнопки возврата без ворот не появятся, потому что
+            # задача на шаге не остановится. Убираем вместе с воротами и
+            # говорим об этом на странице.
+            human.pop("moves", None)
+        else:
+            human["after"] = after
+        human["ask"] = bool(edit.get("ask"))
+        if human:
+            step["human"] = human
+        else:
+            step.pop("human", None)
+
+        limits = dict(step.get("limits") or {})
+        runs = int(edit.get("max_runs") or 1)
+        if runs < 1 or runs > 20:
+            raise ChainError(f"шаг {edit['id']}: заходов {runs}, а надо от 1 до 20")
+        limits["max_runs"] = runs
+        step["limits"] = limits
+        steps.append(step)
+
+    raw["steps"] = steps
+    body = yaml.safe_dump(
+        raw, sort_keys=False, allow_unicode=True, default_flow_style=False, width=100
+    )
+    head = [
+        f"# Цепочка {name}, правленная владельцем на странице настроек.",
+        "#",
+        "# Файл создан страницей orch-chains и ею же удаляется кнопкой",
+        "# «Сбросить до заводских». Заводская версия со всеми объяснениями —",
+        f"# {path}",
+        "# Правьте заводскую в репозитории, а не этот файл: следующее сохранение",
+        "# на странице соберёт его заново из заводского.",
+        "",
+    ]
+    text = "\n".join(head) + body
+    parse(text, source=f"{name} (правленая)")   # линтер: не сохраняем битое
+    return text
+
+
+def save(name, edits):
+    text = apply_edits(name, edits)
+    target = user_chains_dir() / f"{name}.yml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(".yml.new")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, target)
+    log(f"{name}: сохранена пользовательская версия")
+
+
+def reset(name):
+    target = user_chains_dir() / f"{name}.yml"
+    try:
+        target.unlink()
+        log(f"{name}: пользовательская версия удалена, цепочка снова заводская")
+    except FileNotFoundError:
+        pass
+
+
+# ------------------------------------------------------------- страница --
+
+def esc(text):
+    return html.escape(str(text or ""), quote=True)
+
+
+PAGE = """<!doctype html><html lang="ru"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Цепочки orch</title>
+<style>
+ /* Тот же язык, что у дашборда и остальных страниц машины. */
+ :root{color-scheme:light dark;--line:color-mix(in srgb,currentColor 14%,transparent);--accent:#2563eb}
+ *{box-sizing:border-box}
+ body{font:15px/1.5 system-ui,-apple-system,sans-serif;max-width:940px;margin:0 auto;padding:1.75rem 1rem 3rem}
+ h1{font-size:1.3rem;margin:0 0 .25rem}
+ .sub{opacity:.55;font-size:.85rem;margin:0 0 1.25rem}
+ a{color:var(--accent)}
+ .back{display:inline-block;font-size:.85rem;margin:0 0 1.25rem;text-decoration:none}
+ details.chain{border:1px solid var(--line);border-radius:14px;margin:0 0 .75rem;
+   background:color-mix(in srgb,var(--accent) 4%,transparent)}
+ details.chain[open]{background:none}
+ summary{cursor:pointer;padding:.85rem 1rem;font-weight:600;display:flex;align-items:center;gap:.6rem;
+   flex-wrap:wrap;border-radius:14px;list-style:none}
+ summary::-webkit-details-marker{display:none}
+ /* Свой треугольник: display:flex у summary съедает родной маркер, и
+    свёрнутая цепочка становится неотличима от строки текста. */
+ summary::before{content:"▸";color:var(--accent);font-size:.8rem;opacity:.7}
+ details[open]>summary::before{content:"▾"}
+ .cname{font-size:1rem}
+ .tag{font-size:.7rem;font-weight:600;letter-spacing:.03em;padding:.05rem .4rem;border-radius:6px;
+   border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);color:var(--accent)}
+ .cdesc{padding:0 1rem .5rem;font-size:.85rem;opacity:.6}
+ .steps{padding:0 1rem 1rem;display:flex;flex-direction:column;gap:.6rem}
+ .step{border:1px solid var(--line);border-radius:12px;padding:.7rem .8rem}
+ .shead{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+ .num{font-variant-numeric:tabular-nums;opacity:.4;font-size:.8rem;min-width:1.2rem}
+ .sid{font-weight:600}
+ .srole{opacity:.5;font-size:.78rem;overflow-wrap:anywhere}
+ .move{margin-left:auto;display:flex;gap:.3rem}
+ .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(9.5rem,1fr));gap:.5rem;margin-top:.6rem}
+ label.f{display:flex;flex-direction:column;gap:.15rem;font-size:.72rem;text-transform:uppercase;
+   letter-spacing:.04em;opacity:.55}
+ label.f select,label.f input{font:inherit;font-size:.85rem;text-transform:none;letter-spacing:0;opacity:1;
+   padding:.3rem .4rem;border-radius:8px;border:1px solid var(--line);background:transparent;color:inherit}
+ .flags{display:flex;gap:1rem;flex-wrap:wrap;margin-top:.55rem;font-size:.85rem}
+ .flags label{display:flex;align-items:center;gap:.35rem}
+ .after{display:flex;flex-direction:column;gap:.15rem}
+ .flow{margin-top:.5rem;font-size:.78rem;opacity:.55;overflow-wrap:anywhere}
+ .bar{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;padding:0 1rem 1rem}
+ button{font:inherit;font-size:.85rem;font-weight:600;padding:.4rem .9rem;border-radius:8px;border:0;
+   background:var(--accent);color:#fff;cursor:pointer}
+ button:disabled{opacity:.45;cursor:default}
+ button.ghost{background:none;color:inherit;border:1px solid var(--line);font-weight:500}
+ button.tiny{padding:.1rem .45rem;font-size:.8rem}
+ .msg{font-size:.85rem}
+ .msg.ok{color:#16a34a}
+ .msg.bad{color:#dc2626}
+ .note{font-size:.8rem;opacity:.55;margin:1.5rem 0 0}
+ @media(prefers-color-scheme:dark){:root{--accent:#7aa7ff}.msg.ok{color:#4ade80}.msg.bad{color:#f87171}}
+ /* На телефоне поля в две колонки принудительно: auto-fit при такой ширине
+    сваливается в одну, и один шаг занимает весь экран. */
+ @media(max-width:430px){body{padding:1.25rem .6rem 2rem}.steps,.bar,.cdesc{padding-left:.6rem;padding-right:.6rem}
+   .grid{grid-template-columns:1fr 1fr;gap:.4rem}.step{padding:.6rem}}
+</style></head><body>
+<h1>Цепочки orch</h1>
+<div class="sub">Правки живут на этой машине и не трогают файлы репозитория. Задача едет по той
+ цепочке, какой она была в момент, когда её завели, — правка действует на следующие задачи.</div>
+<div id="back"></div>
+<div id="list">Читаю цепочки…</div>
+<p class="note" id="note"></p>
+<script>
+const S = {};
+const el = (t, a = {}, ...kids) => {
+  const n = document.createElement(t);
+  for (const [k, v] of Object.entries(a)) {
+    if (k === 'class') n.className = v; else if (k === 'text') n.textContent = v;
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v); else n.setAttribute(k, v);
+  }
+  for (const kid of kids) if (kid) n.append(kid);
+  return n;
+};
+const sel = (opts, value, onchange) => {
+  const s = el('select', { onchange });
+  for (const o of opts) {
+    const v = typeof o === 'string' ? o : o.value;
+    const t = typeof o === 'string' ? o : o.label;
+    s.append(el('option', { value: v, text: t, ...(v === value ? { selected: 'selected' } : {}) }));
+  }
+  return s;
+};
+const field = (name, control) => el('label', { class: 'f' }, document.createTextNode(name), control);
+
+function afterOptions(step) {
+  const out = [{ value: 'no', label: 'нет' }, { value: 'yes', label: 'после любого хода' }];
+  for (const o of step.outcomes) out.push({ value: 'o:' + o, label: 'после исхода «' + o + '»' });
+  return out;
+}
+const afterValue = (a) => a === true ? 'yes' : (Array.isArray(a) && a.length ? 'o:' + a[0] : 'no');
+const afterFrom = (v) => v === 'yes' ? true : (v.startsWith('o:') ? [v.slice(2)] : false);
+
+function stepCard(chain, step, i) {
+  const opts = S.options;
+  const models = () => opts.models[step.agent] || [];
+  const efforts = () => [{ value: '', label: 'не задано' }].concat(
+    (opts.efforts[step.agent] || []).map((e) => ({ value: e, label: e })));
+  const card = el('div', { class: 'step' });
+  const redraw = () => { render(); };
+
+  const up = el('button', { class: 'ghost tiny', title: 'выше', text: '↑',
+    onclick: () => { if (i > 0) { const s = chain.steps; [s[i - 1], s[i]] = [s[i], s[i - 1]]; touch(chain); redraw(); } } });
+  const down = el('button', { class: 'ghost tiny', title: 'ниже', text: '↓',
+    onclick: () => { const s = chain.steps; if (i < s.length - 1) { [s[i + 1], s[i]] = [s[i], s[i + 1]]; touch(chain); redraw(); } } });
+  up.disabled = i === 0; down.disabled = i === chain.steps.length - 1;
+
+  card.append(el('div', { class: 'shead' },
+    el('span', { class: 'num', text: String(i + 1) }),
+    el('span', { class: 'sid', text: step.id }),
+    el('span', { class: 'srole', text: 'роль prompts/' + step.prompt_file + '.md' }),
+    el('div', { class: 'move' }, up, down)));
+
+  const grid = el('div', { class: 'grid' });
+  grid.append(field('агент', sel(opts.agents, step.agent, (e) => {
+    step.agent = e.target.value;
+    if (!(opts.models[step.agent] || []).includes(step.model)) step.model = (opts.models[step.agent] || [''])[0];
+    if (step.effort && !(opts.efforts[step.agent] || []).includes(step.effort)) step.effort = '';
+    touch(chain); redraw();
+  })));
+  const known = models().includes(step.model) ? models() : models().concat([step.model]);
+  grid.append(field('модель', sel(known, step.model, (e) => { step.model = e.target.value; touch(chain); })));
+  grid.append(field('усилие', sel(efforts(), step.effort, (e) => { step.effort = e.target.value; touch(chain); })));
+  grid.append(field('память', sel(opts.contexts, step.context, (e) => { step.context = e.target.value; touch(chain); })));
+  const runs = el('input', { type: 'number', min: '1', max: '20', value: String(step.max_runs) });
+  runs.addEventListener('input', () => { step.max_runs = Number(runs.value); touch(chain); });
+  grid.append(field('заходов', runs));
+  grid.append(field('ворота', sel(afterOptions(step), afterValue(step.after), (e) => {
+    step.after = afterFrom(e.target.value); touch(chain); redraw();
+  })));
+  card.append(grid);
+
+  const ask = el('input', { type: 'checkbox' });
+  ask.checked = step.ask;
+  ask.addEventListener('change', () => { step.ask = ask.checked; touch(chain); });
+  card.append(el('div', { class: 'flags' },
+    el('label', {}, ask, document.createTextNode('роль может спросить вас в чате'))));
+
+  const flow = [];
+  for (const [outcome, target] of Object.entries(step.next))
+    flow.push(outcome === '*' ? 'далее: ' + target : outcome + ' → ' + target);
+  if (step.artifact.length) flow.push('пишет: ' + step.artifact.join(', '));
+  if (step.moves.length && step.after !== false) flow.push('кнопки возврата: ' + step.moves.join(', '));
+  if (step.moves.length && step.after === false) flow.push('кнопки возврата уйдут вместе с воротами');
+  card.append(el('div', { class: 'flow', text: flow.join(' · ') }));
+  return card;
+}
+
+// Правка отмечается без перерисовки: она стёрла бы курсор в поле «заходов»
+// на первой же цифре. Перерисовываются только те правки, что меняют состав
+// полей: агент (другой список моделей), ворота, порядок шагов.
+const touch = (chain) => { chain.dirty = true; chain.msg = ''; if (chain.onDirty) chain.onDirty(); };
+const steps_word = (n) => {
+  const ten = n % 100, one = n % 10;
+  const word = (ten >= 11 && ten <= 14) ? 'шагов' : (one === 1 ? 'шаг' : (one >= 2 && one <= 4 ? 'шага' : 'шагов'));
+  return n + ' ' + word;
+};
+
+function chainBlock(chain) {
+  const box = el('details', { class: 'chain' });
+  if (chain.open) box.setAttribute('open', 'open');
+  box.addEventListener('toggle', () => { chain.open = box.open; });
+  const tags = [];
+  if (chain.custom) tags.push(el('span', { class: 'tag', text: 'правлена' }));
+  if (chain.dirty) tags.push(el('span', { class: 'tag', text: 'не сохранено' }));
+  box.append(el('summary', {},
+    el('span', { class: 'cname', text: chain.name }),
+    el('span', { class: 'srole', text: steps_word(chain.steps.length) }), ...tags));
+  if (chain.error) {
+    box.append(el('div', { class: 'cdesc' }, el('span', { class: 'msg bad', text: chain.error })));
+    return box;
+  }
+  if (chain.description) box.append(el('div', { class: 'cdesc', text: chain.description }));
+  const steps = el('div', { class: 'steps' });
+  chain.steps.forEach((s, i) => steps.append(stepCard(chain, s, i)));
+  box.append(steps);
+
+  const msg = el('span', { class: 'msg ' + (chain.bad ? 'bad' : 'ok'), text: chain.msg || '' });
+  const saveBtn = el('button', { text: 'Сохранить', onclick: () => send(chain, '') });
+  saveBtn.disabled = !chain.dirty;
+  const dirtyTag = el('span', { class: 'tag', text: 'не сохранено' });
+  chain.onDirty = () => {
+    saveBtn.disabled = false;
+    msg.textContent = '';
+    if (!dirtyTag.isConnected) box.querySelector('summary').append(dirtyTag);
+  };
+  const resetBtn = el('button', { class: 'ghost', text: 'Сбросить до заводских',
+    onclick: () => { if (confirm('Удалить пользовательскую версию цепочки ' + chain.name + '?')) send(chain, '/reset'); } });
+  resetBtn.disabled = !chain.custom;
+  box.append(el('div', { class: 'bar' }, saveBtn, resetBtn, msg));
+  return box;
+}
+
+async function send(chain, suffix) {
+  const body = suffix ? '{}' : JSON.stringify({ steps: chain.steps });
+  const r = await fetch('/api/chains/' + encodeURIComponent(chain.name) + suffix,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+  const answer = await r.json().catch(() => ({ error: 'ответ не разобрал' }));
+  const open = new Set(S.data.chains.filter((c) => c.open).map((c) => c.name));
+  if (!r.ok) { chain.bad = true; chain.msg = answer.error || ('ошибка ' + r.status); render(); return; }
+  await load(open, { name: chain.name, msg: suffix ? 'сброшено до заводской' : 'сохранено', bad: false });
+}
+
+async function load(open = new Set(), flash = null) {
+  const r = await fetch('/api/chains');
+  const data = await r.json();
+  S.options = data.options;
+  data.chains.forEach((c) => {
+    c.open = open.has(c.name);
+    if (flash && flash.name === c.name) { c.msg = flash.msg; c.bad = flash.bad; c.open = true; }
+  });
+  S.data = data;
+  document.getElementById('note').textContent =
+    'Правленые цепочки лежат в ' + data.user_dir + ' — сброс удаляет файл оттуда.';
+  // Дашборд — та же машина, соседний порт: адрес считается от текущего,
+  // чтобы страница не знала ни имени машины, ни схемы.
+  const back = document.getElementById('back');
+  back.textContent = '';
+  const home = data.dashboard || (location.protocol + '//' + location.hostname + ':8062/');
+  back.append(el('a', { class: 'back', href: home, text: '← Сервисы VPS' }));
+  render();
+}
+
+function render() {
+  const list = document.getElementById('list');
+  list.textContent = '';
+  for (const c of S.data.chains) list.append(chainBlock(c));
+}
+
+load().catch((e) => { document.getElementById('list').textContent = 'не открылось: ' + e; });
+</script>
+</body></html>"""
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "orch-chains"
+
+    def do_GET(self):  # noqa: N802 — имя задано BaseHTTPRequestHandler
+        path = self.path.partition("?")[0].rstrip("/") or "/"
+        if path == "/":
+            self.reply(200, "text/html; charset=utf-8", PAGE.encode("utf-8"))
+        elif path == "/api/chains":
+            self.reply(200, "application/json; charset=utf-8",
+                       json.dumps(picture(), ensure_ascii=False, indent=1).encode("utf-8"))
+        elif path == "/healthz":
+            self.reply(200, "text/plain; charset=utf-8", b"ok\n")
+        else:
+            self.reply(404, "text/plain; charset=utf-8", "нет такой страницы\n".encode("utf-8"))
+
+    def do_POST(self):  # noqa: N802
+        path = self.path.partition("?")[0].rstrip("/")
+        if not self.same_origin():
+            self.fail(403, "запрос пришёл с чужого адреса")
+            return
+        parts = path.strip("/").split("/")
+        if len(parts) < 3 or parts[0] != "api" or parts[1] != "chains":
+            self.fail(404, "нет такой страницы")
+            return
+        name = urllib.parse.unquote(parts[2])
+        if name not in names():
+            self.fail(404, f"цепочки {name} нет")
+            return
+        try:
+            if len(parts) == 4 and parts[3] == "reset":
+                reset(name)
+            elif len(parts) == 3:
+                save(name, self.body().get("steps") or [])
+            else:
+                self.fail(404, "нет такой страницы")
+                return
+        except ChainError as exc:
+            # Линтер отказал — пользовательский файл не тронут, на странице
+            # остаётся то, что владелец набрал.
+            self.fail(400, str(exc))
+            return
+        except (OSError, KeyError, TypeError, ValueError) as exc:
+            log(f"{name}: {exc!r}")
+            self.fail(400, f"не сохранил: {exc}")
+            return
+        self.reply(200, "application/json; charset=utf-8",
+                   json.dumps({"ok": True, "custom": is_custom(name)}, ensure_ascii=False).encode("utf-8"))
+
+    def body(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        if not length:
+            return {}
+        return json.loads(self.rfile.read(length).decode("utf-8", "replace"))
+
+    def same_origin(self):
+        host = (self.headers.get("Host") or "").lower()
+        src = self.headers.get("Origin") or self.headers.get("Referer") or ""
+        if not host or not src:
+            return False
+        return (urllib.parse.urlsplit(src).netloc or "").lower() == host
+
+    def fail(self, code, text):
+        self.reply(code, "application/json; charset=utf-8",
+                   json.dumps({"error": text}, ensure_ascii=False).encode("utf-8"))
+
+    def reply(self, code, ctype, body):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except BrokenPipeError:
+            pass
+
+    def log_message(self, fmt, *args):
+        pass
+
+
+def main():
+    user_chains_dir().mkdir(parents=True, exist_ok=True)
+    # Только loopback: в частную сеть отдаёт ports-web с TLS на том же порту.
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    log(f"слушаю 127.0.0.1:{PORT}; заводские цепочки {chains_dir()}, правленые {user_chains_dir()}")
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

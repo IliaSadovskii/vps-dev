@@ -1,0 +1,33 @@
+# Управляется Ansible: roles/orch/templates/orch-chains.service.j2
+[Unit]
+Description=Настройка цепочек оркестратора (страница на :{{ orch_chains_port }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Под {{ base_deploy_user }}: страница читает цепочки из его рабочей копии
+# репозитория и пишет правленые рядом с его базой задач.
+User={{ base_deploy_user }}
+WorkingDirectory={{ orch_state_dir }}
+Environment=ORCH_CHAINS_PORT={{ orch_chains_port }}
+Environment=HOME=/home/{{ base_deploy_user }}
+# Из венва orch: разбор и линтер цепочек берутся из пакета `orch`, второй
+# реализации у страницы нет.
+ExecStart={{ orch_venv }}/bin/python {{ orch_bin_dir }}/orch-chains
+Restart=on-failure
+RestartSec=5
+
+# Страница правит ровно один каталог — правленые цепочки рядом с базой.
+# Всё остальное, включая заводские файлы в репозитории, только на чтение.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths={{ orch_state_dir }}/chains
+
+[Install]
+WantedBy=multi-user.target

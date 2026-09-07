@@ -13,6 +13,11 @@ orch_venv: "{{ orch_state_dir }}/venv"
 
 orch_plugin_id: dev.sadovskii.orch
 
+# Страница настройки цепочек: порт из инфра-заповедника 8060–8079, следом
+# за страницей обновлений. Своей карточки на дашборде у неё нет — к ней
+# ведёт шестерёнка на карточке Agent of Empires (роль ports, INFRA_GEAR).
+orch_chains_port: 8073
+
 # PATH демона и всех сессий агентов — без ~/.local/bin, поэтому точки входа
 # кладутся симлинками сюда (orch/HANDOFF.md).
 orch_bin_dir: /usr/local/bin

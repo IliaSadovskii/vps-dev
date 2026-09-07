@@ -22,7 +22,14 @@ from pathlib import Path
 
 from . import artifacts, signals
 from .aoe import hooks_dir
-from .chain import ChainError, catalog, chains_dir, load as load_chain
+from .chain import (
+    ChainError,
+    catalog,
+    chains_dir,
+    load as load_chain,
+    names as chain_names,
+    path_of as chain_path,
+)
 from .branchref import recent
 from .db import DB_PATH, INBOX
 from .taskdir import NotInTask, TaskDir, find_task, git_toplevel
@@ -414,7 +421,8 @@ def cmd_chains(args: argparse.Namespace) -> int:
         if item.get("error"):
             print(f"{item['name']}: не читается — {item['error']}")
             continue
-        print(f"{item['name']}: {item['description'] or 'без описания'}")
+        mark = " (правлена владельцем на странице настроек)" if item.get("custom") else ""
+        print(f"{item['name']}{mark}: {item['description'] or 'без описания'}")
         print(f"  шаги: {' → '.join(item['steps'])}")
         print(f"  ворота по умолчанию: {', '.join(item['gates']) or 'нет'}")
         print(f"  пресеты: {', '.join(item['presets']) or 'нет'}")
@@ -576,12 +584,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         check("каталог флагов AoE", True, str(hooks))
     except OSError as exc:
         check("каталог флагов AoE", False, f"{hooks}: {exc}")
-    for path in sorted(chains_dir().glob("*.yml")):
+    for name in chain_names():
+        path = chain_path(name)
+        note = "правленая владельцем" if path.parent != chains_dir() else ""
         try:
             load_chain(path)
-            check(f"цепочка {path.stem}", True)
+            check(f"цепочка {name}", True, note)
         except ChainError as exc:
-            check(f"цепочка {path.stem}", False, str(exc))
+            check(f"цепочка {name}", False, str(exc))
     return 0 if ok else 1
 
 

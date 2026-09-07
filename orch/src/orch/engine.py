@@ -31,9 +31,9 @@ from .chain import (
     ChainError,
     Step,
     apply_preset,
-    chains_dir,
     load as load_chain,
     parse as parse_chain,
+    path_of as chain_path,
 )
 from .db import (
     ABANDONED,
@@ -166,7 +166,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
         нет — заведёт с этим именем. `base` — от чего ответвляться, если
         ветки ещё нет.
         """
-        chain = load_chain(chains_dir() / f"{chain_name}.yml")
+        chain = load_chain(chain_path(chain_name))
         sheet = chain.sheet_with_preset(preset)
         if sheet_edits:
             sheet = apply_preset(sheet, sheet_edits)

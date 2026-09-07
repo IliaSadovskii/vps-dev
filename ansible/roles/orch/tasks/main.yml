@@ -16,6 +16,9 @@
   loop:
     - "{{ orch_state_dir }}"
     - "{{ orch_state_dir }}/inbox"
+    # Правленые владельцем цепочки: их пишет страница настроек, а движок
+    # предпочитает их заводским (orch/src/orch/chain.py, path_of).
+    - "{{ orch_state_dir }}/chains"
 
 - name: Есть ли исходники orch на машине
   # Роль ставит пакет из рабочей копии репозитория, а не из PyPI: orch —
@@ -167,6 +170,52 @@
       - "  systemctl restart aoe-web   — оборвёт живые сессии, делать осознанно."
       - "Дальше правки кода подхватываются без рестарта: `aoe plugin disable`/`enable`."
   when: orch_sources.stat.exists
+
+- name: Страница настройки цепочек
+  # Отдельная служба, а не панель в AoE: панель плагина не умеет ни полей
+  # ввода, ни выпадающих списков (docs/plugin-api.md), а настройка цепочки —
+  # это форма. Своей карточки на дашборде у страницы нет: к ней ведёт
+  # шестерёнка на карточке Agent of Empires (роль ports, INFRA_GEAR).
+  when: orch_sources.stat.exists
+  block:
+
+    - name: Скрипт страницы цепочек
+      ansible.builtin.copy:
+        src: orch-chains
+        dest: "{{ orch_bin_dir }}/orch-chains"
+        owner: root
+        group: root
+        mode: '0755'
+      register: orch_chains_script
+
+    - name: Юнит страницы цепочек
+      ansible.builtin.template:
+        src: orch-chains.service.j2
+        dest: /etc/systemd/system/orch-chains.service
+        owner: root
+        group: root
+        mode: '0644'
+      register: orch_chains_unit
+
+    # Намеренно не обработчик: служба поднимается следующей задачей.
+    - name: Перечитать systemd, если юнит изменился  # noqa: no-handler
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: orch_chains_unit.changed
+
+    - name: Есть ли уже юнит страницы цепочек
+      ansible.builtin.stat:
+        path: /etc/systemd/system/orch-chains.service
+      register: orch_chains_unit_exists
+      check_mode: false
+      when: ansible_check_mode
+
+    - name: Страница цепочек включена и работает
+      ansible.builtin.systemd:
+        name: orch-chains
+        enabled: true
+        state: "{{ 'restarted' if (orch_chains_script.changed or orch_chains_unit.changed) else 'started' }}"
+      when: not (ansible_check_mode and not (orch_chains_unit_exists.stat.exists | default(false)))
 
 - name: Каталог бэкапов базы задач
   ansible.builtin.file:

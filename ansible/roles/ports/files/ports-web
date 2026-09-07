@@ -37,7 +37,7 @@ dnsname="$(tailscale status --json 2>/dev/null | grep -m1 '"DNSName"' | cut -d'"
 # --- инфра-сервисы (не в реестре проектов) ---
 declare -A INFRA_LABEL=( [8060]="Dozzle" [8061]="DbGate" [$DASH_PORT]="Дашборд" [8063]="VS Code" [8065]="Agent of Empires"
                          [8066]="Терминал" [8067]="Файлы" [8068]="Мониторинг" [8069]="Почта" [8070]="Лимиты"
-                         [8071]="Общий промпт" [8072]="Обновления" )
+                         [8071]="Общий промпт" [8072]="Обновления" [8073]="Цепочки orch" )
 declare -A INFRA_DESC=( [8060]="журналы контейнеров, только чтение" [8061]="клиент баз данных проектов" [$DASH_PORT]="эта страница"
                         [8063]="редактор, файлы и терминал в одном окне, открывается в /projects"
                         [8065]="разговор с агентом в браузере, сессии живут в tmux"
@@ -47,11 +47,18 @@ declare -A INFRA_DESC=( [8060]="журналы контейнеров, толь�
                         [8069]="письма проектов остаются здесь и наружу не уходят"
                         [8070]="сколько израсходовано у подписок агентов за 5 часов и за неделю"
                         [8071]="что все агенты знают до первого слова: как отвечать и что есть на машине"
-                        [8072]="что стоит и что вышло у служб машины, обновление кнопкой" )
+                        [8072]="что стоит и что вышло у служб машины, обновление кнопкой"
+                        [8073]="настройка цепочек оркестратора, открывается шестерёнкой на карточке AoE" )
 # Значок службы на дашборде. Юникод, а не файлы значков: страница остаётся
 # одним самодостаточным файлом без внешних запросов.
 declare -A INFRA_ICON=( [8060]="📜" [8061]="🗃️" [$DASH_PORT]="🧭" [8063]="💻" [8065]="💬"
-                        [8066]="⌨️" [8067]="📁" [8068]="📊" [8069]="✉️" [8070]="⏳" [8071]="🗣️" [8072]="⬆️" )
+                        [8066]="⌨️" [8067]="📁" [8068]="📊" [8069]="✉️" [8070]="⏳" [8071]="🗣️" [8072]="⬆️"
+                        [8073]="⚙️" )
+# Страница настройки чужой карточки: наружу отдаётся (иначе шестерёнка вела бы
+# в никуда), но своей карточки не получает — на дашборде это шестерёнка в углу
+# той службы, которую страница настраивает.
+declare -A INFRA_GEAR=( [8065]=8073 )
+declare -A INFRA_NOCARD=( [8073]=1 )
 # Куда ведёт ссылка, если не в корень службы.
 declare -A INFRA_PATH=( [8067]="/files/projects" )
 # Порядок карточек инфраструктуры на странице — заданный, а не по номеру
@@ -347,6 +354,14 @@ cat <<HEAD
  .port{margin-top:auto;padding-top:.5rem;font-variant-numeric:tabular-nums;opacity:.45;font-size:.75rem}
  /* Внутренний сервис (база, кэш) наружу не отдан — карточка неактивна. */
  .card.int{opacity:.6;border-style:dashed;background:none}
+ /* Шестерёнка настроек службы. Отдельной ссылкой рядом с карточкой, а не
+    внутри неё: ссылка внутри ссылки — невалидная разметка, и браузеры
+    разбирают её как попало. Обёртка тянется на всю ячейку сетки. */
+ .cardwrap{position:relative;display:flex}
+ .cardwrap>.card{flex:1 1 auto}
+ .gear{position:absolute;right:.4rem;bottom:.3rem;padding:.1rem .35rem;border-radius:8px;
+       font-size:.95rem;line-height:1.2;text-decoration:none;color:inherit;opacity:.4}
+ .gear:hover{opacity:1;background:color-mix(in srgb,var(--accent) 16%,transparent)}
  /* Сервисы проекта — строками, а не карточками: их до десяти на проект, и
     десять карточек 3×N вытесняли со страницы всё остальное. Строка — тот же
     прямоугольник во всю ширину, попасть пальцем не сложнее. */
@@ -429,11 +444,20 @@ while IFS= read -r g; do
   # внутри группы: сначала веб, по возрастанию порта
   while IFS=$'\x1f' read -r p group name desc web stand; do
     [[ "$group" == "$g" ]] || continue
+    # Страница настройки чужой службы карточки не получает: к ней ведёт
+    # шестерёнка на карточке той службы, которую она настраивает.
+    [[ -n "${INFRA_NOCARD[$p]:-}" ]] && continue
     ename="$(printf '%s' "$name" | esc)"; edesc="$(printf '%s' "$desc" | esc)"
     eicon="$(icon_for "$p" "$web" "$group" | esc)"
+    gear=""
+    if [[ -n "${INFRA_GEAR[$p]:-}" ]]; then
+      gp="${INFRA_GEAR[$p]}"
+      gear="$(printf '<a class="gear" href="https://%s:%s/" target="_blank" rel="noopener" title="%s">⚙</a>' \
+        "$dnsname" "$gp" "$(printf '%s' "${INFRA_LABEL[$gp]:-настройки}" | esc)")"
+    fi
     if [[ "$web" == 1 ]]; then
-      printf '  <a class="card" href="https://%s:%s%s" target="_blank" rel="noopener"><span class="icon">%s</span><span class="name">%s</span><span class="desc">%s</span><span class="port">%s</span></a>\n' \
-        "$dnsname" "$p" "${INFRA_PATH[$p]:-/}" "$eicon" "$ename" "$edesc" "$p"
+      printf '  <div class="cardwrap"><a class="card" href="https://%s:%s%s" target="_blank" rel="noopener"><span class="icon">%s</span><span class="name">%s</span><span class="desc">%s</span><span class="port">%s</span></a>%s</div>\n' \
+        "$dnsname" "$p" "${INFRA_PATH[$p]:-/}" "$eicon" "$ename" "$edesc" "$p" "$gear"
     else
       printf '  <div class="card int"><span class="icon">%s</span><span class="name">%s</span><span class="desc">%s</span><span class="port">%s</span></div>\n' \
         "$eicon" "$ename" "$edesc" "$p"
