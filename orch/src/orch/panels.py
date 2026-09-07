@@ -18,9 +18,60 @@ from .db import DONE as ST_DONE
 
 # Сколько строк показываем, чтобы панель влезала в 64 КиБ и читалась с телефона.
 MAX_TASKS = 30
-MAX_DONE = 10
 MAX_EVENTS = 10
 MAX_COMMENTS = 3
+
+# Статус задачи словами владельца, а не кодом из базы.
+STATUS_TEXT = {
+    BACKLOG: "в бэклоге",
+    QUEUED: "в очереди",
+    RUNNING: "едет",
+    WAITING: "ждёт вас",
+    ST_DONE: "готово",
+    CLOSED: "снята",
+    ABANDONED: "брошена",
+}
+
+# Строка журнала по-русски: владелец открывает журнал, когда что-то пошло не
+# так, и код события ему не помощник. Чего нет в карте — показывается кодом.
+EVENT_TEXT = {
+    "created": "задача заведена",
+    "started": "поехала",
+    "prompt_sent": "промпт отправлен роли",
+    "gate": "ворота: ждёт решения",
+    "button": "кнопка владельца",
+    "button_from_cli": "решение из терминала",
+    "done": "доведена до конца",
+    "closed": "снята владельцем",
+    "stopped": "остановлена",
+    "no_signal": "ход без сигнала",
+    "auto_continue": "попросили закончить ход",
+    "error_retry": "сессия в ошибке, попросили продолжить",
+    "worker_wake": "будим воркер",
+    "wake_gave_up": "воркер не проснулся",
+    "question_refused": "вопрос отклонён листом автономии",
+    "answered": "владелец ответил в чате",
+    "bad_outcome": "исход не из списка",
+    "artifact_missing": "файла роли нет или он не той формы",
+    "worktree_created": "рабочая копия создана",
+    "worktree_failed": "рабочая копия не создалась",
+    "branch_held": "ветку держит другая задача",
+    "branch_dirty": "в копии ветки есть работа",
+    "branch_released": "ветка освобождена",
+    "model_not_applied": "модель не встала",
+    "session_create_failed": "сессия не создалась",
+    "prompt_failed": "промпт не ушёл",
+    "run_closed_by_owner": "заход закрыт кнопкой",
+    "sheet_edited": "лист автономии изменён",
+    "stand_started": "роль поднимает стенд",
+    "stand_ready": "стенд поднят",
+    "stand_failed": "стенд не поднялся",
+    "teardown_started": "роль убирает стенд",
+    "teardown_done": "стенд убран",
+    "teardown_forced": "стенд добит движком",
+    "archived": "сессии в архиве",
+    "engine_error": "ошибка движка",
+}
 
 # Адрес машины в частной сети владельца: веб-сервис отдаётся на том же номере
 # порта, что слушает на 127.0.0.1 (`/var/lib/vps-dev/style/machine/ports.md`).
@@ -59,16 +110,15 @@ PICK_OUTCOME_REASONS = ("no_signal", "max_runs", "bad_outcome")
 def home_pane(db: Db, projects: list[str] | None = None, cost_warn: float = 5.0) -> dict:
     """Слот `home-pane` «Задачи»: витрина, а не пульт.
 
-    Три секции: что решить, что лежит в бэклоге, что закрыто. Едущих задач и
-    очереди тут нет нарочно — про них рассказывает сайдбар (цвет строки,
-    бейдж шага, счётчик у группы), и второй список тех же строк только
-    отнимал место (`UX-PLAN.md`).
+    Три секции: что решить, что лежит в бэклоге, где завести новую. Едущих
+    задач и очереди тут нет нарочно — про них рассказывает сайдбар (цвет
+    строки, бейдж шага, счётчик у группы); готовых и снятых тоже нет: список
+    прошлого на обзоре ничего не решает, а место на телефоне отнимает
+    (`UX-PLAN.md`). Историю смотрят `orch task list` и сайдбар с архивом.
     """
     blocks: list[dict] = []
     waiting = _sorted_waiting(db)
     backlog = db.tasks((BACKLOG,))
-    done = db.tasks((ST_DONE,))[-MAX_DONE:]
-    closed = db.tasks((CLOSED,))[-MAX_DONE:]
 
     if waiting:
         blocks.append(
@@ -94,21 +144,19 @@ def home_pane(db: Db, projects: list[str] | None = None, cost_warn: float = 5.0)
     if backlog:
         children: list[dict] = []
         for t in backlog[:MAX_TASKS]:
+            # Бэклог — копилка идей, и строк в нём может быть много, поэтому
+            # текст заявки не вываливается целиком: первые слова в подписи,
+            # весь текст — подсказкой. Заявку мог написать не владелец, и это
+            # сказано первым словом подписи.
+            text = " ".join((t["text"] or "").split())
             children.append(
                 {
                     "kind": "row",
                     "label": f"{t['id']} · {t['title']}",
-                    "sublabel": _who_filed(t),
+                    "sublabel": f"{_who_filed(t)} · {text[:140]}" if text else _who_filed(t),
+                    "tooltip": text[:800] or "текста нет",
                     "value": t["branch"] or "",
                     "mono": True,
-                }
-            )
-            # Текст задачи виден целиком: заявку мог написать не владелец, и
-            # прежде чем её запускать, надо прочитать, что в ней стоит.
-            children.append(
-                {
-                    "kind": "note",
-                    "text": (t["text"] or "").strip()[:800] or "текста нет",
                 }
             )
             # Кнопки отдельно, а строка не кликается: раньше нажатие по
@@ -156,49 +204,10 @@ def home_pane(db: Db, projects: list[str] | None = None, cost_warn: float = 5.0)
             }
         )
 
-    if done:
-        blocks.append(
-            {
-                "kind": "section",
-                "title": "Готово",
-                "badges": [{"text": str(len(done)), "tone": "success"}],
-                "collapsible": True,
-                "collapsed": True,
-                "children": [
-                    {
-                        "kind": "row",
-                        "label": f"{t['id']} · {t['title']}",
-                        "sublabel": "доведена до конца",
-                        "value": f"{_ago(t['closed_at'])} назад",
-                        "tone": "success",
-                    }
-                    for t in reversed(done)
-                ],
-            }
-        )
-    if closed:
-        blocks.append(
-            {
-                "kind": "section",
-                "title": "Снято",
-                "badges": [{"text": str(len(closed))}],
-                "collapsible": True,
-                "collapsed": True,
-                "children": [
-                    {
-                        "kind": "row",
-                        "label": f"{t['id']} · {t['title']}",
-                        "sublabel": "закрыта, работа не делалась",
-                        "value": f"{_ago(t['closed_at'])} назад",
-                        "tone": "neutral",
-                    }
-                    for t in reversed(closed)
-                ],
-            }
-        )
-
     if not blocks:
-        blocks.append({"kind": "note", "text": "Задач нет. Заведите первую."})
+        blocks.append(
+            {"kind": "note", "text": "Ничего не ждёт вашего решения, бэклог пуст."}
+        )
 
     blocks += _new_task_blocks(projects or [])
     return {
@@ -243,10 +252,10 @@ def _new_task_blocks(projects: list[str]) -> list[dict]:
     rows.append(
         {
             "kind": "note",
-            "text": "То же самое без панели: в обычной «New session» напишите "
-            "orch в поле Group или в названии сессии — она сама станет "
-            "мастером. Из открытой сессии проекта — Ctrl+K, «orch: новая "
-            "задача».",
+            "text": "Мастер спросит, что делать; скажите «в бэклог» — запишет "
+            "идею без вопросов. То же без панели: в обычной «New session» "
+            "напишите orch в поле Group или в названии сессии, либо из "
+            "сессии проекта — Ctrl+K, «orch: новая задача».",
         }
     )
     return [
@@ -307,26 +316,25 @@ def task_pane(
     base_url: str,
     cost_warn: float = 5.0,
 ) -> dict:
+    """Слот `pane` в сессии задачи: состояние и решения (`UX-PLAN.md`).
+
+    Сверху то, ради чего панель открывают: что решить и кнопки. Ниже —
+    как задача сюда пришла (путь по заходам со ссылками на их сессии), где
+    её смотреть (стенд), что почитать (файлы ролей, только существующие),
+    что подкрутить (лист автономии). Журнал последним и свёрнутым: он для
+    разбора, когда что-то пошло не так.
+    """
     chain = _chain(task)
     blocks: list[dict] = [
         {
             "kind": "row",
             "label": task["title"],
-            "sublabel": f"{task['id']} · цепочка {task['chain']}",
-            "value": task["status"],
+            "sublabel": f"{task['id']} · {task['chain']} · ветка {task['branch'] or '—'}",
+            "value": STATUS_TEXT.get(task["status"], task["status"]),
             "value_tone": _tone(task["status"]),
+            "tooltip": task["worktree_path"] or task["project_path"],
         }
     ]
-
-    if chain:
-        blocks.append(
-            {
-                "kind": "section",
-                "title": "Путь задачи",
-                "value": " → ".join(db.path_steps(task["id"])) or (task["step"] or "—"),
-                "children": _trail_rows(db, task, chain, base_url),
-            }
-        )
 
     if task["status"] == WAITING:
         blocks.append(
@@ -342,15 +350,29 @@ def task_pane(
     elif task["status"] == RUNNING:
         run = db.open_run(task["id"])
         if run:
+            who = ""
+            if chain and chain.has(run["step"]):
+                step = chain.step(run["step"])
+                who = f"{step.agent} · {step.model}"
             blocks.append(
                 {
                     "kind": "row",
                     "label": f"шаг {run['step']}, заход {run['n']}",
-                    "sublabel": f"сессия {run['session_id'] or '—'}",
+                    "sublabel": who or "идёт",
                     "value": _ago(run["started_at"]),
                     "tone": "info",
                 }
             )
+
+    if chain:
+        blocks.append(
+            {
+                "kind": "section",
+                "title": "Путь задачи",
+                "value": " → ".join(db.path_steps(task["id"])) or (task["step"] or "—"),
+                "children": _trail_rows(db, task, chain, base_url),
+            }
+        )
 
     answer = _last_orch_answer(db, task)
     if answer:
@@ -434,10 +456,10 @@ def task_pane(
             "children": [
                 {
                     "kind": "row",
-                    "label": e["kind"],
-                    "sublabel": (e["payload"] or "")[:120],
+                    "label": EVENT_TEXT.get(e["kind"], e["kind"]),
+                    "sublabel": _payload_text(e["payload"]),
                     "value": _ago(e["at"]),
-                    "mono": True,
+                    "tooltip": e["kind"],
                 }
                 for e in db.events(task["id"], limit=MAX_EVENTS)
             ],
@@ -799,8 +821,13 @@ def _sheet_rows(db: Db, task, chain: Chain) -> list[dict]:
             {
                 "kind": "row",
                 "label": step.id,
-                "sublabel": "пройден" if done_already else "ворота / вопросы",
+                "sublabel": "пройден" if done_already else "ворота после · вопросы внутри",
                 "value": f"{'ждать' if after else 'не ждать'} · {'можно' if ask else 'нельзя'}",
+                "tooltip": (
+                    "шаг уже пройден"
+                    if done_already
+                    else "щелчок переключает по кругу: ничего → ворота → вопросы → и то и другое"
+                ),
                 "tone": "neutral" if done_already else "info",
                 **(
                     {}
@@ -820,22 +847,52 @@ def _sheet_rows(db: Db, task, chain: Chain) -> list[dict]:
 
 
 def _artifact_links(db: Db, task, chain: Chain | None, session_id: str, base: str) -> list[dict]:
+    """Файлы ролей, которые уже написаны; файл текущего шага первым.
+
+    Ссылка на ещё не написанный файл открывала бы пустую страницу, а
+    владельцу на воротах нужен один файл — той роли, что только что сдала
+    ход. Единственное место, где панель смотрит на диск, а не в базу.
+    """
     if not chain:
         return []
+    root = Path(task["worktree_path"] or task["project_path"]) / ".orch" / task["id"] / "artifacts"
     rows = []
     for step in chain.steps:
         for name in step.artifact:
+            if not (root / name).is_file():
+                continue
             path = f".orch/{task['id']}/artifacts/{name}"
+            current = step.id == task["step"]
             rows.append(
                 {
                     "kind": "row",
                     "label": name,
-                    "sublabel": step.id,
+                    "sublabel": f"{step.id} · текущий шаг" if current else step.id,
                     "href": f"{base}/api/sessions/{session_id}/file?path={path}",
                     "mono": True,
+                    "tone": "info" if current else None,
                 }
             )
-    return rows
+    rows.sort(key=lambda r: 0 if r["tone"] == "info" else 1)
+    return [{k: v for k, v in r.items() if v is not None} for r in rows]
+
+
+def _payload_text(payload: str | None) -> str:
+    """Полезная часть события одной строкой: без скобок и кавычек."""
+    try:
+        data = json.loads(payload or "{}")
+    except json.JSONDecodeError:
+        return (payload or "")[:100]
+    if not isinstance(data, dict):
+        return str(data)[:100]
+    parts = []
+    for key, value in data.items():
+        if isinstance(value, dict):
+            value = ", ".join(str(v) for v in value.values())
+        elif isinstance(value, list):
+            value = ", ".join(str(v) for v in value)
+        parts.append(f"{key}: {value}")
+    return ", ".join(parts)[:100]
 
 
 def _last_orch_answer(db: Db, task) -> str | None:

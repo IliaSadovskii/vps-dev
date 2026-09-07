@@ -18,7 +18,7 @@ def blocks_text(payload: dict) -> str:
 
 def test_пустая_панель_зовёт_завести_задачу(engine):
     pane = panels.home_pane(engine.db, ["/projects/kandev-trial"])
-    assert "Задач нет" in blocks_text(pane)
+    assert "бэклог пуст" in blocks_text(pane)
     assert "orch.wizard" in blocks_text(pane)
 
 
@@ -338,9 +338,10 @@ def test_снятая_задача_не_попадает_в_готово(engine,
 
     pane = panels.home_pane(engine.db)
     разделы = {b.get("title"): b for b in pane["blocks"] if b.get("kind") == "section"}
-    assert [r["label"] for r in разделы["Готово"]["children"]] == [f"{сделана} · сделана"]
-    assert [r["label"] for r in разделы["Снято"]["children"]] == [f"{снята} · снята"]
-    assert "работа не делалась" in разделы["Снято"]["children"][0]["sublabel"]
+    # Прошлого на обзоре нет вовсе: ни готовых, ни снятых (2026-09-07).
+    assert set(разделы) == {"Новая задача"}
+    assert engine.db.task(сделана)["status"] == "done"
+    assert engine.db.task(снята)["status"] == "closed"
 
 
 def test_рабочие_копии_задач_не_считаются_проектами(tmp_path):
@@ -388,3 +389,41 @@ def test_панель_показывает_три_состояния_стенд�
     engine.stand_result(task_id, 8020, None)
     task = engine.db.task(task_id)
     assert ":8020/" in blocks_text(panels.task_pane(engine.db, task, "s9", "http://x"))
+
+
+def test_файлы_ролей_только_написанные_и_текущий_первым(engine, fake, repo):
+    """Ссылка на ненаписанный файл вела бы в пустоту; на воротах нужен файл
+    той роли, что только что сдала ход."""
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "ok")          # ворота на two
+    task = engine.db.task(task_id)
+    pane = panels.task_pane(engine.db, task, "s9", "http://x")
+    files = [b for b in pane["blocks"] if b.get("title") == "Файлы ролей"][0]["children"]
+    assert [r["label"] for r in files] == ["two.md", "one.md"]
+    assert "текущий шаг" in files[0]["sublabel"]
+    assert "three.md" not in blocks_text(pane)
+
+
+def test_бэклог_строкой_а_не_простынёй(engine, repo):
+    from test_engine import monkey_chain
+
+    monkey_chain(engine)
+    engine.create_task(
+        chain_name="t", project_path=str(repo), text="идея: " + "слово " * 300, backlog=True
+    )
+    pane = panels.home_pane(engine.db)
+    rows = [b for b in _flat(pane["blocks"]) if b.get("kind") == "row" and "идея" in b["label"]]
+    assert len(rows) == 1 and len(rows[0]["sublabel"]) < 200 and len(rows[0]["tooltip"]) <= 800
+    assert not [b for b in _flat(pane["blocks"]) if b.get("kind") == "note" and "слово" in b.get("text", "")]
+
+
+def test_панель_задачи_говорит_словами_а_не_кодами(engine, fake, repo):
+    task_id = start(engine, repo)
+    task = engine.db.task(task_id)
+    pane = panels.task_pane(engine.db, task, "s9", "http://x")
+    head = pane["blocks"][0]
+    assert head["value"] == "едет" and task["branch"] in head["sublabel"]
+    journal = [b for b in pane["blocks"] if b.get("title") == "Журнал"][0]["children"]
+    assert any(r["label"] == "промпт отправлен роли" for r in journal)
+    assert not any("{" in r["sublabel"] for r in journal)

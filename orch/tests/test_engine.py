@@ -947,6 +947,19 @@ def test_мастер_уходит_в_архив_заведя_задачу(engin
     assert f"http://x/session/{sid}" in json.dumps(pane, ensure_ascii=False)
 
 
+def test_заявка_в_бэклог_не_убирает_мастера(engine, fake, repo):
+    """Бэклог — копилка: несколько идей подряд в одном разговоре."""
+    monkey_chain(engine)
+    sid = engine.open_wizard(str(repo))
+    engine.create_task(chain_name="t", project_path=str(repo), text="идея раз", backlog=True)
+    engine.create_task(chain_name="t", project_path=str(repo), text="идея два", backlog=True)
+    assert sid not in fake.archived
+    assert engine.free_wizard(str(Path(repo).resolve())) == sid
+    # А поехавшая задача мастера забирает, как и раньше.
+    engine.create_task(chain_name="t", project_path=str(repo), text="поехали")
+    assert sid in fake.archived
+
+
 def test_следующая_задача_получает_нового_мастера(engine, fake, repo):
     """Уехавшая в задачу сессия не должна возвращаться по ключу."""
     monkey_chain(engine)
