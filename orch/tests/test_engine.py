@@ -913,8 +913,8 @@ def test_роль_стенда_сообщает_о_неудаче(engine, fake, 
     assert engine.db.task(task_id)["stand_port"] is None
 
 
-def test_заказанный_стенд_поднимается_к_воротам(engine, fake, repo, monkeypatch):
-    """«Приду смотреть» значит, что к остановке стенд уже готов."""
+def test_заказанный_стенд_поднимается_на_любой_остановке(engine, fake, repo, monkeypatch):
+    """У задачи без ворот ворот не будет, а смотреть владелец придёт всё равно."""
     from orch import stand as stands
 
     monkeypatch.setattr(stands, "claim", lambda task: (stands.name_of(task), ""))
@@ -985,3 +985,24 @@ def test_копия_живёт_пока_убирают_стенд(engine, fake, 
     engine.reconcile()                      # уборщик отчитался
     engine.reconcile()                      # теперь можно и копию
     assert not copy.exists()
+
+
+def test_стенд_поднимается_и_без_ворот(engine, fake, repo, monkeypatch):
+    """Задача с выключенными воротами встаёт иначе — на вопросе или без сигнала."""
+    from orch import stand as stands
+
+    monkeypatch.setattr(stands, "claim", lambda task: (stands.name_of(task), ""))
+    monkeypatch.setattr(stands, "ports_of", lambda name: {"APP_PORT": 8020})
+    monkey_chain(engine)
+    task_id = engine.create_task(
+        chain_name="t", project_path=str(repo), text="без ворот",
+        sheet_edits={"one.after": False}, stand=True,
+    )
+    engine.reconcile()
+    sid = session_of(engine, task_id)
+    fake.finish_turn(sid)
+    engine.reconcile()          # просьба закончить
+    fake.finish_turn(sid)
+    engine.reconcile()          # встала: нет сигнала
+    task = engine.db.task(task_id)
+    assert task["status"] == "waiting" and task["stand_session"]

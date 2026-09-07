@@ -987,11 +987,7 @@ class Engine:
                     )
         if gated:
             self.mark_stopped(task, session.id)
-            row = self.db.task(task["id"])
-            if row["stand_wanted"] and not row["stand_session"]:
-                # Владелец сказал мастеру, что придёт смотреть: к воротам
-                # стенд должен быть готов, а не подниматься с его кнопки.
-                self.raise_stand(row)
+            self.stand_if_wanted(self.db.task(task["id"]))
         else:
             row = self.db.task(task["id"])
             self.aoe.set_color(session.id, "green" if row["status"] == ST_DONE else "amber")
@@ -1037,6 +1033,7 @@ class Engine:
                 {"step": step.id, "run": run["n"], "last": (last or {}).get("text", "")[:400]},
             )
         self.mark_stopped(task, run["session_id"])
+        self.stand_if_wanted(self.db.task(task["id"]))
 
     # ── кнопки владельца ─────────────────────────────────────────────────
     def button(
@@ -1081,6 +1078,21 @@ class Engine:
         дальше зовёт роль «Стенд» в отдельной сессии.
         """
         return self.raise_stand(task)
+
+    def stand_if_wanted(self, task) -> None:
+        """Задача впервые встала и ждёт владельца — поднять стенд, если заказан.
+
+        Привязка именно к остановке, а не к воротам: у задачи с выключенными
+        воротами ворот не будет вовсе, а посмотреть работу владелец придёт всё
+        равно — на вопросе роли, на «нет сигнала» или на приёмке.
+        """
+        if task is None or not task["stand_wanted"]:
+            return
+        if task["stand_session"] or task["stand_teardown"]:
+            return
+        if task["status"] not in (ST_WAITING,):
+            return
+        self.raise_stand(task)
 
     def raise_stand(self, task) -> str:
         """Занять блок портов и посадить роль «Стенд» поднимать окружение."""
@@ -1405,6 +1417,7 @@ class Engine:
             ).fetchone()
             if run:
                 self.mark_stopped(self.db.task(task_id), run["session_id"])
+            self.stand_if_wanted(self.db.task(task_id))
 
     def mark_stopped(self, task, session_id: str | None) -> None:
         if not session_id:
