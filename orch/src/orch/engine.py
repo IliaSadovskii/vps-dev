@@ -210,10 +210,9 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
                 "created",
                 {"chain": chain.name, "preset": preset, "branch": branch, "base": base},
             )
-        # Мастер уходит в архив, когда задача поехала. Заявка в бэклог —
-        # копилка: владелец диктует идеи подряд, и мастер остаётся в чате.
-        if not backlog:
-            self.move_wizard_to(task_id, str(Path(project_path).resolve()))
+        # Один мастер — одна заявка: заведя её (в очередь или в бэклог),
+        # мастер уходит в архив. Следующая идея — новый мастер.
+        self.move_wizard_to(task_id, str(Path(project_path).resolve()))
         if from_backlog:
             # Заявка, из которой выросла задача, закрывается: работа поехала
             # под новым номером, держать её ветку за старой незачем.

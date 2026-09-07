@@ -92,4 +92,7 @@ class InboxMixin:
         with self.db.tx():
             self.db.bump(task_id, text=text, title=title_from(text))
             self.db.event(task_id, "text_edited", {"len": len(text)})
+        # Мастер, переписавший ТЗ, свою работу сделал — в архив, как и тот,
+        # что заводил задачу.
+        self.move_wizard_to(task_id, task["project_path"])
         return f"{task_id}: ТЗ переписано"
