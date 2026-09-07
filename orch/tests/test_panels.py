@@ -382,7 +382,8 @@ def test_панель_показывает_три_состояния_стенд�
     engine.stand_result(task_id, None, "нет docker-compose.yml")
     task = engine.db.task(task_id)
     текст = blocks_text(panels.task_pane(engine.db, task, "s9", "http://x"))
-    assert "не поднялся" in текст and "docker-compose" in текст
+    # Причина видна, и стенд можно поднять снова: сессия роли отпущена.
+    assert "Поднять стенд снова" in текст and "docker-compose" in текст
 
     engine.stand_result(task_id, 8020, None)
     task = engine.db.task(task_id)

@@ -6,8 +6,9 @@
 `/var/lib/vps-dev/style/machine/ports.md`), а не движок: гадать номера тут
 некому.
 
-Наружу отдаём три действия: занять блок, поднять, погасить и вернуть блок.
-Всё остальное — дело `ports` и `docker compose`.
+Наружу отдаём: занять блок, узнать его порты, погасить и вернуть блок,
+проверить, что блок отдан. Поднимает стенд роль, а не движок
+(`prompts/role-stand.md`); гасит роль, а движок добивает за ней.
 """
 
 from __future__ import annotations
@@ -69,29 +70,6 @@ def ports_of(name: str) -> dict[str, int]:
     return result
 
 
-def web_port(name: str) -> int | None:
-    """Порт, на который человеку идти смотреть.
-
-    Первый по номеру — он же `BASE_PORT`: блок раздаётся по порядку, а
-    приложение в compose стоит первым сервисом. Точнее без догадок о проекте
-    не скажешь, а ошибиться тут дёшево: соседние порты рядом в дашборде.
-    """
-    ports = {k: v for k, v in ports_of(name).items() if k != "BASE_PORT"}
-    return min(ports.values()) if ports else None
-
-
-def up(task, name: str) -> str:
-    """Поднять стенд задачи. Пустая строка — получилось."""
-    root = Path(task["worktree_path"] or "")
-    file = compose_file(root)
-    if not file:
-        return f"в {root} нет docker-compose.yml — стенд поднимать нечем"
-    out = _run(
-        [PORTS, "run", name, "--", "docker", "compose", "up", "-d"], cwd=root, timeout=1800
-    )
-    return "" if out.returncode == 0 else (out.stdout + out.stderr).strip()[-400:]
-
-
 def down(task, name: str) -> str:
     """Погасить стенд и вернуть блок.
 
@@ -113,18 +91,6 @@ def down(task, name: str) -> str:
     if out.returncode != 0 and "нет закреплённого блока" not in (out.stdout + out.stderr):
         errors.append((out.stdout + out.stderr).strip()[-300:])
     return "; ".join(errors)
-
-
-def alive(name: str) -> bool:
-    """Блок ещё за кем-то числится или на его портах кто-то слушает."""
-    out = _run([PORTS, "which", name], timeout=30)
-    if out.returncode != 0:
-        return False
-    listening = _run(["ss", "-ltnH"], timeout=30).stdout
-    for port in ports_of(name).values():
-        if f"127.0.0.1:{port}" in listening:
-            return True
-    return True
 
 
 def gone(name: str) -> bool:

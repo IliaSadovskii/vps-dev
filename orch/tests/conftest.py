@@ -35,6 +35,9 @@ class FakeAoe:
         self.fail_create = False
         self.model_apply_fails = False
         self.cost: float | None = None
+        # Откуда брать «сейчас» для `idle_entered_at`: тесты с управляемым
+        # временем подменяют.
+        self.now = time.time
 
     # чтение
     def sessions(self) -> dict[str, Session]:
@@ -119,7 +122,7 @@ class FakeAoe:
     def finish_turn(self, sid: str) -> None:
         """Ход кончился: `Idle`, вошли в него позже отправки промпта."""
         self.rows[sid]["status"] = IDLE
-        self.rows[sid]["idle_entered_at"] = _later()
+        self.rows[sid]["idle_entered_at"] = _later(self.now)
 
     def set_status(self, sid: str, status: str, worker: str = "running") -> None:
         self.rows[sid]["status"] = status
@@ -129,8 +132,8 @@ class FakeAoe:
         self.rows.pop(sid, None)
 
 
-def _later() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 60))
+def _later(now=time.time) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now() + 60))
 
 
 @pytest.fixture
@@ -158,3 +161,37 @@ def engine(tmp_path: Path, repo: Path) -> Engine:
 @pytest.fixture
 def fake(engine: Engine) -> FakeAoe:
     return engine.aoe
+
+
+class Clock:
+    """Управляемое время: отметки базы и «сейчас» движка идут от него.
+
+    Выдержки движка (полминуты между побудками, между отменами вопроса)
+    иначе не проверить, не ожидая их по-настоящему.
+    """
+
+    def __init__(self) -> None:
+        self.t = 1_800_000_000.0
+
+    def tick(self, seconds: float) -> None:
+        self.t += seconds
+
+    def stamp(self) -> str:
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.t))
+
+    def stamp_precise(self) -> str:
+        return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(self.t)) + f".{int((self.t % 1) * 1e6):06d}Z"
+
+
+@pytest.fixture
+def clock(monkeypatch, engine: Engine) -> Clock:
+    import orch.db as db_mod
+    import orch.engine as engine_mod
+
+    clk = Clock()
+    engine.aoe.now = lambda: clk.t
+    monkeypatch.setattr(db_mod, "now", clk.stamp)
+    monkeypatch.setattr(db_mod, "now_precise", clk.stamp_precise)
+    monkeypatch.setattr(engine_mod, "now", clk.stamp)
+    monkeypatch.setattr(engine_mod, "_epoch_now", lambda: clk.t)
+    return clk

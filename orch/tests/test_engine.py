@@ -293,16 +293,155 @@ def test_сессия_исчезла(engine, fake, repo):
     assert engine.db.task(task_id)["status"] == ABANDONED
 
 
-def test_ошибка_дважды_останавливает(engine, fake, repo):
+def test_ошибка_дважды_останавливает(engine, fake, repo, clock):
     task_id = start(engine, repo)
     sid = session_of(engine, task_id)
     fake.set_status(sid, "Error")
     engine.reconcile()
     assert engine.db.task(task_id)["status"] == RUNNING
+    # Через пять секунд статус после «продолжай» ещё не сменился — это не
+    # вторая ошибка, а та же. Останавливаемся только по выдержке.
     fake.set_status(sid, "Error")
+    clock.tick(5)
+    engine.reconcile()
+    assert engine.db.task(task_id)["status"] == RUNNING
+    clock.tick(40)
     engine.reconcile()
     task = engine.db.task(task_id)
     assert task["status"] == WAITING and task["wait_reason"] == "error"
+
+
+def test_ещё_заход_после_ошибки_заводит_новую_сессию(engine, fake, repo, clock):
+    """Задача встала с открытым заходом (сессия в ошибке). «Ещё заход» обязан
+    закрыть его, иначе движок снова смотрит на ту же мёртвую сессию."""
+    task_id = start(engine, repo)
+    first = session_of(engine, task_id)
+    fake.set_status(first, "Error")
+    engine.reconcile()                                   # «продолжай»
+    fake.set_status(first, "Error")                      # и снова ошибка
+    clock.tick(40)
+    engine.reconcile()
+    task = engine.db.task(task_id)
+    assert task["wait_reason"] == "error"
+
+    assert engine.button(task_id, task["revision"], "again") == "ещё заход"
+    assert engine.db.open_run(task_id) is None
+    engine.reconcile()
+    task = engine.db.task(task_id)
+    assert task["status"] == RUNNING and task["wait_reason"] is None
+    run = engine.db.open_run(task_id)
+    assert run is not None and run["n"] == 2 and run["session_id"] != first
+    # И ещё через пять секунд задача всё ещё едет, а не встала снова.
+    clock.tick(5)
+    engine.reconcile()
+    assert engine.db.task(task_id)["status"] == RUNNING
+
+
+def test_вернуть_после_ошибки_следит_за_новым_заходом(engine, fake, repo, clock):
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)          # шаг two
+    sid = session_of(engine, task_id)
+    fake.set_status(sid, "Error")
+    engine.reconcile()
+    fake.set_status(sid, "Error")
+    clock.tick(40)
+    engine.reconcile()
+    task = engine.db.task(task_id)
+    assert task["wait_reason"] == "error" and task["step"] == "two"
+
+    engine.button(task_id, task["revision"], "back", target="one", comment="заново")
+    engine.reconcile()
+    run = engine.db.open_run(task_id)
+    assert run["step"] == "one" and run["n"] == 2
+    assert "заново" in fake.prompts[-1][1]
+
+
+def test_подталкивание_не_закрывает_ход_на_следующем_проходе(engine, fake, repo, clock):
+    """После «заверши ход» статус ещё пять секунд остаётся `Idle`. Раньше
+    движок принимал старый `Idle` за конец нового хода и закрывал заход как
+    «нет сигнала», пока роль работала (T16, 22:50:38 → 22:50:43)."""
+    task_id = start(engine, repo)
+    sid = session_of(engine, task_id)
+    clock.tick(50)
+    fake.rows[sid]["status"] = "Idle"
+    fake.rows[sid]["idle_entered_at"] = clock.stamp()
+    clock.tick(10)
+    engine.reconcile()                                   # подтолкнули
+    assert "Заверши работу" in fake.prompts[-1][1]
+    assert engine.db.open_run(task_id) is not None
+
+    # Следующий проход: статус в AoE ещё не сменился.
+    fake.rows[sid]["status"] = "Idle"
+    clock.tick(5)
+    engine.reconcile()
+    assert engine.db.open_run(task_id) is not None
+    assert engine.db.task(task_id)["status"] == RUNNING
+    assert len(fake.prompts) == 2
+
+    # Роль доработала и сдала ход — заход принят как обычно.
+    clock.tick(60)
+    sign(engine, task_id, "one", 1, None)
+    fake.rows[sid]["idle_entered_at"] = clock.stamp()
+    engine.reconcile()
+    assert engine.db.task(task_id)["step"] == "two"
+
+
+def test_побудка_воркера_идёт_с_выдержкой(engine, fake, repo, clock):
+    """Три попытки не сгорают за пятнадцать секунд: каждая ждёт полминуты."""
+    task_id = start(engine, repo)
+    sid = session_of(engine, task_id)
+    fake.set_status(sid, "Stopped", worker="absent")
+
+    def wakes():
+        return len(engine.db.run_events(task_id, "worker_wake", engine.db.open_run(task_id)["id"]))
+
+    clock.tick(5); engine.reconcile(); assert wakes() == 0
+    clock.tick(30); engine.reconcile(); assert wakes() == 1
+    fake.set_status(sid, "Stopped", worker="absent")
+    clock.tick(5); engine.reconcile(); assert wakes() == 1
+    clock.tick(30); engine.reconcile(); assert wakes() == 2
+    fake.set_status(sid, "Stopped", worker="absent")
+    clock.tick(35); engine.reconcile(); assert wakes() == 3
+    fake.set_status(sid, "Stopped", worker="absent")
+    clock.tick(35); engine.reconcile()
+    task = engine.db.task(task_id)
+    assert task["status"] == WAITING and task["wait_reason"] == "no_worker"
+    # «Ещё заход» отсюда заводит новую сессию, как и обещает панель.
+    engine.button(task_id, task["revision"], "again")
+    engine.reconcile()
+    assert engine.db.open_run(task_id)["session_id"] != sid
+
+
+def test_отказ_в_вопросе_не_повторяется_каждый_проход(engine, fake, repo, clock):
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)          # шаг two, ask: false
+    sid = session_of(engine, task_id)
+    fake.set_status(sid, "Waiting")
+    engine.reconcile()
+    assert fake.cancels.count(sid) == 1
+    fake.set_status(sid, "Waiting")
+    clock.tick(5)
+    engine.reconcile()
+    assert fake.cancels.count(sid) == 1
+    clock.tick(40)
+    engine.reconcile()
+    assert fake.cancels.count(sid) == 2
+
+
+def test_кривая_заявка_не_останавливает_движок(engine, fake, repo, tmp_path, monkeypatch):
+    import orch.inbox as mod
+
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    monkeypatch.setattr(mod, "INBOX", inbox)
+    (inbox / "bad.json").write_text(
+        json.dumps({"kind": "button", "task": "T1", "revision": None, "action": "again"}),
+        encoding="utf-8",
+    )
+    task_id = start(engine, repo)                        # проход с кривой заявкой внутри
+    assert not (inbox / "bad.json").exists()
+    assert any(e["kind"] == "inbox_rejected" for e in engine.db.events(limit=20))
+    assert len(fake.prompts) == 1                        # задача поехала, движок не упал
 
 
 def test_выключенные_вопросы_отменяют_ход(engine, fake, repo):
@@ -461,7 +600,7 @@ def test_исчезнувшая_из_живых_но_живая_сессия_н�
 
 
 def test_заявка_из_inbox_становится_задачей(engine, fake, repo, tmp_path, monkeypatch):
-    import orch.engine as mod
+    import orch.inbox as mod
 
     inbox = tmp_path / "inbox"
     inbox.mkdir()
@@ -509,7 +648,7 @@ def test_отказ_поставить_модель_не_останавлива�
 def test_имя_ветки_не_кончается_дефисом(engine, repo):
     """Обрезка длинного титула не должна оставлять дефис на хвосте: имя ветки
     в базе разойдётся с настоящей веткой и `orch push` откажет."""
-    from orch.engine import _slug
+    from orch.naming import slug as _slug
 
     assert _slug("Разработать модуль аутентификации и авторизации") == "razrabotat-modul-autentifikacii"
     assert not _slug("Разработать модуль аутентификации и авторизации").endswith("-")
@@ -579,7 +718,7 @@ def test_задачу_можно_закрыть_и_она_отпускает_в�
     )
     task = engine.db.task(first)
     assert engine.button(first, task["revision"], "close") == "закрыта"
-    assert engine.db.task(first)["status"] == "done"
+    assert engine.db.task(first)["status"] == "closed"
     # Ветка свободна: на ней можно завести новую задачу.
     second = engine.create_task(
         chain_name="t", project_path=str(repo), text="новая", branch="общая"
@@ -622,8 +761,8 @@ def test_задача_из_заявки_закрывает_её(engine, fake, re
     новая = engine.create_task(
         chain_name="t", project_path=str(repo), text="настоящая", from_backlog=заявка
     )
-    assert engine.db.task(заявка)["status"] == "done"
-    assert engine.db.task(заявка)["wait_reason"] == "closed_by_owner"
+    assert engine.db.task(заявка)["status"] == "closed"
+    assert engine.db.task(заявка)["status"] == "closed"
     assert engine.db.task(новая)["status"] in ("queued", "running")
 
 
@@ -644,7 +783,7 @@ def test_тз_правится_только_у_заявки(engine, fake, repo):
 
 def test_титул_без_разметки(engine):
     """Мастер пишет ТЗ с markdown, а в панели строка должна читаться."""
-    from orch.engine import _title_from
+    from orch.naming import title_from as _title_from
 
     assert _title_from("**Цель.** Показать дату у каждой заметки в list") == (
         "Показать дату у каждой заметки в list"
@@ -899,18 +1038,26 @@ def test_стенд_поднимает_роль_а_движок_даёт_ей_п
 
 
 def test_роль_стенда_сообщает_о_неудаче(engine, fake, repo, monkeypatch):
-    """«Не поднялся» должно быть видно владельцу, а не молча пропасть."""
-    from orch import stand as stands
+    """«Не поднялся» должно быть видно владельцу, а не молча пропасть, и
+    после этого стенд можно поднять снова."""
+    from orch import panels, stand as stands
 
     monkeypatch.setattr(stands, "claim", lambda task: (stands.name_of(task), ""))
     monkeypatch.setattr(stands, "ports_of", lambda name: {})
     task_id = start(engine, repo)
     task = engine.db.task(task_id)
     engine.button(task_id, task["revision"], "stand")
+    first = engine.db.task(task_id)["stand_session"]
     engine.stand_result(task_id, None, "нет docker-compose.yml")
     kinds = [(e["kind"], e["payload"]) for e in engine.db.events(task_id, limit=5)]
     assert any(k == "stand_failed" and "docker-compose" in (p or "") for k, p in kinds)
-    assert engine.db.task(task_id)["stand_port"] is None
+    task = engine.db.task(task_id)
+    assert task["stand_port"] is None and task["stand_session"] is None
+
+    pane = json.dumps(panels.task_pane(engine.db, task, "s9", "http://x"), ensure_ascii=False)
+    assert "Поднять стенд снова" in pane and "docker-compose" in pane
+    assert engine.button(task_id, task["revision"], "stand") == "роль «Стенд» поднимает окружение"
+    assert engine.db.task(task_id)["stand_session"] not in (None, first)
 
 
 def test_заказанный_стенд_поднимается_на_любой_остановке(engine, fake, repo, monkeypatch):

@@ -9,13 +9,14 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-import os
+from .clock import epoch as parse_time
 
 # Порт демона — параметр развёртывания: рабочий демон на 8065, запасной для
 # проверки плагина на другом. Настройка плагина главнее переменной окружения,
@@ -95,19 +96,6 @@ class Session:
         if entered is None or sent is None:
             return False
         return entered > sent
-
-
-def parse_time(value: str | None) -> float | None:
-    """RFC3339 в секунды эпохи. `...Z`, `+00:00` и доли секунды — всё одно."""
-    if not value:
-        return None
-    import datetime
-
-    text = value.strip().replace("Z", "+00:00")
-    try:
-        return datetime.datetime.fromisoformat(text).timestamp()
-    except ValueError:
-        return None
 
 
 class Aoe:
@@ -306,9 +294,7 @@ class Aoe:
 
     def set_urgent(self, sid: str, urgent: bool) -> None:
         """Флаг «срочно» — файл, который читает сортировка Attention."""
-        import os
-
-        path = Path(f"/tmp/aoe-hooks-{os.getuid()}/{sid}")
+        path = hooks_dir() / sid
         try:
             path.mkdir(parents=True, exist_ok=True)
             (path / "attention.json").write_text(
@@ -354,6 +340,16 @@ class Aoe:
             self.call(method, path, body)
         except AoeError:
             pass
+
+
+def hooks_dir() -> Path:
+    """Каталог, через который AoE читает флаги сессий (`attention.json`).
+
+    Это недокументированная договорённость с хостом: путь взят из его
+    исходников, и при обновлении AoE может уехать. `orch doctor` проверяет,
+    что каталог на месте и пишется.
+    """
+    return Path(f"/tmp/aoe-hooks-{os.getuid()}")
 
 
 def _options_of(update) -> list[dict]:

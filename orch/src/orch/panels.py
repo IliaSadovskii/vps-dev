@@ -11,12 +11,10 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Any
 
-from .chain import DONE, Chain, ChainError, parse as parse_chain
-from .db import ABANDONED, BACKLOG, Db, QUEUED, RUNNING, WAITING, epoch
+from .chain import Chain, ChainError, parse as parse_chain
+from .db import ABANDONED, BACKLOG, CLOSED, Db, QUEUED, RUNNING, WAIT_REASONS, WAITING, epoch
 from .db import DONE as ST_DONE
-from .engine import WAIT_REASONS
 
 # Сколько строк показываем, чтобы панель влезала в 64 КиБ и читалась с телефона.
 MAX_TASKS = 30
@@ -69,9 +67,8 @@ def home_pane(db: Db, projects: list[str] | None = None, cost_warn: float = 5.0)
     blocks: list[dict] = []
     waiting = _sorted_waiting(db)
     backlog = db.tasks((BACKLOG,))
-    закрытые = db.tasks((ST_DONE,))
-    done = [t for t in закрытые if t["wait_reason"] != "closed_by_owner"][-MAX_DONE:]
-    снятые = [t for t in закрытые if t["wait_reason"] == "closed_by_owner"][-MAX_DONE:]
+    done = db.tasks((ST_DONE,))[-MAX_DONE:]
+    closed = db.tasks((CLOSED,))[-MAX_DONE:]
 
     if waiting:
         blocks.append(
@@ -179,12 +176,12 @@ def home_pane(db: Db, projects: list[str] | None = None, cost_warn: float = 5.0)
                 ],
             }
         )
-    if снятые:
+    if closed:
         blocks.append(
             {
                 "kind": "section",
                 "title": "Снято",
-                "badges": [{"text": str(len(снятые))}],
+                "badges": [{"text": str(len(closed))}],
                 "collapsible": True,
                 "collapsed": True,
                 "children": [
@@ -195,7 +192,7 @@ def home_pane(db: Db, projects: list[str] | None = None, cost_warn: float = 5.0)
                         "value": f"{_ago(t['closed_at'])} назад",
                         "tone": "neutral",
                     }
-                    for t in reversed(снятые)
+                    for t in reversed(closed)
                 ],
             }
         )
@@ -326,7 +323,7 @@ def task_pane(
             {
                 "kind": "section",
                 "title": "Путь задачи",
-                "value": _trail(db, task, chain),
+                "value": " → ".join(db.path_steps(task["id"])) or (task["step"] or "—"),
                 "children": _trail_rows(db, task, chain, base_url),
             }
         )
@@ -500,6 +497,8 @@ def row_badge(db: Db, task, session_id: str, chain: Chain | None = None) -> dict
         }
     if status == ST_DONE:
         return {"text": "готово", "tone": "success", "icon": "check"}
+    if status == CLOSED:
+        return {"text": "снята", "tone": "neutral"}
     if status == ABANDONED:
         return {"text": "сессия потеряна", "tone": "danger"}
     if status == QUEUED:
@@ -627,12 +626,17 @@ def _stand_row(db: Db, task) -> dict:
             "value": "поднимается",
             "value_tone": "warn",
         }
+    failed = _last_stand_error(db, task)
     return {
         "kind": "action",
-        "label": "Поднять стенд",
+        "label": "Поднять стенд снова" if failed else "Поднять стенд",
         "method": "orch.stand",
         "icon": "play",
-        "tooltip": "роль поднимет окружение задачи на своих портах",
+        "tooltip": (
+            f"прошлый раз не вышло: {failed[:160]}"
+            if failed
+            else "роль поднимет окружение задачи на своих портах"
+        ),
         "params": {"task": task["id"], "revision": task["revision"]},
     }
 
@@ -778,22 +782,6 @@ def _outcomes_of(chain: Chain | None, task) -> dict[str, str]:
     return dict(step.next)
 
 
-def _trail(db: Db, task, chain: Chain) -> str:
-    steps = [
-        m["to_step"]
-        for m in reversed(db.moves(task["id"], limit=40))
-        if m["to_step"] and m["to_step"] != DONE
-    ]
-    out: list[str] = []
-    seen: set[str] = set()
-    for s in steps:
-        if out and out[-1].lstrip("⟲ ") == s:
-            continue
-        out.append(f"⟲ {s}" if s in seen else s)
-        seen.add(s)
-    return " → ".join(out) or (task["step"] or "—")
-
-
 def _sheet_rows(db: Db, task, chain: Chain) -> list[dict]:
     """Переключатели листа — только для ещё не пройденных шагов."""
     sheet = json.loads(task["human_sheet"] or "{}")
@@ -877,6 +865,7 @@ def _tone(status: str) -> str:
         RUNNING: "info",
         WAITING: "danger",
         ST_DONE: "success",
+        CLOSED: "neutral",
         ABANDONED: "danger",
     }.get(status, "neutral")
 

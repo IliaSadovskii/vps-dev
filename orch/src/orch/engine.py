@@ -7,55 +7,62 @@
 Единственный писатель базы — движок. Всё, что меняет задачу, идёт транзакцией
 с инкрементом ревизии; внешние действия (создать сессию, послать промпт)
 повторяемы по намерению, записанному в базе.
+
+Здесь — жизненный цикл задачи и захода: очередь, рабочая копия, сессия,
+наблюдение за ходом, приём сигнала. Остальные обязанности движка лежат
+рядом и подмешиваются в класс: заявки (`inbox.py`), мастер (`wizard.py`),
+кнопки владельца (`buttons.py`), стенд (`stand_role.py`), контекст промпта
+(`promptctx.py`). У всех один `self.db` и один `self.aoe`.
 """
 
 from __future__ import annotations
 
 import json
-import re
-import uuid
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from . import artifacts as art
-from . import stand as stands
-from . import promptbuild, signals
-from .aoe import ERROR, IDLE, RUNNING, STARTING, STOPPED, WAITING, Aoe, AoeError, Session
-from .chain import DONE, Chain, ChainError, Step, chains_dir, load as load_chain, parse as parse_chain
-from .db import ABANDONED, BACKLOG, DONE as ST_DONE, LIVE, QUEUED, RUNNING as ST_RUNNING, WAITING as ST_WAITING, Db, now
+from . import signals
+from .aoe import ERROR, RUNNING, STARTING, STOPPED, WAITING, Aoe, AoeError, Session, parse_time
+from .chain import (
+    DONE,
+    Chain,
+    ChainError,
+    Step,
+    apply_preset,
+    chains_dir,
+    load as load_chain,
+    parse as parse_chain,
+)
+from .db import (
+    ABANDONED,
+    BACKLOG,
+    DONE as ST_DONE,
+    FINISHED,
+    LIVE,
+    QUEUED,
+    RUNNING as ST_RUNNING,
+    WAITING as ST_WAITING,
+    Db,
+    epoch,
+    now,
+)
+from .buttons import ButtonsMixin
+from .inbox import InboxMixin
+from .naming import GROUP_ROOT, session_title, slug, title_from
+from .promptctx import PromptContextMixin, artifact_sha
+from .stand_role import StandMixin
+from .wizard import WizardMixin
 from .workspace import (
     Workspace,
     create_worktree,
-    git,
     has_work,
     remove_worktree,
     worktree_holder,
 )
 
-INBOX = Path.home() / ".local" / "share" / "orch" / "inbox"
-GROUP_ROOT = "orch"
 ARCHIVE_AFTER_H = 168
-# Сколько ждём уборщика стенда, прежде чем убрать самим. Пятнадцати минут
-# хватает на `docker compose down` даже с тяжёлыми томами; дольше ждать —
-# значит держать порты и контейнеры за закрытой задачей.
-TEARDOWN_GRACE_MIN = 15
-
-# Причины остановки. Код лежит в `task.wait_reason`, текст рисует панель.
-WAIT_REASONS = {
-    "gate": "ворота: ждёт вашего решения",
-    "no_signal": "роль закончила ход, не подав сигнал",
-    "max_runs": "предел заходов на шаг",
-    "error": "сессия в ошибке",
-    "ask": "роль спрашивает вас",
-    "bad_outcome": "роль назвала исход не из списка",
-    "chain_broken": "замороженная цепочка не читается",
-    "path_mismatch": "рабочая копия сессии не совпала с задачей",
-    "no_worker": "у сессии не поднялся воркер агента",
-    "no_worktree": "не удалось создать рабочую копию задачи",
-    "branch_busy": "ветку задачи держит другая рабочая копия",
-    "artifact": "роль сдала ход, но её файла нет или он не той формы",
-    "abandoned": "сессия задачи исчезла",
-}
 
 # Пробуждение уснувшего воркера: сколько раз пробуем и сколько ждём после
 # отправки промпта, прежде чем считать воркер уснувшим.
@@ -75,7 +82,7 @@ class Settings:
     cheap_model: str = "haiku"
 
 
-class Engine:
+class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMixin):
     def __init__(self, db: Db, aoe: Aoe | None = None, settings: Settings | None = None) -> None:
         self.db = db
         self.aoe = aoe or Aoe()
@@ -136,275 +143,6 @@ class Engine:
         self.aoe.set_color(session.id, "amber")
         self.aoe.set_urgent(session.id, False)
 
-    # ── заявки и очередь ─────────────────────────────────────────────────
-    def take_inbox(self) -> None:
-        """Заявки из `inbox/`: новая задача, кнопка из терминала, сессия Inbox.
-
-        Так `orch` в сессии и в терминале не пишет в базу: писатель один.
-        """
-        if not INBOX.is_dir():
-            return
-        for path in sorted(INBOX.glob("*.json")):
-            try:
-                request = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                path.unlink(missing_ok=True)
-                continue
-            kind = request.get("kind", "new")
-            try:
-                if kind == "button":
-                    answer = self.button(
-                        request["task"],
-                        request["revision"],
-                        request["action"],
-                        request.get("target"),
-                        request.get("comment"),
-                    )
-                    self.db.event(request["task"], "button_from_cli", {"answer": answer})
-                elif kind == "stand":
-                    if request.get("gone"):
-                        row = self.db.task(request["task"])
-                        if row is not None:
-                            # Слово уборщика проверяем: блок должен быть отдан.
-                            self.watch_teardown()
-                    else:
-                        self.stand_result(
-                            request["task"], request.get("port"), request.get("error")
-                        )
-                elif kind == "edit_text":
-                    self.edit_text(request["task"], request["text"])
-                elif kind == "wizard":
-                    self.open_wizard(
-                        request["project_path"],
-                        request.get("task"),
-                        request.get("mode") or "start",
-                    )
-                else:
-                    task_id = self.create_task(
-                        chain_name=request.get("chain") or self.settings.default_chain,
-                        project_path=request["project_path"],
-                        text=request["text"],
-                        preset=request.get("preset"),
-                        sheet_edits=request.get("sheet_edits") or {},
-                        backlog=bool(request.get("backlog")),
-                        branch=request.get("branch"),
-                        base=request.get("base"),
-                        author=request.get("author"),
-                        from_backlog=request.get("from_backlog"),
-                        stand=bool(request.get("stand")),
-                    )
-                    self.db.event(task_id, "task_created", {"from": "inbox", "file": path.name})
-            except (ChainError, KeyError, OSError) as exc:
-                self.db.event(None, "inbox_rejected", {"file": path.name, "error": str(exc)})
-            path.unlink(missing_ok=True)
-
-    def edit_text(self, task_id: str, text: str) -> str:
-        """Переписать ТЗ заявки. Только пока она в бэклоге: у поехавшей задачи
-        текст уже разошёлся по промптам прошлых шагов, и молча менять его —
-        врать ролям."""
-        task = self.db.task(task_id)
-        if task is None:
-            return "нет такой задачи"
-        if task["status"] != BACKLOG:
-            return f"{task_id} уже не в бэклоге: текст правится только у заявки"
-        with self.db.tx():
-            self.db.bump(task_id, text=text, title=_title_from(text))
-            self.db.event(task_id, "text_edited", {"len": len(text)})
-        return f"{task_id}: ТЗ переписано"
-
-    # Слово, которым владелец в штатной модалке «New session» помечает, что
-    # сессия заводится под оркестратор: поле Group = `orch`.
-    WIZARD_MARK = "orch"
-
-    def marked_for_orch(self, session: Session) -> bool:
-        """Владелец пометил сессию как заявку на задачу.
-
-        Метка — слово `orch` в поле Group штатной модалки «New session» или
-        в титуле сессии. Поле «дополнительные аргументы» для метки не годится:
-        `GET /api/sessions` его не отдаёт вовсе, плагин его не увидит.
-        """
-        if session.group.strip().lower() == self.WIZARD_MARK:
-            return True
-        title = session.title.strip().lower()
-        return title == self.WIZARD_MARK or title.startswith(f"{self.WIZARD_MARK} ")
-
-    def adopt_wizards(self, sessions: dict[str, Session]) -> list[str]:
-        """Сессия с группой `orch` становится мастером задачи.
-
-        Кнопка в панели знает проект, но не знает всех проектов машины, а
-        владелец и так заводит сессии штатной модалкой, где проект
-        выбирается привычно. Поэтому второй вход: в поле Group написать
-        `orch` — и движок сам пошлёт в эту сессию промпт мастера. Группа
-        сразу меняется на `orch/мастер`, поэтому дважды одну сессию не
-        усыновим.
-        """
-        from .chain import catalog
-
-        adopted = []
-        for session in sessions.values():
-            if not self.marked_for_orch(session):
-                continue
-            if not session.project_path:
-                continue
-            self.aoe.set_group(session.id, f"{GROUP_ROOT}/мастер")
-            self.aoe.set_title(session.id, f"Мастер · {Path(session.project_path).name}")
-            # Модель ставится вызовом: `agent_model` до адаптера не доезжает,
-            # и мастер молча уходил бы на Opus.
-            self.aoe.apply_model(session.id, "sonnet")
-            self.db.event(
-                None,
-                "wizard_adopted",
-                {"session": session.id, "project": session.project_path},
-            )
-            self.send_wizard_prompt(session.id, session.project_path, None, "start")
-            adopted.append(session.id)
-        return adopted
-
-    def send_wizard_prompt(self, sid: str, project: str, task, mode: str) -> None:
-        """Промпт мастера с каталогом цепочек и контекстом заявки."""
-        from .chain import catalog, prompts_dir
-
-        prompt_file = prompts_dir() / "role-wizard.md"
-        text = prompt_file.read_text(encoding="utf-8") if prompt_file.exists() else ""
-        text += "\n\n" + self.wizard_context(project, catalog(), task, mode)
-        try:
-            self.aoe.prompt(sid, text)
-        except AoeError as exc:
-            self.db.event(None, "wizard_prompt_failed", {"session": sid, "error": str(exc)})
-
-    def open_wizard(
-        self,
-        project_path: str,
-        task_id: str | None = None,
-        mode: str = "start",
-    ) -> str | None:
-        """Мастер задачи: сессия, в которой владелец заводит задачу разговором.
-
-        Панель не умеет ни поля ввода, ни дропдауна (`UX-PLAN.md`), поэтому
-        цепочку, ветку и автономию спрашивает роль в чате вариантами, а потом
-        сама зовёт `orch task new`. Сессия одна на проект: мастер дешёвый, и
-        плодить их на каждую заявку незачем.
-        """
-        project = str(Path(project_path).resolve())
-        task = self.db.task(task_id) if task_id else None
-        # Свободный мастер этого проекта, если он есть. По ключу
-        # идемпотентности его не найти: ключ живёт вечно и вернул бы сессию,
-        # которая уже уехала в группу заведённой задачи.
-        free = self.free_wizard(project)
-        if free is not None:
-            self.send_wizard_prompt(free, project, task, mode)
-            self.db.event(
-                task_id, "wizard_reused", {"project": project, "session": free, "mode": mode}
-            )
-            return free
-        try:
-            session = self.aoe.create(
-                path=project,
-                agent="claude",
-                model="sonnet",
-                effort=None,
-                title=f"Мастер · {Path(project).name}",
-                group=f"{GROUP_ROOT}/мастер",
-                # Ключ уникален на вызов: повтор мастера не страшен, а вот
-                # вернуть по вечному ключу сессию, уехавшую в группу задачи,
-                # — страшно. От лишних сессий бережёт поиск свободного выше.
-                idempotency_key=f"wizard/{project}/{uuid.uuid4().hex[:8]}",
-            )
-        except AoeError as exc:
-            self.db.event(None, "wizard_failed", {"project": project, "error": str(exc)})
-            return None
-        # Группу ставим отдельным вызовом: при создании AoE её не применяет,
-        # и мастер оказывался вне группы, вперемешку с сессиями шагов.
-        self.aoe.set_group(session.id, f"{GROUP_ROOT}/мастер")
-        # Модель ставится вызовом, а не полем при создании: `agent_model` до
-        # адаптера Claude не доезжает, и сессия молча уходит на Opus (см.
-        # `apply_model`). Мастер — дешёвая роль, платить за него Opus незачем.
-        if not self.aoe.apply_model(session.id, "sonnet"):
-            self.db.event(
-                None,
-                "wizard_model_not_applied",
-                {"session": session.id, "got": self.aoe.model_now(session.id)},
-            )
-        self.send_wizard_prompt(session.id, project, task, mode)
-        self.db.event(
-            task_id,
-            "wizard_opened",
-            {"project": project, "session": session.id, "mode": mode},
-        )
-        return session.id
-
-    def projects_on_disk(self) -> list[str]:
-        """Репозитории каталога проектов — мастеру, когда проект ещё не выбран."""
-        base = Path(self.settings.projects_dir or "/projects").expanduser()
-        if not base.is_dir():
-            return []
-        try:
-            items = sorted(base.iterdir())
-        except OSError:
-            return []
-        return [str(p) for p in items if p.is_dir() and (p / ".git").is_dir()]
-
-    def wizard_context(self, project: str, chains: list[dict], task, mode: str) -> str:
-        """Блок «чем располагаешь» для мастера: цепочки, проект, заявка."""
-        lines = ["## Чем располагаешь", "", f"Проект: `{project}`", "", "Цепочки:"]
-        for item in chains:
-            if item.get("error"):
-                lines.append(f"- `{item['name']}` — не читается: {item['error']}")
-                continue
-            gates = ", ".join(item["gates"]) or "нет"
-            lines.append(
-                f"- `{item['name']}` — {item['description'] or 'без описания'}\n"
-                f"  шаги: {' → '.join(item['steps'])}\n"
-                f"  ворота по умолчанию: {gates}; пресеты: "
-                f"{', '.join(item['presets']) or 'нет'}"
-            )
-        if task is not None:
-            lines += [
-                "",
-                f"## Заявка {task['id']} из бэклога",
-                "",
-                "Текст, который владелец уже записал:",
-                "",
-                "```",
-                (task["text"] or "").strip(),
-                "```",
-                "",
-                f"Ветка заявки: {task['branch'] or 'не выбрана'}.",
-            ]
-            if mode == "text":
-                lines.append(
-                    "Владелец нажал «Править ТЗ»: перепиши текст в разговоре и, "
-                    f"когда он одобрит, вызови `orch task edit {task['id']} --text -`. "
-                    "Задачу не запускай."
-                )
-            else:
-                lines.append(
-                    "Владелец нажал «В работу»: уточни, что нужно, спроси цепочку, "
-                    "ветку и автономию, и заведи задачу вызовом `orch task new` с "
-                    f"`--from-backlog {task['id']}` — заявка закроется сама."
-                )
-        elif mode == "pick":
-            names = ", ".join(f"`{p}`" for p in self.projects_on_disk()) or "не нашёл"
-            lines += [
-                "",
-                "## Новая задача в другом проекте",
-                "",
-                "Владелец нажал «другой проект»: он ещё не сказал, в каком "
-                "проекте работать. Спроси вариантами. Проекты машины: " + names + ".",
-                "",
-                "Путь, который он назовёт, передай команде флагом `--project`. "
-                "Каталог этой сессии к делу не относится: она заведена, чтобы "
-                "было где разговаривать.",
-            ]
-        else:
-            lines += [
-                "",
-                "## Новая задача",
-                "",
-                "Владелец нажал «Новая задача»: начни с вопроса, что он хочет.",
-            ]
-        return "\n".join(lines)
-
     def create_task(
         self,
         *,
@@ -431,11 +169,9 @@ class Engine:
         chain = load_chain(chains_dir() / f"{chain_name}.yml")
         sheet = chain.sheet_with_preset(preset)
         if sheet_edits:
-            from .chain import apply_preset
-
             sheet = apply_preset(sheet, sheet_edits)
         task_id = self.db.next_task_id()
-        title = title or _title_from(text)
+        title = title or title_from(text)
         if branch:
             busy = self.task_on_branch(branch)
             if busy:
@@ -445,7 +181,7 @@ class Engine:
                     "другую ветку"
                 )
         else:
-            branch = f"{task_id.lower()}-{_slug(title)}"
+            branch = f"{task_id.lower()}-{slug(title)}"
         with self.db.tx():
             self.db.conn.execute(
                 "INSERT INTO task (id, chain, chain_yaml, title, text, project_path, branch, "
@@ -484,48 +220,6 @@ class Engine:
                 self.db.event(task_id, "from_backlog", {"task": from_backlog})
         return task_id
 
-    def free_wizard(self, project: str) -> str | None:
-        """Живая сессия мастера этого проекта, ещё не занятая задачей."""
-        try:
-            sessions = self.aoe.sessions()
-        except AoeError:
-            return None
-        for session in sessions.values():
-            if session.group != f"{GROUP_ROOT}/мастер":
-                continue
-            if str(Path(session.project_path).resolve()) == project:
-                return session.id
-        return None
-
-    def move_wizard_to(self, task_id: str, project: str) -> None:
-        """Мастер, заведший задачу, уходит в архив.
-
-        Рядом с ходами задачи его строку не поставить: сайдбар группирует по
-        каталогу сессии, а мастер живёт в проекте, тогда как шаги — в рабочей
-        копии. Держать вечную строку в стороне незачем: разговор о постановке
-        никуда не девается, ссылка на него — в панели задачи. Номер задачи
-        остаётся в титуле, чтобы сессия находилась поиском.
-        """
-        task = self.db.task(task_id)
-        if task is None:
-            return
-        try:
-            sessions = self.aoe.sessions()
-        except AoeError:
-            return
-        for session in sessions.values():
-            if session.group != f"{GROUP_ROOT}/мастер":
-                continue
-            if str(Path(session.project_path).resolve()) != project:
-                continue
-            self.aoe.set_group(session.id, task["group_path"] or f"{GROUP_ROOT}/{task_id}")
-            self.aoe.set_title(session.id, f"{task_id} · постановка")
-            self.aoe.archive(session.id)
-            with self.db.tx():
-                self.db.bump(task_id, wizard_session=session.id)
-                self.db.event(task_id, "wizard_archived", {"session": session.id})
-            return
-
     def promote_queue(self) -> None:
         """Одновременно `running` не больше `max_running`; остальные ждут."""
         running = [t for t in self.db.tasks((ST_RUNNING,))]
@@ -549,10 +243,6 @@ class Engine:
         их руками или AoE потерял), ждать от них нечего, а рабочая копия
         занимает диск и держит ветку. Ветку не трогаем никогда — в ней работа.
         """
-        import time
-
-        from .db import epoch
-
         for task in self.db.tasks((ABANDONED,)):
             if task["archived_at"]:
                 continue
@@ -572,7 +262,7 @@ class Engine:
                     {"worktree_removed": not error, "error": error[:300]},
                 )
 
-        for task in self.db.tasks((ST_DONE,)):
+        for task in self.db.tasks(FINISHED):
             if task["archived_at"] or not task["closed_at"]:
                 continue
             closed = epoch(task["closed_at"])
@@ -634,12 +324,8 @@ class Engine:
             self.db.event(task["id"], "prompt_failed", {"step": step.id, "error": str(exc)})
             return
 
-        sent_at = now()
         with self.db.tx():
-            self.db.conn.execute(
-                "UPDATE run SET session_id = ?, prompt_sent_at = ?, prompt_sha = ? WHERE id = ?",
-                (session.id, sent_at, sha, run_id),
-            )
+            self.db.prompt_sent(run_id, session.id, sha)
             self.db.mark_delivered(comment_ids)
             self.db.event(
                 task["id"],
@@ -757,7 +443,7 @@ class Engine:
                 agent=step.agent,
                 model=step.model,
                 effort=step.effort,
-                title=_session_title(task, step),
+                title=session_title(task["id"], step.id),
                 group=task["group_path"] or f"{GROUP_ROOT}/{task['id']}",
                 idempotency_key=key,
             )
@@ -851,10 +537,7 @@ class Engine:
             self.db.event(task["id"], "prompt_failed", {"step": step.id, "error": str(exc)})
             return
         with self.db.tx():
-            self.db.conn.execute(
-                "UPDATE run SET session_id = ?, prompt_sent_at = ?, prompt_sha = ? WHERE id = ?",
-                (session.id, now(), sha, run["id"]),
-            )
+            self.db.prompt_sent(run["id"], session.id, sha)
             self.db.mark_delivered(comment_ids)
         self.dress(task, chain, step, session.id)
 
@@ -864,45 +547,43 @@ class Engine:
             self.stop(task["id"], "ask", urgent=True)
             return
         # Вопросы выключены листом автономии: закрываем ход и говорим решать самой.
+        # После отмены статус ещё несколько секунд остаётся `Waiting`, и без
+        # выдержки движок отменял бы тот же вопрос каждый проход.
+        if self.recently(task, "question_refused", run, WAKE_GRACE_S):
+            return
         self.aoe.cancel(session.id)
-        self.db.event(task["id"], "question_refused", {"step": step.id, "run": run["n"]})
-        try:
-            self.aoe.prompt(
-                session.id,
-                "Вопросов не задаём: реши сам, запиши выбор в `## Допущения` и "
-                "продолжай. Закончи ход командой `orch done`.",
-            )
-        except AoeError:
-            pass
+        self.db.event(task["id"], "question_refused", {"step": step.id, "run": run["id"]})
+        self.repeat_prompt(
+            run,
+            session,
+            "Вопросов не задаём: реши сам, запиши выбор в `## Допущения` и "
+            "продолжай. Закончи ход командой `orch done`.",
+        )
 
     def on_error(self, task, chain: Chain, step: Step, run, session: Session) -> None:
         """Один раз «продолжай», второй — остановка с причиной «ошибка»."""
-        seen = self.db.conn.execute(
-            "SELECT COUNT(*) c FROM event WHERE task_id = ? AND kind = 'error_retry' "
-            "AND payload LIKE ?",
-            (task["id"], f'%"run": {run["id"]}%'),
-        ).fetchone()["c"]
-        if seen:
-            self.stop(task["id"], "error", urgent=True)
+        if self.db.run_events(task["id"], "error_retry", run["id"]):
+            # Сессия в ошибке уже после нашего «продолжай» — или ещё в ней
+            # через выдержку. До выдержки не смотрим: статус после промпта
+            # меняется не сразу.
+            if not self.recently(task, "error_retry", run, WAKE_GRACE_S):
+                self.stop(task["id"], "error", urgent=True)
             return
         self.db.event(task["id"], "error_retry", {"run": run["id"], "step": step.id})
-        try:
-            self.aoe.prompt(session.id, "Продолжай с места остановки и закончи ход `orch done`.")
-        except AoeError:
+        if not self.repeat_prompt(
+            run, session, "Продолжай с места остановки и закончи ход `orch done`."
+        ):
             self.stop(task["id"], "error", urgent=True)
 
     def wake(self, task, run, session: Session) -> None:
         """Разбудить уснувший воркер промптом. Не больше `WAKE_LIMIT` раз."""
-        from .aoe import parse_time
-
         sent = parse_time(run["prompt_sent_at"])
         if sent and _epoch_now() - sent < WAKE_GRACE_S:
-            return          # воркер ещё поднимается после создания сессии
-        tried = self.db.conn.execute(
-            "SELECT COUNT(*) c FROM event WHERE task_id = ? AND kind = 'worker_wake' "
-            "AND payload LIKE ?",
-            (task["id"], f'%"run": {run["id"]}%'),
-        ).fetchone()["c"]
+            # Воркер ещё поднимается — после создания сессии или после
+            # прошлой побудки: каждая побудка сдвигает `prompt_sent_at`,
+            # поэтому попытки идут с выдержкой, а не три подряд за 15 секунд.
+            return
+        tried = len(self.db.run_events(task["id"], "worker_wake", run["id"]))
         if tried >= WAKE_LIMIT:
             self.db.event(
                 task["id"],
@@ -912,10 +593,32 @@ class Engine:
             self.stop(task["id"], "no_worker", urgent=True)
             return
         self.db.event(task["id"], "worker_wake", {"run": run["id"], "session": session.id})
+        self.repeat_prompt(run, session, "Продолжай с места остановки и закончи ход `orch done`.")
+
+    def repeat_prompt(self, run, session: Session, text: str) -> bool:
+        """Повторный промпт в идущий заход: «заверши ход», «продолжай», побудка.
+
+        Обязательно сдвигает `prompt_sent_at`: конец хода считается от
+        последней отправки. Без этого следующий проход через пять секунд
+        видел старый `Idle` как новый конец хода и закрывал заход, пока роль
+        работала (T16, 22:50:38 → 22:50:43).
+        """
         try:
-            self.aoe.prompt(session.id, "Продолжай с места остановки и закончи ход `orch done`.")
+            self.aoe.prompt(session.id, text)
         except AoeError as exc:
-            self.db.event(task["id"], "wake_failed", {"error": str(exc)})
+            self.db.event(run["task_id"], "prompt_failed", {"run": run["id"], "error": str(exc)})
+            return False
+        with self.db.tx():
+            self.db.prompt_sent(run["id"])
+        return True
+
+    def recently(self, task, kind: str, run, within_s: float) -> bool:
+        """Было ли событие `kind` у этого захода моложе `within_s` секунд."""
+        rows = self.db.run_events(task["id"], kind, run["id"])
+        if not rows:
+            return False
+        at = epoch(rows[-1]["at"])
+        return at is not None and _epoch_now() - at < within_s
 
     def on_idle(self, task, chain: Chain, step: Step, run, session: Session) -> None:
         """Ход кончился. Сигнал читается только здесь (`RISKS.md` п. 1)."""
@@ -947,7 +650,7 @@ class Engine:
 
         cost, _ = self.aoe.usage(session.id)
         ws.save_history(step.id, run["n"], run["start_sha"])
-        sha = _artifact_sha(ws, step)
+        sha = artifact_sha(ws, step)
         # У шага с одним переходом исхода нет — не пиши «outcome:None».
         trigger = f"outcome:{outcome}" if outcome else "signal"
 
@@ -1004,23 +707,16 @@ class Engine:
         Один раз просим закончить автоматически — роль часто просто забыла
         последнюю команду (`PLAN.md` §5 п. 4). Второй раз задача встаёт.
         """
-        nudged = self.db.conn.execute(
-            "SELECT COUNT(*) c FROM event WHERE task_id = ? AND kind = 'auto_continue' "
-            "AND payload LIKE ?",
-            (task["id"], f'%"run": {run["id"]}%'),
-        ).fetchone()["c"]
-        if not nudged:
+        if not self.db.run_events(task["id"], "auto_continue", run["id"]):
             self.db.event(task["id"], "auto_continue", {"run": run["id"], "step": step.id})
-            try:
-                self.aoe.prompt(
-                    session.id,
-                    "Ход закончился без сигнала. Заверши работу и подай сигнал: "
-                    "последнее действие — `orch done`. Если закончить нечем, "
-                    "запиши в `## Не решено`, чего не хватает.",
-                )
+            if self.repeat_prompt(
+                run,
+                session,
+                "Ход закончился без сигнала. Заверши работу и подай сигнал: "
+                "последнее действие — `orch done`. Если закончить нечем, "
+                "запиши в `## Не решено`, чего не хватает.",
+            ):
                 return
-            except AoeError:
-                pass
 
         last = signals.latest(ws.signals, step.id, run["n"])
         ws.save_history(step.id, run["n"], run["start_sha"])
@@ -1034,332 +730,6 @@ class Engine:
             )
         self.mark_stopped(task, run["session_id"])
         self.stand_if_wanted(self.db.task(task["id"]))
-
-    # ── кнопки владельца ─────────────────────────────────────────────────
-    def button(
-        self,
-        task_id: str,
-        revision: int,
-        action: str,
-        target: str | None = None,
-        comment: str | None = None,
-    ) -> str:
-        """Единственный вход для панели. Устаревшая ревизия отклоняется."""
-        task = self.db.task(task_id)
-        if task is None:
-            return "нет такой задачи"
-        if int(revision) != int(task["revision"]):
-            self.db.event(task_id, "stale_button", {"action": action, "revision": revision})
-            return "устаревшая кнопка, панель перерисована"
-        chain = self.chain_of(task)
-        if chain is None:
-            return "цепочка задачи не читается"
-        handler = {
-            "stand": self._btn_stand,
-            "accept": self._btn_accept,
-            "back": self._btn_back,
-            "again": self._btn_again,
-            "continue": self._btn_again,
-            "start": self._btn_start,
-            "accept_as_is": self._btn_accept,
-            "close": self._btn_close,
-        }.get(action)
-        if handler is None:
-            return f"неизвестное действие {action}"
-        return handler(task, chain, target, comment)
-
-    def _btn_stand(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
-        """Поднять стенд задачи — руками роли, а не движка.
-
-        Проекты поднимаются по-разному: одному хватает `docker compose up`,
-        другому нужен `.env`, миграции и сборка фронта, третий вообще не
-        дописан. Движок этого не знает и знать не должен, поэтому он делает
-        единственное, чего роль не может сама — берёт блок портов, — а
-        дальше зовёт роль «Стенд» в отдельной сессии.
-        """
-        return self.raise_stand(task)
-
-    def stand_if_wanted(self, task) -> None:
-        """Задача впервые встала и ждёт владельца — поднять стенд, если заказан.
-
-        Привязка именно к остановке, а не к воротам: у задачи с выключенными
-        воротами ворот не будет вовсе, а посмотреть работу владелец придёт всё
-        равно — на вопросе роли, на «нет сигнала» или на приёмке.
-        """
-        if task is None or not task["stand_wanted"]:
-            return
-        if task["stand_session"] or task["stand_teardown"]:
-            return
-        if task["status"] not in (ST_WAITING,):
-            return
-        self.raise_stand(task)
-
-    def raise_stand(self, task) -> str:
-        """Занять блок портов и посадить роль «Стенд» поднимать окружение."""
-        from .chain import prompts_dir
-
-        if not task["worktree_path"]:
-            return "рабочей копии ещё нет"
-        if task["stand_session"]:
-            return "стенд уже поднимает роль в своей сессии"
-        name, error = stands.claim(task)
-        if error:
-            self.db.event(task["id"], "stand_failed", {"stage": "claim", "error": error})
-            return f"не смог занять порты: {error[:200]}"
-        try:
-            session = self.aoe.create(
-                path=task["worktree_path"],
-                agent="claude",
-                model="sonnet",
-                effort=None,
-                title=f"{task['id']} · стенд",
-                group=task["group_path"] or f"{GROUP_ROOT}/{task['id']}",
-                idempotency_key=f"{task['id']}@{task['created_at']}/stand/{uuid.uuid4().hex[:8]}",
-            )
-        except AoeError as exc:
-            self.db.event(task["id"], "stand_failed", {"stage": "session", "error": str(exc)})
-            return f"сессия стенда не создалась: {exc}"
-        self.aoe.apply_model(session.id, "sonnet")
-        prompt = prompts_dir() / "role-stand.md"
-        text = prompt.read_text(encoding="utf-8") if prompt.exists() else ""
-        text += "\n\n" + self.stand_context(task, name)
-        try:
-            self.aoe.prompt(session.id, text)
-        except AoeError as exc:
-            self.db.event(task["id"], "stand_failed", {"stage": "prompt", "error": str(exc)})
-        with self.db.tx():
-            self.db.bump(task["id"], stand=name, stand_session=session.id, stand_wanted=1)
-            self.db.event(
-                task["id"], "stand_started", {"name": name, "session": session.id}
-            )
-        return "роль «Стенд» поднимает окружение"
-
-    def stand_context(self, task, name: str) -> str:
-        """Блок задачи для роли «Стенд»: где, чем и под каким именем."""
-        ports = stands.ports_of(name)
-        lines = [
-            "# Блок задачи",
-            "",
-            f"Задача {task['id']}: {task['title']}",
-            f"Проект: `{task['project_path']}`",
-            f"Рабочая копия, в ней и работай: `{task['worktree_path']}`",
-            f"Ветка задачи: `{task['branch']}`",
-            "",
-            f"Имя твоего блока портов: `{name}`",
-        ]
-        if ports:
-            lines.append("Выданные порты:")
-            for key, value in sorted(ports.items(), key=lambda kv: kv[1]):
-                lines.append(f"- `{key}` = {value}")
-        lines += [
-            "",
-            f"Записку положи в `{Path(task['worktree_path']) / '.orch' / task['id'] / 'artifacts' / 'stand.md'}`.",
-            "Закончи ход `orch stand ready <порт>` — или `orch stand failed \"причина\"`,",
-            "если поднять не вышло.",
-        ]
-        return "\n".join(lines)
-
-    def stand_result(self, task_id: str, port: int | None, error: str | None) -> None:
-        """Что роль «Стенд» сообщила: адрес или причину, почему не вышло."""
-        task = self.db.task(task_id)
-        if task is None:
-            return
-        with self.db.tx():
-            if error:
-                self.db.bump(task_id, stand_port=None)
-                self.db.event(task_id, "stand_failed", {"stage": "role", "error": error[:400]})
-            else:
-                self.db.bump(task_id, stand_port=int(port) if port else None)
-                self.db.event(task_id, "stand_ready", {"port": port})
-
-    def drop_stand(self, task) -> None:
-        """Позвать роль убрать стенд. Ждать её движок не будет вечно.
-
-        Гасит не движок: стенд мог подняться не только докером, и что именно
-        поднялось, знает тот, кто поднимал (записка `stand.md`). Но уборка
-        обязана случиться, поэтому за ролью следит `watch_teardown`: не
-        справилась за `TEARDOWN_GRACE_MIN` — движок добивает сам.
-        """
-        from .chain import prompts_dir
-
-        name = task["stand"] if "stand" in task.keys() else None
-        if not name or task["stand_teardown"]:
-            return
-        prompt = prompts_dir() / "role-stand-down.md"
-        text = prompt.read_text(encoding="utf-8") if prompt.exists() else ""
-        text += "\n\n" + self.teardown_context(task, name)
-        session = None
-        try:
-            session = self.aoe.create(
-                path=task["worktree_path"] or task["project_path"],
-                agent="claude",
-                model=self.settings.cheap_model,
-                effort=None,
-                title=f"{task['id']} · уборка стенда",
-                group=task["group_path"] or f"{GROUP_ROOT}/{task['id']}",
-                idempotency_key=f"{task['id']}@{task['created_at']}/teardown/{uuid.uuid4().hex[:8]}",
-            )
-            self.aoe.apply_model(session.id, self.settings.cheap_model)
-            self.aoe.prompt(session.id, text)
-        except AoeError as exc:
-            self.db.event(task["id"], "teardown_failed", {"stage": "session", "error": str(exc)})
-            # Сессии нет — убираем сами, тянуть нечего.
-            self.force_drop_stand(task, name, "сессия уборщика не создалась")
-            return
-        with self.db.tx():
-            self.db.bump(
-                task["id"], stand_teardown=session.id, stand_teardown_at=now(), stand_port=None
-            )
-            self.db.event(
-                task["id"], "teardown_started", {"name": name, "session": session.id}
-            )
-
-    def teardown_context(self, task, name: str) -> str:
-        """Что уборщику нужно знать: блок, копия, где записка стенда."""
-        ports = stands.ports_of(name)
-        root = task["worktree_path"] or task["project_path"]
-        note = Path(root) / ".orch" / task["id"] / "artifacts" / "stand.md"
-        lines = [
-            "# Блок задачи",
-            "",
-            f"Задача {task['id']}: {task['title']} — закрыта, убираем за ней.",
-            f"Имя блока портов: `{name}`",
-            f"Рабочая копия: `{root}`",
-            f"Записка стенда, если она есть: `{note}`",
-        ]
-        if ports:
-            lines.append("Порты блока: " + ", ".join(str(v) for v in sorted(ports.values())))
-        return "\n".join(lines)
-
-    def watch_teardown(self) -> None:
-        """Проверить за уборщиком и добить, если он не справился."""
-        import time
-
-        from .db import epoch
-
-        rows = self.db.conn.execute(
-            "SELECT * FROM task WHERE stand_teardown IS NOT NULL"
-        ).fetchall()
-        for task in rows:
-            name = task["stand"]
-            if not name or stands.gone(name):
-                self.finish_teardown(task, "убрано")
-                continue
-            started = epoch(task["stand_teardown_at"])
-            if started is None or (time.time() - started) / 60 < TEARDOWN_GRACE_MIN:
-                continue
-            self.force_drop_stand(task, name, "уборщик не успел")
-
-    def force_drop_stand(self, task, name: str, why: str) -> None:
-        """Добить уборку самим: команды `ports`, без агента."""
-        error = stands.down(task, name)
-        self.db.event(
-            task["id"], "teardown_forced", {"name": name, "why": why, "error": error[:300]}
-        )
-        self.finish_teardown(task, "добито движком")
-
-    def finish_teardown(self, task, how: str) -> None:
-        """Уборка закончена: сессию в архив, поля стенда очищены."""
-        if task["stand_teardown"]:
-            self.aoe.archive(task["stand_teardown"])
-        with self.db.tx():
-            self.db.bump(
-                task["id"], stand=None, stand_port=None, stand_session=None,
-                stand_teardown=None, stand_teardown_at=None,
-            )
-            self.db.event(task["id"], "teardown_done", {"how": how})
-
-    def _btn_accept(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
-        """Принять ход владельцем.
-
-        `target` — исход, который владелец выбрал сам («принять как есть» на
-        пределе заходов или после хода без сигнала). Без него берём исход,
-        которым роль закончила.
-        """
-        step = chain.step(task["step"])
-        last = self.db.last_run_of_step(task["id"], step.id)
-        outcome = target or (last["outcome"] if last else None)
-        if outcome == "дальше":
-            outcome = None
-        to = step.target(outcome) or step.target(None)
-        if to is None:
-            return "не понял, каким исходом принимать: назовите исход"
-        with self.db.tx():
-            if to == DONE:
-                revision = self.db.bump(task["id"], status=ST_DONE, step=None, closed_at=now(), wait_reason=None)
-            else:
-                revision = self.db.bump(task["id"], status=ST_RUNNING, step=to, wait_reason=None)
-            self.db.move(task["id"], step.id, to, "human", "button", revision, comment=comment)
-            self.db.event(task["id"], "button", {"action": "accept", "to": to})
-        if to == DONE:
-            self.drop_stand(self.db.task(task["id"]))
-        return "принято"
-
-    def _btn_back(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
-        step = chain.step(task["step"])
-        if not target or target not in step.human_moves:
-            return f"вернуть можно на: {', '.join(step.human_moves) or '—'}"
-        with self.db.tx():
-            revision = self.db.bump(task["id"], status=ST_RUNNING, step=target, wait_reason=None)
-            self.db.move(task["id"], step.id, target, "human", "button", revision, comment=comment)
-            self.db.event(task["id"], "button", {"action": "back", "to": target})
-        return f"вернул на {target}"
-
-    def _btn_again(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
-        """«Ещё заход» / «Продолжай».
-
-        Если задача встала на пределе заходов, кнопка обязана этот предел
-        поднять: иначе движок тут же остановит её снова, и владелец будет
-        нажимать в пустоту.
-        """
-        step = chain.step(task["step"])
-        grant = task["wait_reason"] == "max_runs"
-        with self.db.tx():
-            revision = self.db.bump(task["id"], status=ST_RUNNING, wait_reason=None)
-            if grant:
-                self.db.move(
-                    task["id"], step.id, step.id, "human", "grant_run", revision,
-                    comment=comment,
-                )
-            else:
-                self.db.move(
-                    task["id"], step.id, step.id, "human", "button", revision,
-                    comment=comment,
-                )
-            self.db.event(
-                task["id"], "button", {"action": "again", "step": step.id, "grant": grant}
-            )
-        return "ещё заход" + (" (предел поднят)" if grant else "")
-
-    def _btn_close(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
-        """Закрыть задачу, не доводя до конца.
-
-        Роли заводят заявки в бэклог сами, и часть из них никогда не поедет.
-        Пока такую задачу нельзя закрыть, она держит свою ветку и мешает
-        завести на ней новую.
-        """
-        with self.db.tx():
-            # `wait_reason` у закрытой задачи не используется — метим им, что
-            # её сняли, а не довели. Иначе снятая заявка встаёт в «Готово»
-            # рядом с настоящей работой и читается как достижение.
-            revision = self.db.bump(
-                task["id"], status=ST_DONE, step=None, closed_at=now(),
-                wait_reason="closed_by_owner",
-            )
-            self.db.move(
-                task["id"], task["step"], DONE, "human", "button", revision, comment=comment
-            )
-            self.db.event(task["id"], "closed", {"comment": comment})
-        self.drop_stand(self.db.task(task["id"]))
-        return "закрыта"
-
-    def _btn_start(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
-        if task["status"] not in (BACKLOG, QUEUED):
-            return "задача уже идёт"
-        with self.db.tx():
-            self.db.bump(task["id"], status=QUEUED)
-            self.db.event(task["id"], "button", {"action": "start"})
-        return "в очередь"
 
     # ── вспомогательное ──────────────────────────────────────────────────
     def chain_of(self, task) -> Chain | None:
@@ -1427,7 +797,7 @@ class Engine:
 
     def dress(self, task, chain: Chain, step: Step, session_id: str) -> None:
         """Титул, группа, цвет, пуш — ставятся каждый раз, они безвредны."""
-        self.aoe.set_title(session_id, _session_title(task, step))
+        self.aoe.set_title(session_id, session_title(task["id"], step.id))
         self.aoe.set_group(session_id, task["group_path"] or f"{GROUP_ROOT}/{task['id']}")
         self.aoe.set_color(session_id, "amber")
         self.aoe.set_urgent(session_id, False)
@@ -1436,206 +806,6 @@ class Engine:
         )
         self.aoe.set_notify(session_id, bool(gated))
 
-    def extra_includes(self, task, step: Step) -> list[str]:
-        """Общие файлы, которые движок добавляет по состоянию, а не по цепочке.
-
-        Правило про ворота нужно только роли, после которой задача встанет:
-        остальным оно даёт команду, которой они всё равно не смогут
-        воспользоваться (`PROMPT-NOTES.md`, прогон T16).
-        """
-        after = (self.sheet(task).get(step.id) or {}).get("after", step.human_after)
-        return ["common-gate"] if after else []
-
-    def assemble(self, task, chain: Chain, step: Step, run, ws: Workspace):
-        """Собрать промпт и вернуть (текст, sha, id доставленных комментариев)."""
-        import hashlib
-
-        comments = self.db.undelivered_comments(task["id"], step.id)
-        prev = self.db.last_run_of_step(task["id"], step.id)
-        prev_end = None
-        if run["n"] > 1:
-            rows = self.db.runs_of_step(task["id"], step.id)
-            done = [r for r in rows if r["n"] == run["n"] - 1]
-            prev_end = done[0]["end_sha"] if done else None
-
-        ctx = promptbuild.Context(
-            chain=chain,
-            step=step,
-            task_id=task["id"],
-            task_text=task["text"],
-            task_dir=ws.path,
-            root=ws.root,
-            run_n=run["n"],
-            path_steps=self.path_steps(task["id"]),
-            came_from=self.came_from(task, step, run),
-            comments=[c["comment"] for c in comments],
-            ask_allowed=self.ask_allowed(task, step),
-            changed_since=ws.diff_stat(prev_end),
-            later_artifacts=self.later_artifacts(ws, step, prev),
-            owner_edited=self.owner_edited(task, ws, chain),
-            sub_prompts=self.sub_prompts(step),
-            extra_includes=self.extra_includes(task, step),
-            stand_name=stands.name_of(task) if task["worktree_path"] else "",
-        )
-        text = promptbuild.build(ctx)
-        if ctx.oversized:
-            self.db.event(task["id"], "prompt_oversized", {"step": step.id, "run": run["n"]})
-        return text, hashlib.sha256(text.encode()).hexdigest(), [c["id"] for c in comments]
-
-    def path_steps(self, task_id: str) -> list[str]:
-        """Путь задачи по шагам; повторный вход в шаг помечен `⟲`."""
-        steps = [
-            m["to_step"]
-            for m in reversed(self.db.moves(task_id, limit=40))
-            if m["to_step"] and m["to_step"] != DONE
-        ]
-        out: list[str] = []
-        seen: set[str] = set()
-        for s in steps:
-            if out and out[-1].lstrip("⟲ ") == s:
-                continue
-            out.append(f"⟲ {s}" if s in seen else s)
-            seen.add(s)
-        return out
-
-    def came_from(self, task, step: Step, run) -> str:
-        if run["n"] == 1 and not self.db.moves(task["id"], limit=2):
-            return ""
-        # Первый заход шага: продолжать нечего, даже если сюда привела кнопка
-        # «ещё заход» (её жмут и на вставшей задаче, которая шаг не начинала).
-        # Фраза «продолжи с места остановки» отправила бы роль искать свой
-        # прошлый файл, которого нет.
-        if run["n"] == 1:
-            past = self.db.conn.execute(
-                "SELECT COUNT(*) c FROM run WHERE task_id = ? AND step = ? AND id <> ?",
-                (task["id"], step.id, run["id"]),
-            ).fetchone()["c"]
-            if not past:
-                return ""
-        last = next(
-            (m for m in self.db.moves(task["id"], limit=10) if m["to_step"] == step.id), None
-        )
-        if last is None:
-            return ""
-        if last["actor"] == "human":
-            if last["from_step"] == step.id:
-                return promptbuild.came_from_phrase("again")
-            return promptbuild.came_from_phrase("human")
-        if last["actor"] == "agent" and last["from_step"] != step.id:
-            return promptbuild.came_from_phrase("role", last["from_step"])
-        return ""
-
-    def later_artifacts(self, ws: Workspace, step: Step, prev) -> list[str]:
-        """Файлы из `reads`, обновлённые после прошлого захода этого шага."""
-        if not prev or not prev["ended_at"]:
-            return []
-        import os
-
-        from .db import epoch
-
-        cutoff = epoch(prev["ended_at"])
-        if cutoff is None:
-            return []
-        out = []
-        for name in step.reads:
-            path = ws.artifacts / name
-            try:
-                if os.path.getmtime(path) > cutoff:
-                    out.append(name)
-            except OSError:
-                continue
-        return out
-
-    def owner_edited(self, task, ws: Workspace, chain: Chain) -> list[str]:
-        """Файлы, отпечаток которых изменился после сдачи роли (`PLAN.md` §5).
-
-        Смотрим последнюю сдачу каждого шага: владелец мог поправить руками
-        файл любой из пройденных ролей, не только предыдущей.
-        """
-        seen: set[str] = set()
-        out: list[str] = []
-        for move in self.db.moves(task["id"], limit=40):
-            if move["actor"] != "agent" or not move["artifact_sha"] or not move["from_step"]:
-                continue
-            if move["from_step"] in seen:
-                continue
-            seen.add(move["from_step"])
-            try:
-                prev_step = chain.step(move["from_step"])
-            except ChainError:
-                continue
-            current = _artifact_sha(ws, prev_step)
-            if current and current != move["artifact_sha"]:
-                out.extend(prev_step.artifact)
-        return out
-
-    def sub_prompts(self, step: Step) -> list[str]:
-        """Пути к ролям подагентов, которые называет сама роль шага.
-
-        Угадывать по имени шага нельзя: шаг `code-review` пользуется файлами
-        `sub-review-defects.md` и `sub-review-security.md`, и никакая маска по
-        имени шага их не находит. Роль называет их прямо в своём тексте —
-        оттуда и берём, тогда список не разъедется с промптом.
-        """
-        import re
-
-        from .chain import prompts_dir
-
-        role = prompts_dir() / f"{step.prompt_file}.md"
-        try:
-            text = role.read_text(encoding="utf-8")
-        except OSError:
-            return []
-        names = sorted(set(re.findall(r"\bsub-[a-z0-9-]+\.md\b", text)))
-        return [str(prompts_dir() / n) for n in names if (prompts_dir() / n).exists()]
-
-
 # ── свободные функции ────────────────────────────────────────────────────
 def _epoch_now() -> float:
-    import time
-
     return time.time()
-
-
-def _session_title(task, step: Step) -> str:
-    order = ""
-    return f"{task['id']} · {order}{step.id}".replace("  ", " ")
-
-
-def _artifact_sha(ws: Workspace, step: Step) -> str | None:
-    parts = [art.sha(ws.artifacts / name) or "" for name in step.artifact]
-    if not any(parts):
-        return None
-    import hashlib
-
-    return hashlib.sha256("".join(parts).encode()).hexdigest()
-
-
-def _title_from(text: str) -> str:
-    """Титул — первые слова текста, очищенные от разметки.
-
-    Мастер пишет ТЗ размеченным markdown («**Цель.** …»), и без чистки
-    строка задачи в панели начиналась со звёздочек и слова «Цель».
-    """
-    first = ""
-    for line in text.strip().splitlines():
-        line = re.sub(r"[*_`#>]+", "", line).strip()
-        line = re.sub(r"^(цель|задача|результат)[.:]\s*", "", line, flags=re.I)
-        if line:
-            first = line
-            break
-    words = (first or "задача").split()
-    return " ".join(words[:7])[:60] or "задача"
-
-
-def _slug(title: str) -> str:
-    table = str.maketrans(
-        "абвгдеёжзийклмнопрстуфхцчшщъыьэюя",
-        "abvgdeejzijklmnoprstufhccss'y'eua",
-    )
-    s = title.lower().translate(table)
-    s = re.sub(r"[^a-z0-9]+", "-", s)
-    # Обрезаем сначала, чистим дефисы потом: наоборот обрезка снова оставляет
-    # дефис на конце, и имя ветки в базе расходится с именем настоящей ветки
-    # (`orch push` отвечает «src refspec does not match any»).
-    return s[:32].strip("-") or "task"

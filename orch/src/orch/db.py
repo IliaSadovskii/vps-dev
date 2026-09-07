@@ -14,32 +14,38 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from .clock import epoch, now, now_precise  # noqa: F401 — реэкспорт для соседей
+
 STATE_DIR = Path.home() / ".local" / "share" / "orch"
 DB_PATH = STATE_DIR / "orch.db"
+# Заявки от `orch` из сессий и терминала: движок читает их на каждом проходе.
+INBOX = STATE_DIR / "inbox"
 MIGRATIONS = Path(__file__).resolve().parent / "migrations"
 
-# Статусы задачи (`PLAN.md` §3).
-BACKLOG, QUEUED, RUNNING, WAITING, DONE, ABANDONED = (
-    "backlog", "queued", "running", "waiting", "done", "abandoned"
+# Статусы задачи (`PLAN.md` §3). `closed` — снята владельцем, работа не
+# делалась; `done` — доведена до конца.
+BACKLOG, QUEUED, RUNNING, WAITING, DONE, CLOSED, ABANDONED = (
+    "backlog", "queued", "running", "waiting", "done", "closed", "abandoned"
 )
 LIVE = (QUEUED, RUNNING, WAITING)
+FINISHED = (DONE, CLOSED)
 
-
-def now() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-def epoch(value: str | None) -> float | None:
-    """Наше время в секунды эпохи. `time.mktime` тут неверен: он считает
-    строку местным временем, а мы пишем UTC."""
-    if not value:
-        return None
-    import datetime
-
-    try:
-        return datetime.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return None
+# Причины остановки. Код лежит в `task.wait_reason`, текст рисует панель.
+WAIT_REASONS = {
+    "gate": "ворота: ждёт вашего решения",
+    "no_signal": "роль закончила ход, не подав сигнал",
+    "max_runs": "предел заходов на шаг",
+    "error": "сессия в ошибке",
+    "ask": "роль спрашивает вас",
+    "bad_outcome": "роль назвала исход не из списка",
+    "chain_broken": "замороженная цепочка не читается",
+    "path_mismatch": "рабочая копия сессии не совпала с задачей",
+    "no_worker": "у сессии не поднялся воркер агента",
+    "no_worktree": "не удалось создать рабочую копию задачи",
+    "branch_busy": "ветку задачи держит другая рабочая копия",
+    "artifact": "роль сдала ход, но её файла нет или он не той формы",
+    "abandoned": "сессия задачи исчезла",
+}
 
 
 class EngineLock:
@@ -201,6 +207,34 @@ class Db:
             (now(), outcome, end_sha, duration, int(signalled), run_id),
         )
 
+    def prompt_sent(self, run_id: int, session_id: str | None = None, prompt_sha: str | None = None) -> None:
+        """Промпт ушёл в сессию — сейчас.
+
+        Зовётся и при первом промпте захода, и при каждом повторном
+        («заверши ход», «продолжай», побудка воркера): конец хода считается
+        от последней отправки, иначе старый `Idle` сойдёт за новый
+        (`aoe.Session.turn_ended`).
+        """
+        sets = ["prompt_sent_at = ?"]
+        values: list = [now_precise()]
+        if session_id is not None:
+            sets.append("session_id = ?")
+            values.append(session_id)
+        if prompt_sha is not None:
+            sets.append("prompt_sha = ?")
+            values.append(prompt_sha)
+        self.conn.execute(f"UPDATE run SET {', '.join(sets)} WHERE id = ?", [*values, run_id])
+
+    def run_events(self, task_id: str, kind: str, run_id: int) -> list[sqlite3.Row]:
+        """События захода: у повторяемых действий (побудка, «продолжай»)
+        счётчик — это число событий, а не поле."""
+        return list(
+            self.conn.execute(
+                "SELECT * FROM event WHERE task_id = ? AND kind = ? AND payload LIKE ? ORDER BY seq",
+                (task_id, kind, f'%"run": {run_id}%'),
+            )
+        )
+
     def sessions_of_task(self, task_id: str) -> list[str]:
         return [
             r["session_id"]
@@ -250,6 +284,26 @@ class Db:
                 (task_id, limit),
             )
         )
+
+    def path_steps(self, task_id: str) -> list[str]:
+        """Путь задачи по шагам из движений; повторный вход помечен `⟲`.
+
+        Одна функция на промпт («Где ты») и на панель («Путь задачи»): два
+        экземпляра одного алгоритма разошлись бы при первой правке.
+        """
+        steps = [
+            m["to_step"]
+            for m in reversed(self.moves(task_id, limit=40))
+            if m["to_step"] and m["to_step"] != "done"
+        ]
+        out: list[str] = []
+        seen: set[str] = set()
+        for s in steps:
+            if out and out[-1].lstrip("⟲ ") == s:
+                continue
+            out.append(f"⟲ {s}" if s in seen else s)
+            seen.add(s)
+        return out
 
     def event(self, task_id: str | None, kind: str, payload: dict | None = None) -> None:
         self.conn.execute(
