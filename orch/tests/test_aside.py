@@ -513,3 +513,23 @@ def test_ответ_доходит_и_после_конца_задачи(engine,
     assert any(
         "Всё равно поправь" in текст for _, текст in fake.prompts
     ), "слова владельца пропали после закрытия задачи"
+
+
+def test_сводка_пишется_и_когда_задачу_принял_владелец(engine, fake, repo, tune):
+    """Владелец принял PR — прогон кончился, и роль должна подвести итог."""
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "ok")
+    task = engine.db.task(task_id)
+    engine.button(task_id, task["revision"], "accept")
+    engine.reconcile()
+    turn(engine, fake, task_id, "three", 1, None)
+    # Роль занята прошлым ходом — отпускаем её, иначе повод честно ждёт.
+    for _ in range(4):
+        for ход in engine.db.aside_runs_open():
+            if ход["session_id"]:
+                fake.finish_turn(ход["session_id"])
+        engine.reconcile()
+
+    assert engine.db.task(task_id)["status"] == "done"
+    assert any(x["wake"] == "role-tune-summary" for x in асайды(engine)), "сводки нет"

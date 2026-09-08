@@ -70,6 +70,17 @@ def ports_of(name: str) -> dict[str, int]:
     return result
 
 
+def containers(name: str) -> list[str]:
+    """Контейнеры стенда по метке compose: имя блока = имя проекта compose."""
+    out = _run(
+        ["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={name}"],
+        timeout=60,
+    )
+    if out.returncode != 0:
+        return []
+    return [line.strip() for line in out.stdout.splitlines() if line.strip()]
+
+
 def down(task, name: str) -> str:
     """Погасить стенд и вернуть блок.
 
@@ -87,6 +98,13 @@ def down(task, name: str) -> str:
         )
         if out.returncode != 0:
             errors.append((out.stdout + out.stderr).strip()[-300:])
+    if containers(name):
+        # Копии задачи может уже не быть, а контейнеры её пережить: compose
+        # умеет гасить по имени проекта, оно же имя блока портов. Так стенд
+        # уходит, даже когда гасить его из рабочей копии стало нечем.
+        out = _run(["docker", "compose", "-p", name, "down", "-v"], timeout=600)
+        if out.returncode != 0:
+            errors.append((out.stdout + out.stderr).strip()[-300:])
     out = _run([PORTS, "free", name], timeout=60)
     if out.returncode != 0 and "нет закреплённого блока" not in (out.stdout + out.stderr):
         errors.append((out.stdout + out.stderr).strip()[-300:])
@@ -94,5 +112,11 @@ def down(task, name: str) -> str:
 
 
 def gone(name: str) -> bool:
-    """Блок отдан: за именем больше ничего не числится."""
-    return _run([PORTS, "which", name], timeout=30).returncode != 0
+    """Стенда нет: и блок отдан, и контейнеры убраны.
+
+    Одного отданного блока мало: `ports free` снимает учёт, а контейнер
+    остаётся жить и держать порт. Так стенд T24 пережил свою задачу.
+    """
+    if _run([PORTS, "which", name], timeout=30).returncode == 0:
+        return False
+    return not containers(name)

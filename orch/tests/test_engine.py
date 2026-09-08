@@ -1474,3 +1474,51 @@ def test_автономию_живой_задачи_переставляют_ц�
     assert "переставлена" in engine.set_autonomy(task_id, None, {"two.after": True})
     sheet = _json.loads(engine.db.task(task_id)["human_sheet"])
     assert sheet["two"]["after"] is True and sheet["one"]["after"] is False
+
+
+def test_приёмка_владельцем_пишет_конец_задачи(engine, fake, repo):
+    """На конец задачи подписаны роли; без события они молча не срабатывают."""
+    import json as _json
+
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "ok")
+    task = engine.db.task(task_id)
+    engine.button(task_id, task["revision"], "accept")
+    engine.reconcile()
+    turn(engine, fake, task_id, "three", 1, None)
+
+    task = engine.db.task(task_id)
+    assert task["status"] == "done"
+    концы = [
+        _json.loads(r["payload"] or "{}")
+        for r in engine.db.conn.execute(
+            "SELECT payload FROM event WHERE kind = 'done' AND task_id = ?", (task_id,)
+        )
+    ]
+    assert len(концы) == 1, "событие конца задачи не одно"
+
+
+def test_стенд_не_считается_убранным_пока_живы_контейнеры(monkeypatch):
+    """`ports free` снимает учёт, а контейнер остаётся держать порт."""
+    from orch import stand as stands
+
+    вызовы = []
+
+    def подделка(args, cwd=None, timeout=600.0):
+        вызовы.append(args)
+
+        class Ответ:
+            returncode = 1 if args[:2] == ["ports", "which"] else 0
+            stdout = "abc123\n" if args[:2] == ["docker", "ps"] and живые else ""
+            stderr = ""
+
+        return Ответ()
+
+    monkeypatch.setattr(stands, "_run", подделка)
+
+    живые = True
+    assert not stands.gone("проект-t1"), "стенд с живым контейнером не убран"
+
+    живые = False
+    assert stands.gone("проект-t1")

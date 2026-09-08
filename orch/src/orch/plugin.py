@@ -318,13 +318,20 @@ class Worker:
         self.ui_set(slot, ident, payload, session_id=session_id)
 
     def _refresh_session_map(self, db: Db) -> None:
-        """Какая сессия какой задаче принадлежит — из заходов, без догадок."""
+        """Какая сессия какой задаче принадлежит — из заходов, без догадок.
+
+        Законченные задачи остаются в карте, пока не уйдут в архив: панель
+        рисуется толчком, и если перестать её обновлять, в сессии навсегда
+        застынет последний кадр — с воротами и кнопкой «Принять» у задачи,
+        которую владелец уже принял.
+        """
         self.session_of_task = {
             row["session_id"]: row["task_id"]
             for row in db.conn.execute(
                 "SELECT DISTINCT session_id, task_id FROM run "
                 "WHERE session_id IS NOT NULL AND task_id IN "
-                "(SELECT id FROM task WHERE status IN ('running','waiting','queued'))"
+                "(SELECT id FROM task WHERE status IN ('running','waiting','queued') "
+                " OR (status IN ('done','closed','abandoned') AND archived_at IS NULL))"
             )
         }
 

@@ -117,6 +117,11 @@ class ButtonsMixin:
                 revision = self.db.bump(task["id"], status=ST_RUNNING, step=to, wait_reason=None)
             self.db.move(task["id"], step.id, to, "human", "button", revision, comment=comment)
             self.db.event(task["id"], "button", {"action": "accept", "to": to})
+            if to == DONE:
+                # Задача доведена — то же событие, что пишет движок, когда
+                # доводит её сам. Без него всё, что подписано на конец задачи
+                # (сводка Наладчика, записка Менеджера), молча не срабатывает.
+                self.db.event(task["id"], "done", {"by": "owner"})
         if to == DONE:
             self.drop_stand(self.db.task(task["id"]))
         return "принято"

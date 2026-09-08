@@ -507,3 +507,27 @@ def test_кнопка_ворот_в_телеграм_живёт_в_задаче(
 
     task = engine.db.task(task_id)
     assert "устаревшая" in engine.set_notify_gates(task_id, task["revision"] - 1, False)
+
+
+def test_панель_закрытой_задачи_рисуется_без_ворот(engine, fake, repo):
+    """Панель рисуется толчком: перестанешь обновлять — в сессии навсегда
+    застынет кадр с кнопкой «Принять» у принятой задачи."""
+    from orch import panels
+
+    from tests.test_engine import start, turn
+
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "ok")
+    task = engine.db.task(task_id)
+    engine.button(task_id, task["revision"], "accept")
+    engine.reconcile()
+    turn(engine, fake, task_id, "three", 1, None)
+
+    task = engine.db.task(task_id)
+    assert task["status"] == "done"
+    pane = panels.task_pane(engine.db, task, "s1", "http://x")
+    вердикты = [b for b in pane["blocks"] if b.get("kind") == "callout"]
+    assert not вердикты, "у закрытой задачи не должно быть ворот с кнопками"
+    шапка = pane["blocks"][0]
+    assert шапка["value"] == "готово"
