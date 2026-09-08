@@ -192,6 +192,35 @@
         mode: '0755'
       register: orch_chains_script
 
+    # Сайдбар AoE зарастает: движок архивирует сессии закрытых задач, роли
+    # уходят туда сами. Архивные старше нескольких дней уезжают в корзину,
+    # откуда их ещё можно вернуть; безвозвратное удаление владелец зовёт сам.
+    - name: Скрипт суточной уборки сайдбара
+      ansible.builtin.copy:
+        src: orch-sweep
+        dest: "{{ orch_bin_dir }}/orch-sweep"
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Юнит и таймер уборки сайдбара
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - orch-sweep.service
+        - orch-sweep.timer
+
+    - name: Таймер уборки включён
+      ansible.builtin.systemd:
+        name: orch-sweep.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
     - name: Юнит страницы цепочек
       ansible.builtin.template:
         src: orch-chains.service.j2

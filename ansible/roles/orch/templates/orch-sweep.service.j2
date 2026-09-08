@@ -1,0 +1,13 @@
+# Управляется Ansible: roles/orch/templates/orch-sweep.service.j2
+[Unit]
+Description=Уборка сайдбара AoE: архивные сессии в корзину
+After=network-online.target
+
+[Service]
+Type=oneshot
+User={{ base_deploy_user }}
+Environment=HOME=/home/{{ base_deploy_user }}
+# Сколько дней архивной сессии живут до корзины. Из корзины их ещё можно
+# вернуть (`aoe session restore`); безвозвратное удаление владелец зовёт сам.
+Environment=ORCH_SWEEP_DAYS={{ orch_sweep_days | default(3) }}
+ExecStart={{ orch_venv }}/bin/python {{ orch_bin_dir }}/orch-sweep

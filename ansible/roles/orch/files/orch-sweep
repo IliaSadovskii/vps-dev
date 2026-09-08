@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+# orch-sweep — суточная уборка сайдбара AoE: архивные сессии старше
+# `ORCH_SWEEP_DAYS` дней уезжают в корзину.
+#
+# Почему в корзину, а не насовсем: `aoe session restore` возвращает сессию
+# вместе с перепиской, а `empty-trash` необратим — его владелец зовёт сам,
+# когда захочет освободить диск.
+#
+# Архивные — это те, что уже отработали: движок архивирует сессии закрытых
+# задач, роли уходят туда сами. Живые, снузнутые и незаархивированные не
+# трогаются никогда.
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+from datetime import datetime, timedelta, timezone
+
+BASE = os.environ.get("ORCH_SWEEP_AOE", "http://127.0.0.1:8065")
+DAYS = int(os.environ.get("ORCH_SWEEP_DAYS", "3"))
+
+
+def call(method: str, path: str):
+    req = urllib.request.Request(f"{BASE}{path}", method=method)
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        body = resp.read().decode("utf-8")
+    return json.loads(body) if body.strip() else {}
+
+
+def stamp(value: str):
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def main() -> int:
+    try:
+        raw = call("GET", "/api/sessions?state=all")
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        print(f"orch-sweep: AoE не отвечает: {exc}", file=sys.stderr)
+        return 1
+    rows = raw if isinstance(raw, list) else raw.get("sessions", [])
+    порог = datetime.now(timezone.utc) - timedelta(days=DAYS)
+
+    убрано, отказ = 0, 0
+    for s in rows:
+        когда = stamp(s.get("archived_at"))
+        if когда is None or когда > порог:
+            continue
+        try:
+            call("POST", f"/api/sessions/{s['id']}/trash")
+            убрано += 1
+        except (urllib.error.URLError, TimeoutError) as exc:
+            print(f"orch-sweep: {s['id']}: {exc}", file=sys.stderr)
+            отказ += 1
+    print(
+        f"orch-sweep: в корзину {убрано} (архивных старше {DAYS} дн.), "
+        f"не вышло {отказ}, всего сессий {len(rows)}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
