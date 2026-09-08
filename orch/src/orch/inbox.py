@@ -48,6 +48,27 @@ class InboxMixin:
                         self.stand_result(
                             request["task"], request.get("port"), request.get("error")
                         )
+                elif kind == "aside":
+                    if request["action"] == "note":
+                        answer = self.aside_note(
+                            int(request["run"]),
+                            request.get("severity") or "fyi",
+                            request.get("title") or "",
+                            request.get("body") or "",
+                            request.get("options") or [],
+                            request.get("token") or "",
+                        )
+                    elif request["action"] == "memory":
+                        answer = self.aside_memory(
+                            int(request["run"]), request.get("text") or "",
+                            request.get("token") or "",
+                        )
+                    else:
+                        answer = self.aside_done(
+                            int(request["run"]), request.get("outcome"),
+                            request.get("token") or "",
+                        )
+                    self.db.event(None, "aside_request", {"answer": answer})
                 elif kind == "edit_text":
                     self.edit_text(request["task"], request["text"])
                 elif kind == "wizard":
@@ -69,6 +90,7 @@ class InboxMixin:
                         author=request.get("author"),
                         from_backlog=request.get("from_backlog"),
                         stand=bool(request.get("stand")),
+                        notify_gates=bool(request.get("notify")),
                     )
                     self.db.event(task_id, "task_created", {"from": "inbox", "file": path.name})
             except Exception as exc:  # noqa: BLE001 — одна кривая заявка не останавливает движок

@@ -111,3 +111,24 @@ def test_пресета_нет():
     with pytest.raises(ChainError) as exc:
         c.sheet_with_preset("нету")
     assert "нет пресета" in str(exc.value)
+
+
+def test_три_формы_ворот():
+    """`false` — никогда, `true` — после любого хода, список — после исхода."""
+    from orch.chain import gates_on
+
+    assert not gates_on(False, "ok")
+    assert gates_on(True, None)
+    assert gates_on(["ready"], "ready")
+    assert not gates_on(["ready"], "review")
+
+
+def test_ревью_возвращает_автору_и_автор_прыгает_дальше():
+    """Граф, а не список: у автора два выхода, у ревью один — назад."""
+    from orch.chain import chains_dir, load
+
+    deep = load(chains_dir() / "deep.yml")
+    plan = deep.step("plan")
+    assert plan.next == {"review": "plan-review", "ready": "implementation"}
+    assert plan.gates_on("ready") and not plan.gates_on("review")
+    assert deep.step("plan-review").single_next == "plan"

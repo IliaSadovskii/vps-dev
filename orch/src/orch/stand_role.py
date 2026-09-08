@@ -24,6 +24,40 @@ TEARDOWN_GRACE_MIN = 15
 
 
 class StandMixin:
+    # Стенд — побочная роль (`ASIDE-PLAN.md` §11): его сессии живут в
+    # `aside`/`aside_run`, а на задаче остаётся только то, что про задачу:
+    # нужен ли стенд, чей блок портов, какой порт открывать.
+    def stand_session(self, task_id: str) -> str | None:
+        """Сессия, в которой роль «Стенд» поднимает окружение, или None."""
+        return self._aside_session(task_id, "stand")
+
+    def teardown_session(self, task_id: str) -> str | None:
+        return self._aside_session(task_id, "stand-down")
+
+    def teardown_started_at(self, task_id: str) -> str | None:
+        row = self._aside_run(task_id, "stand-down")
+        return row["started_at"] if row else None
+
+    def _aside_session(self, task_id: str, name: str) -> str | None:
+        row = self._aside_run(task_id, name)
+        return row["session_id"] if row else None
+
+    def _aside_run(self, task_id: str, name: str):
+        aside = self.db.aside_live(name, task_id)
+        if aside is None:
+            return None
+        return self.db.aside_run_open(int(aside["id"]))
+
+    def _aside_finish(self, task_id: str, name: str) -> None:
+        """Закрыть побочную роль задачи вместе с её незакрытым ходом."""
+        aside = self.db.aside_live(name, task_id)
+        if aside is None:
+            return
+        run = self.db.aside_run_open(int(aside["id"]))
+        if run is not None:
+            self.db.aside_run_end(int(run["id"]), None)
+        self.db.aside_close(int(aside["id"]))
+
     def stand_if_wanted(self, task) -> None:
         """Задача впервые встала и ждёт владельца — поднять стенд, если заказан.
 
@@ -33,7 +67,7 @@ class StandMixin:
         """
         if task is None or not task["stand_wanted"]:
             return
-        if task["stand_session"] or task["stand_teardown"]:
+        if self.stand_session(task["id"]) or self.teardown_session(task["id"]):
             return
         if task["status"] not in (ST_WAITING,):
             return
@@ -43,8 +77,11 @@ class StandMixin:
         """Занять блок портов и посадить роль «Стенд» поднимать окружение."""
         if not task["worktree_path"]:
             return "рабочей копии ещё нет"
-        if task["stand_session"]:
+        if self.stand_session(task["id"]):
             return "стенд уже поднимает роль в своей сессии"
+        if not self.capacity(task["id"], "стенд"):
+            return "нет места под сессию: машина занята"
+        aside_id = self.db.aside_open("stand", "task", task["id"], task["id"])
         name, error = stands.claim(task)
         if error:
             self.db.event(task["id"], "stand_failed", {"stage": "claim", "error": error})
@@ -57,7 +94,14 @@ class StandMixin:
                 effort=None,
                 title=f"{task['id']} · стенд",
                 group=task["group_path"] or f"{GROUP_ROOT}/{task['id']}",
-                idempotency_key=f"{task['id']}@{task['created_at']}/stand/{uuid.uuid4().hex[:8]}",
+                # Ключ детерминированный: падение между созданием сессии и
+                # записью в базу не должно оставлять вторую сессию. Номер
+                # попытки в ключе — стенд можно поднимать заново после отказа.
+                # Ключ детерминированный: падение между созданием сессии и
+                # записью в базу не должно оставлять вторую сессию. Номер
+                # записи роли делает ключ разным у попыток: после отказа
+                # стенд поднимают заново, и это должна быть новая сессия.
+                idempotency_key=f"{task['id']}@{task['created_at']}/stand/{aside_id}",
             )
         except AoeError as exc:
             self.db.event(task["id"], "stand_failed", {"stage": "session", "error": str(exc)})
@@ -71,7 +115,9 @@ class StandMixin:
         except AoeError as exc:
             self.db.event(task["id"], "stand_failed", {"stage": "prompt", "error": str(exc)})
         with self.db.tx():
-            self.db.bump(task["id"], stand=name, stand_session=session.id, stand_wanted=1)
+            run_id = self.db.aside_run_start(aside_id, "raise", None)
+            self.db.aside_run_sent(run_id, session.id)
+            self.db.bump(task["id"], stand=name, stand_wanted=1)
             self.db.event(
                 task["id"], "stand_started", {"name": name, "session": session.id}
             )
@@ -113,7 +159,8 @@ class StandMixin:
                 # вернётся, и после «нет .env.example» стенд не поднять уже
                 # никак. Блок портов остаётся за задачей — `ports claim`
                 # на занятое имя отвечает тем же блоком.
-                self.db.bump(task_id, stand_port=None, stand_session=None)
+                self.db.bump(task_id, stand_port=None)
+                self._aside_finish(task_id, "stand")
                 self.db.event(task_id, "stand_failed", {"stage": "role", "error": error[:400]})
             else:
                 self.db.bump(task_id, stand_port=int(port) if port else None)
@@ -128,7 +175,7 @@ class StandMixin:
         справилась за `TEARDOWN_GRACE_MIN` — движок добивает сам.
         """
         name = task["stand"] if "stand" in task.keys() else None
-        if not name or task["stand_teardown"]:
+        if not name or self.teardown_session(task["id"]):
             return
         prompt = prompts_dir() / "role-stand-down.md"
         text = prompt.read_text(encoding="utf-8") if prompt.exists() else ""
@@ -142,7 +189,7 @@ class StandMixin:
                 effort=None,
                 title=f"{task['id']} · уборка стенда",
                 group=task["group_path"] or f"{GROUP_ROOT}/{task['id']}",
-                idempotency_key=f"{task['id']}@{task['created_at']}/teardown/{uuid.uuid4().hex[:8]}",
+                idempotency_key=f"{task['id']}@{task['created_at']}/teardown",
             )
             self.aoe.apply_model(session.id, self.settings.cheap_model)
             self.aoe.prompt(session.id, text)
@@ -152,9 +199,11 @@ class StandMixin:
             self.force_drop_stand(task, name, "сессия уборщика не создалась")
             return
         with self.db.tx():
-            self.db.bump(
-                task["id"], stand_teardown=session.id, stand_teardown_at=now(), stand_port=None
-            )
+            self._aside_finish(task["id"], "stand")
+            aside_id = self.db.aside_open("stand-down", "task", task["id"], task["id"])
+            run_id = self.db.aside_run_start(aside_id, "teardown", None)
+            self.db.aside_run_sent(run_id, session.id)
+            self.db.bump(task["id"], stand_port=None)
             self.db.event(
                 task["id"], "teardown_started", {"name": name, "session": session.id}
             )
@@ -173,20 +222,25 @@ class StandMixin:
             f"Записка стенда, если она есть: `{note}`",
         ]
         if ports:
-            lines.append("Порты блока: " + ", ".join(str(v) for v in sorted(ports.values())))
+            # Один порт бывает под двумя именами переменных: в списке он не
+            # должен двоиться.
+            lines.append(
+                "Порты блока: " + ", ".join(str(v) for v in sorted(set(ports.values())))
+            )
         return "\n".join(lines)
 
     def watch_teardown(self) -> None:
         """Проверить за уборщиком и добить, если он не справился."""
-        rows = self.db.conn.execute(
-            "SELECT * FROM task WHERE stand_teardown IS NOT NULL"
-        ).fetchall()
-        for task in rows:
+        for aside in self.db.asides_live("stand-down"):
+            task = self.db.task(aside["scope_key"])
+            if task is None:
+                self.db.aside_close(int(aside["id"]))
+                continue
             name = task["stand"]
             if not name or stands.gone(name):
                 self.finish_teardown(task, "убрано")
                 continue
-            started = epoch(task["stand_teardown_at"])
+            started = epoch(self.teardown_started_at(task["id"]))
             if started is None or (time.time() - started) / 60 < TEARDOWN_GRACE_MIN:
                 continue
             self.force_drop_stand(task, name, "уборщик не успел")
@@ -201,12 +255,12 @@ class StandMixin:
 
     def finish_teardown(self, task, how: str) -> None:
         """Уборка закончена: сессию в архив, поля стенда очищены."""
-        if task["stand_teardown"]:
-            self.aoe.archive(task["stand_teardown"])
+        session = self.teardown_session(task["id"])
+        if session:
+            self.aoe.archive(session)
         with self.db.tx():
-            self.db.bump(
-                task["id"], stand=None, stand_port=None, stand_session=None,
-                stand_teardown=None, stand_teardown_at=None,
-            )
+            self._aside_finish(task["id"], "stand")
+            self._aside_finish(task["id"], "stand-down")
+            self.db.bump(task["id"], stand=None, stand_port=None)
             self.db.event(task["id"], "teardown_done", {"how": how})
 

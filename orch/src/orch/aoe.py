@@ -235,6 +235,48 @@ class Aoe:
         except AoeError:
             return False
 
+    def option_now(self, sid: str, option: str) -> str | None:
+        """Текущее значение опции сессии по последнему `ConfigOptionsUpdated`."""
+        try:
+            data = self.call("GET", f"/api/sessions/{sid}/acp/replay?view=raw&limit=400")
+        except AoeError:
+            return None
+        current = None
+        for frame in data.get("frames", []) if isinstance(data, dict) else []:
+            event = frame.get("event") or {}
+            updated = event.get("ConfigOptionsUpdated")
+            if not updated:
+                continue
+            for item in updated.get("options") or []:
+                if item.get("id") == option:
+                    current = item.get("current_value")
+        return current
+
+    def apply_effort(self, sid: str, effort: str, wait_s: float = 20.0) -> bool:
+        """Усилие ставится тем же вызовом, что и модель.
+
+        При создании сессии `agent_effort` до адаптера доезжает, но объявляет
+        его адаптер не мгновенно, а заход в уже живой сессии (`context: own`)
+        его и вовсе не переставит: та создавалась под усилие прошлого шага.
+        Поэтому сначала ждём объявленного значения и только потом ставим.
+        """
+        deadline = time.time() + wait_s
+        while time.time() < deadline:
+            if self.option_now(sid, "effort") == effort:
+                return True
+            time.sleep(2)
+        self._quiet(
+            "POST",
+            f"/api/sessions/{sid}/acp/config-option",
+            {"config_id": "effort", "value": effort},
+        )
+        deadline = time.time() + wait_s
+        while time.time() < deadline:
+            if self.option_now(sid, "effort") == effort:
+                return True
+            time.sleep(2)
+        return False
+
     def model_now(self, sid: str) -> str | None:
         """Какая модель стоит в сессии на самом деле.
 

@@ -102,7 +102,7 @@ def test_вопросы_выключены(ctx):
 
 def test_правка_владельцем_названа(ctx):
     ctx.owner_edited = ["one.md"]
-    assert "`one.md` правил владелец после сдачи" in build(ctx)
+    assert "`one.md` изменился после того, как его роль сдала ход" in build(ctx)
 
 
 def test_шаг_с_одним_переходом_не_требует_исхода(ctx):
@@ -210,3 +210,44 @@ def test_пустая_рубрика_файлов_не_выводится(engine
         task_dir=repo / ".orch" / "T1", root=repo, run_n=1,
     )
     assert "## Файлы" not in promptbuild.build(ctx)
+
+
+def test_возврат_кнопкой_не_обещает_комментария():
+    """Кнопка панели комментария не несёт — обещать «он ниже» нельзя."""
+    from orch import promptbuild
+
+    without = promptbuild.came_from_phrase("human", has_comment=False)
+    assert "ниже" not in without
+    assert "кнопкой" in without
+    assert "ниже" in promptbuild.came_from_phrase("human", has_comment=True)
+
+
+def test_где_ты_называет_ветку_и_стартовый_коммит(ctx):
+    """Границу работы задачи иначе не узнать: в ветке лежит и то, что было до."""
+    ctx.branch = "t19-auth"
+    ctx.base_branch = "main"
+    ctx.start_sha = "f270e9f2cb4a"
+    text = build(ctx)
+    assert "Ветка задачи `t19-auth`, база `main`." in text
+    assert "начинается с коммита `f270e9f2cb4a`" in text
+
+
+def test_копилка_проекта_попадает_в_блок_задачи(engine, fake, repo, tmp_path, monkeypatch):
+    """Копилка, которую никто не читает, — работа в стол."""
+    import orch.promptctx as mod
+    from orch.naming import slug
+
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / f"manager-{slug(str(repo))}.md").write_text(
+        "\n## 2026-09-01\n\nОтвергли очередь: некому держать воркер.\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(mod, "STATE_DIR", memory.parent, raising=False)
+    monkeypatch.setattr("orch.db.STATE_DIR", memory.parent)
+
+    from tests.test_engine import start
+
+    start(engine, repo)
+    текст = fake.prompts[-1][1]
+    assert "## Память проекта" in текст
+    assert "Отвергли очередь" in текст

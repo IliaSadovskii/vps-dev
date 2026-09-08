@@ -56,6 +56,15 @@ class TaskDir:
         return int(self.current.get("run", 0))
 
     @property
+    def gate_after(self) -> bool | list[str]:
+        """Исходы, после которых задача встанет на владельце."""
+        return self.current.get("gate_after", False)
+
+    @property
+    def ask_allowed(self) -> bool:
+        return bool(self.current.get("ask", True))
+
+    @property
     def artifacts(self) -> Path:
         return self.path / "artifacts"
 

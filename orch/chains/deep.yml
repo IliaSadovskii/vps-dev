@@ -1,13 +1,15 @@
 # Deep — полная дорожка разработки: разведка, выбор решения, план с
 # независимым ревью, реализация тест-первой, два чтения ревью кода, правки,
-# черновик PR. Три остановки на владельце: выбор решения (только если выбор
-# есть), утверждение плана, приёмка PR.
+# черновик PR. Четыре остановки на владельце: решение, утверждение готового
+# плана, приёмка починенного кода, приёмка PR. Ревью плана и ревью кода
+# владельца не останавливают: находки возвращаются автору, тот их закрывает
+# и показывает владельцу итог.
 #
 # Формат — orch/PLAN.md §4. Роль шага — orch/prompts/role-<id>.md,
 # подагенты — sub-*.md, общие правила — common-*.md, навыки — skill-*.md.
-# Пробный период: все шаги на Claude Sonnet, усилие high. Целевые модели
-# (Opus на решении, плане и ревью кода, Codex на ревью плана, Haiku на PR)
-# записаны комментарием у каждого шага и включаются одной правкой.
+# Модель: Claude Opus 5 с окном 1M на всех шагах, усилие medium. Sonnet
+# отдаётся адаптером только в 200К-варианте, а шагам, читающим код, этого
+# мало. Дешёвые роли (Стенд) движок сам гоняет на модели из настроек.
 name: deep
 # common-test-ownership даётся не всем: скрипт владения тестами запускают
 # Реализация и Ревью кода, остальным это сорок строк не по адресу.
@@ -16,56 +18,79 @@ includes: [common-protocol, common-git-safety]
 # Листы автономии: пресет заполняет переключатели задачи, дальше их можно
 # менять в панели по ходу. По умолчанию — как записано в шагах.
 presets:
-  hands-off: { plan-review.after: false }            # план принимается сам
-  quiet:     { scoping.ask: false, solution.ask: false, plan.ask: false }
+  hands-off: { plan.after: false }                   # план принимается сам
+  quiet:     { scoping.ask: false, solution.ask: false, plan.ask: false, plan-review.ask: false }
   auto:      { "*.after": false, "*.ask": false, pr.after: true }
 
+# Память шага — `context`:
+#   fresh    (по умолчанию) новая сессия, чистая память. Роль знает только то,
+#            что в промпте и в названных файлах. Так работает большинство:
+#            свежий взгляд ловит то, что автор уже не видит.
+#   own      заход в своей же прошлой сессии этого шага. Роль помнит, что
+#            делала в прошлый раз. Для шага, куда работа возвращается на
+#            доводку: переписывать себя, помня почему, дешевле и точнее.
+#   continue заход в сессии предыдущего шага (того же агента). Для шага,
+#            который продолжает чужой разговор, а не начинает свой.
 steps:
   - id: scoping
-    run: { agent: claude, model: sonnet, effort: high }
+    run: { agent: claude, model: "opus[1m]", effort: medium }
     context: fresh
     artifact: [scoping.md]
     next: solution
     human: { ask: true }
 
   - id: solution
-    run: { agent: claude, model: sonnet, effort: high }   # пробный прогон; целевое: { agent: claude, model: "opus[1m]", effort: xhigh }
+    run: { agent: claude, model: "opus[1m]", effort: medium }
     context: fresh
     prompt: { reads: [scoping.md] }
     artifact: [solution.md]
-    next:
-      choice: plan
-      single: plan
+    next: plan
     human:
-      after: [choice]            # ворота только когда есть из чего выбирать
+      # Владелец принимает решение всегда, даже когда выбирать было не из
+      # чего: подпись под тем, что будут строить, дороже сэкономленного
+      # щелчка. Развилки при этом задаются вопросом внутри хода, чтобы ответ
+      # попал в файл, а не остался репликой в чате.
+      after: true
       ask: true
       moves: [scoping]
 
+  # План пишется, уходит на независимое ревью и возвращается к автору: он
+  # закрывает находки и показывает владельцу готовый план целиком. Ворота
+  # стоят здесь, а не на ревью, потому что владелец правит план — а править
+  # его может только автор (`один файл — один владелец`).
   - id: plan
-    run: { agent: claude, model: sonnet, effort: high }   # пробный прогон; целевое: { agent: claude, model: "opus[1m]", effort: xhigh }
-    context: fresh
-    prompt: { reads: [scoping.md, solution.md] }
+    run: { agent: claude, model: "opus[1m]", effort: medium }
+    # Сведение после ревью идёт в той же сессии, где план писался: автор
+    # помнит, почему сделал так, и не перечитывает полрепозитория заново.
+    # Владелец при этом видит один шаг «план», а не два.
+    context: own
+    prompt: { reads: [scoping.md, solution.md, plan-review.md] }
     artifact: [plan.md]
-    next: plan-review
-    human: { ask: true }         # инструмент тестов, которого нет в проекте
+    next:
+      review: plan-review        # первый заход: план написан, нужен взгляд со стороны
+      ready: implementation      # после ревью: находки закрыты, план готов
+    human:
+      after: [ready]             # утверждение плана владельцем
+      ask: true                  # инструмент тестов, которого нет в проекте
+      # Ревью автоматически бывает ровно одно. Захотел ещё — владелец
+      # посылает план на ревью кнопкой, сколько угодно раз. Дальше назад
+      # только Решение: разведка отсюда в один шаг не нужна, до неё можно
+      # дойти с ворот Решения, зато каждая кнопка занимает место в панели.
+      moves: [plan-review, solution]
+    limits: { max_runs: 3 }      # заход первый, сведение после ревью, круг с владельцем
 
   - id: plan-review
-    run: { agent: claude, model: sonnet, effort: high }   # пробный прогон; целевое: { agent: codex, model: gpt-5.6-sol, effort: high }
+    run: { agent: claude, model: "opus[1m]", effort: medium }   # целевое: независимость даёт другой поставщик — { agent: codex }
     context: fresh
     prompt: { reads: [plan.md, scoping.md, solution.md] }
     artifact: [plan-review.md]
-    next:
-      ok: implementation
-      rework: plan
-    human:
-      after: [ok]                # утверждение плана владельцем
-      ask: false
-      moves: [plan, scoping]
-    limits: { max_runs: 3 }
+    next: plan                   # находки всегда возвращаются автору, без остановки
+    human: { ask: true }         # спросить владельца, если непонятно, дефект это или замысел
+    limits: { max_runs: 1 }      # один круг: ревью читает план ровно раз
 
   - id: implementation
     includes: [common-test-ownership]
-    run: { agent: claude, model: sonnet, effort: high }
+    run: { agent: claude, model: "opus[1m]", effort: medium }
     context: fresh
     prompt: { reads: [plan.md, plan-review.md, scoping.md, solution.md] }
     artifact: [implementation.md]
@@ -74,33 +99,53 @@ steps:
 
   - id: code-review
     includes: [common-test-ownership]
-    run: { agent: claude, model: sonnet, effort: high }   # пробный прогон; целевое: { agent: claude, model: "opus[1m]", effort: high }
-    context: fresh
-    prompt: { reads: [scoping.md, implementation.md] }
-    artifact: [review.md, review-defects.md, review-security.md]
+    run: { agent: claude, model: "opus[1m]", effort: medium }
+    # Перечитка идёт в своей же сессии: свежесть взгляда живёт не здесь, а в
+    # подагентах — их запускают заново на каждом заходе, и дифф читают они.
+    # Ведущему на втором заходе нужно другое: помнить свои находки и свести
+    # их с тем, что ответили Правки.
+    context: own
+    prompt: { reads: [scoping.md, implementation.md, review-fixes.md] }
+    artifact: [review.md, review-defects.md, review-security.md, review-simplicity.md]
     next:
       findings: review-fixes
       tests: implementation     # находка про тесты: их правит только Реализация
-      clean: pr
+      clean: pr                 # чинить нечего — сразу черновик PR
     human: { ask: false }
-    limits: { max_runs: 3 }
+    limits: { max_runs: 2 }      # первое чтение и, если Правки попросят, перечитка
 
+  # Ворота стоят здесь, а не на Ревью кода: владелец смотрит на починенный
+  # код, а не на список находок, и правит его через того, кто им владеет.
+  # Перечитка после правок бывает не больше одного раза и по решению самих
+  # Правок — иначе мелкие находки можно искать бесконечно.
   - id: review-fixes
     includes: [common-test-ownership]
-    run: { agent: claude, model: sonnet, effort: high }
-    context: fresh
-    prompt: { reads: [review.md, review-defects.md, review-security.md, scoping.md] }
+    run: { agent: claude, model: "opus[1m]", effort: medium }
+    # Второй заход правок идёт в той же сессии: автор помнит, что уже чинил и
+    # от чего отказался. Ревью кода рядом остаётся `fresh` — независимость
+    # чтения и есть смысл того шага, память о своих же находках её сломает.
+    context: own
+    prompt: { reads: [review.md, review-defects.md, review-security.md, review-simplicity.md, scoping.md] }
     artifact: [review-fixes.md]
-    next: code-review
-    human: { ask: false }
+    next:
+      review: code-review        # правки задели поведение — пусть перечитают
+      ready: pr                  # закрыто, перечитывать нечего
+    human:
+      after: [ready]             # приёмка починенного кода владельцем
+      ask: false
+      moves: [code-review, implementation]
+    limits: { max_runs: 3 }      # круг с ревью и круг с владельцем
 
   - id: pr
-    run: { agent: claude, model: sonnet, effort: high }   # пробный прогон; целевое: { agent: claude, model: haiku }
+    run: { agent: claude, model: "opus[1m]", effort: medium }
     context: fresh
-    prompt: { reads: [scoping.md, plan.md, plan-review.md, implementation.md, review.md, review-fixes.md] }
+    prompt: { reads: [scoping.md, plan.md, plan-review.md, implementation.md, review.md, review-fixes.md, remarks.md] }
+    # `remarks.md` — заметки владельца с прошлых ворот. В `artifact` его нет
+    # намеренно: он пишется после `orch done`, пока задача стоит, а движок
+    # требует артефакты в момент сдачи. На первом заходе файла просто нет.
     artifact: [pull-request.md]
     next: done
     human:
       after: true                # приёмка; выключается только пресетом или руками
       ask: false
-      moves: [review-fixes, implementation, plan, scoping]
+      moves: [review-fixes, implementation, plan]

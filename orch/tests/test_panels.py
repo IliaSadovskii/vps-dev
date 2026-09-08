@@ -12,6 +12,24 @@ from orch.db import RUNNING, WAITING
 from test_engine import monkey_chain, session_of, start, turn
 
 
+
+def до_остановки_без_сигнала(engine, fake, sid):
+    """Довести заход до остановки «нет сигнала».
+
+    Движок толкает несколько раз и выдерживает паузу между толчками, поэтому
+    после каждого прохода состариваем отметку толчка: иначе тест ждал бы
+    реального времени.
+    """
+    from orch.engine import NUDGES_BEFORE_STOP
+
+    for _ in range(NUDGES_BEFORE_STOP + 1):
+        fake.finish_turn(sid)
+        engine.reconcile()
+        engine.db.conn.execute(
+            "UPDATE event SET at = '2000-01-01T00:00:00Z' WHERE kind = 'auto_continue'"
+        )
+        engine.db.conn.commit()
+
 def blocks_text(payload: dict) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
@@ -40,10 +58,7 @@ def test_бейдж_строки_сессии_говорит_зачем_смот
     badge = panels.row_badge(engine.db, task, sid, chain)
     assert badge["text"] == "one 1/3" and badge["tone"] == "info"
 
-    fake.finish_turn(sid)
-    engine.reconcile()
-    fake.finish_turn(sid)
-    engine.reconcile()          # встала без сигнала
+    до_остановки_без_сигнала(engine, fake, sid)
     task = engine.db.task(task_id)
     badge = panels.row_badge(engine.db, task, sid, chain)
     assert badge["tone"] == "danger"
@@ -72,7 +87,7 @@ def test_ждущая_задача_первой_и_с_кнопками(engine, f
     text = blocks_text(pane)
     assert "Ждут вас" in text
     assert "orch.accept" in text and "orch.back" in text
-    assert "Вернуть на one" in text
+    assert "Вернуть на «Заглушка one»" in text or "Вернуть на «one»" in text
     assert pane["footer"]["tone"] == "danger"
 
 
@@ -91,10 +106,7 @@ def test_кнопки_несут_текущую_ревизию(engine, fake, rep
 def test_кнопки_зависят_от_причины(engine, fake, repo):
     task_id = start(engine, repo)
     sid = session_of(engine, task_id)
-    fake.finish_turn(sid)
-    engine.reconcile()      # автоматическая просьба закончить
-    fake.finish_turn(sid)
-    engine.reconcile()      # остановка «нет сигнала»
+    до_остановки_без_сигнала(engine, fake, sid)
     pane = panels.home_pane(engine.db)
     methods = {a["method"] for a in _actions(pane)}
     assert "orch.again" in methods and "orch.accept_as_is" in methods
@@ -117,10 +129,7 @@ def test_строка_ждущей_задачи_ничего_не_нажимае
     """Строка была кликабельной впустую: метод ничего не делал."""
     task_id = start(engine, repo)
     sid = session_of(engine, task_id)
-    fake.finish_turn(sid)
-    engine.reconcile()
-    fake.finish_turn(sid)
-    engine.reconcile()
+    до_остановки_без_сигнала(engine, fake, sid)
     строки = [
         b
         for b in _flat(panels.home_pane(engine.db)["blocks"])
@@ -136,7 +145,9 @@ def test_панель_задачи_показывает_путь_файлы_и_�
     pane = panels.task_pane(engine.db, task, "s9", "http://127.0.0.1:8065")
     text = blocks_text(pane)
     assert "one → two" in text
-    assert f"/api/sessions/s9/file?path=.orch/{task_id}/artifacts/one.md" in text
+    # Файлы ролей открываются файловым менеджером машины, а не служебным
+    # маршрутом AoE: тот отдаёт JSON.
+    assert f":{panels.FILES_PORT}/files" in text and f"/{task_id}/artifacts/one.md" in text
     assert "Лист автономии" in text
     assert "Журнал" in text
 
@@ -148,10 +159,7 @@ def test_панель_задачи_показывает_последний_от�
     ws = _ws(engine, task_id)
     signals.write_aux(ws.signals, "refused", "one", 1, "исход 'нет' не существует")
     sid = session_of(engine, task_id)
-    fake.finish_turn(sid)
-    engine.reconcile()
-    fake.finish_turn(sid)
-    engine.reconcile()
+    до_остановки_без_сигнала(engine, fake, sid)
     task = engine.db.task(task_id)
     pane = panels.task_pane(engine.db, task, "s9", "http://x")
     assert "не существует" in blocks_text(pane)
@@ -217,8 +225,8 @@ def _ws(engine, task_id):
     return Workspace(task["worktree_path"] or task["project_path"], task_id)
 
 
-def test_ворота_шага_с_одним_переходом_без_исхода_в_тексте(engine, fake, repo):
-    """У шага с одним переходом исхода нет — «исходом None» владельцу не показываем."""
+def test_ворота_не_называют_владельцу_исход(engine, fake, repo):
+    """Имя исхода — словарь движка: ни `None`, ни `choice` владельцу не показываем."""
     import json as _json
 
     task_id = start(engine, repo)
@@ -229,7 +237,8 @@ def test_ворота_шага_с_одним_переходом_без_исхо�
     turn(engine, fake, task_id, "one", 1, None)
     text = blocks_text(panels.home_pane(engine.db))
     assert "None" not in text
-    assert "закончил ход. Принять" in text
+    assert "закончил ход и ждёт вас" in text
+    assert "исходом" not in text
 
 
 def test_на_пределе_заходов_владелец_выбирает_исход(engine, fake, repo):
@@ -243,8 +252,8 @@ def test_на_пределе_заходов_владелец_выбирает_и
     assert engine.db.task(task_id)["wait_reason"] == "max_runs"
 
     labels = [a["label"] for a in _actions(panels.home_pane(engine.db))]
-    assert "Принять как «ok» → three" in labels
-    assert "Принять как «back» → one" in labels
+    assert any("Считать ход законченным" in x for x in labels)
+    assert len([x for x in labels if "Считать ход законченным" in x]) == 2
 
     task = engine.db.task(task_id)
     engine.button(task_id, task["revision"], "accept_as_is", target="ok")
@@ -265,7 +274,7 @@ def test_путь_задачи_ведёт_в_сессии_заходов(engine,
         for r in b["children"]
     ]
     assert rows[0]["label"] == "one"
-    assert rows[0]["href"] == f"http://127.0.0.1:8065/session/{sid}"
+    assert rows[0]["href"] == f"https://{panels.HOST}:8065/session/{sid}"
     assert rows[-1]["selected"] is True          # текущий шаг помечен
 
 
@@ -295,6 +304,25 @@ def _flat(blocks):
         for key in ("children",):
             if isinstance(b.get(key), list):
                 yield from _flat(b[key])
+
+
+def test_очередь_видна_на_обзоре_с_причиной(engine, repo):
+    """Задача в очереди сессии не имеет: не покажи её тут — пропадёт совсем."""
+    from test_engine import monkey_chain
+
+    monkey_chain(engine)
+    первая = engine.create_task(
+        chain_name="t", project_path=str(repo), text="первая", branch="общая"
+    )
+    engine.create_task(chain_name="t", project_path=str(repo), text="вторая", branch="общая")
+    with engine.db.tx():
+        engine.db.bump(первая, status="waiting", wait_reason="gate")
+
+    pane = panels.home_pane(engine.db)
+    строки = [b for b in _flat(pane["blocks"]) if b.get("kind") == "row"]
+    вторая = [r for r in строки if "вторая" in r["label"]][0]
+    assert f"работает {первая}" in вторая["sublabel"]
+    assert вторая["value"] == "общая"
 
 
 def test_заявка_из_бэклога_не_запускается_щелчком_по_строке(engine, repo):
@@ -427,3 +455,55 @@ def test_панель_задачи_говорит_словами_а_не_код�
     journal = [b for b in pane["blocks"] if b.get("title") == "Журнал"][0]["children"]
     assert any(r["label"] == "промпт отправлен роли" for r in journal)
     assert not any("{" in r["sublabel"] for r in journal)
+
+
+def test_ссылки_панели_ведут_на_адрес_машины_а_не_на_петлю():
+    """Панель читают снаружи машины: `127.0.0.1` там не открывается."""
+    from orch.panels import HOST, public
+
+    assert public("http://127.0.0.1:8065/session/s1") == f"https://{HOST}:8065/session/s1"
+    assert public("http://localhost:8065/a?b=c") == f"https://{HOST}:8065/a?b=c"
+    # Чужой адрес не трогаем: стенд задачи уже отдан по имени машины.
+    assert public(f"https://{HOST}:8030/") == f"https://{HOST}:8030/"
+
+
+def test_находка_рисуется_в_панели_с_кнопками(engine, fake, repo):
+    """Без бота панель — единственное место, где видно находку роли."""
+    from orch import panels
+
+    from tests.test_engine import start
+
+    task_id = start(engine, repo)
+    aside_id = engine.db.aside_open("tune", "run", task_id, task_id)
+    with engine.db.tx():
+        engine.db.note_add(
+            aside_id, None, task_id, "hold", "Ревью читало не тот файл", "Подробности.",
+            [{"verb": "restart", "target": None, "label": "перезапустить шаг"}],
+        )
+    pane = panels.task_pane(engine.db, engine.db.task(task_id), "s1", "http://x")
+    callout = next(b for b in pane["blocks"]
+                   if b.get("kind") == "callout" and b.get("title") == "Ревью читало не тот файл")
+    labels = [a["label"] for a in callout["actions"]]
+    assert labels[0] == "Ничего не делать" and "перезапустить шаг" in labels
+    assert all(a["method"] == "orch.note" for a in callout["actions"])
+
+
+def test_кнопка_ворот_в_телеграм_живёт_в_задаче(engine, fake, repo):
+    """Звать или не звать — свойство задачи, и переключается в её панели."""
+    from orch import panels
+
+    from tests.test_engine import start
+
+    task_id = start(engine, repo)
+    pane = panels.task_pane(engine.db, engine.db.task(task_id), "s1", "http://x")
+    строка = next(b for b in pane["blocks"] if b.get("label") == "Ворота в Telegram")
+    assert строка["value"] == "молча" and строка["params"]["on"] is True
+
+    task = engine.db.task(task_id)
+    assert "буду звать" in engine.set_notify_gates(task_id, task["revision"], True)
+    pane = panels.task_pane(engine.db, engine.db.task(task_id), "s1", "http://x")
+    строка = next(b for b in pane["blocks"] if b.get("label") == "Ворота в Telegram")
+    assert строка["value"] == "звать" and строка["params"]["on"] is False
+
+    task = engine.db.task(task_id)
+    assert "устаревшая" in engine.set_notify_gates(task_id, task["revision"] - 1, False)

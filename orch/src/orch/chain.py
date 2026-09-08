@@ -17,7 +17,7 @@ from .db import STATE_DIR
 
 DONE = "done"
 DEFAULT_MAX_RUNS = 3
-VALID_CONTEXT = ("fresh", "continue")
+VALID_CONTEXT = ("fresh", "continue", "own")
 VALID_MODE = ("full",)
 VALID_AGENTS = ("claude", "codex", "opencode")
 # Заголовок, с которого обязан начинаться артефакт (`PLAN.md` §5).
@@ -45,9 +45,16 @@ class Step:
     context: str = "fresh"
     artifact: list[str] = field(default_factory=list)
     next: dict[str, str] = field(default_factory=dict)
+    # Ворота: `false` — никогда, `true` — после любого хода, список — после
+    # этих исходов. Смысл списка — исход, который ходом не кончает: у Плана
+    # `review` уезжает на ревью, и владельцу там нечего принимать.
     human_after: bool | list[str] = False
     human_ask: bool = True
     human_moves: list[str] = field(default_factory=list)
+    # Пути, которые шагу можно трогать. Пусто — ограничений нет и сторож
+    # молчит: выдумывать границы за владельца движок не станет
+    # (`ASIDE-PLAN.md` §2, сторожа).
+    zone: list[str] = field(default_factory=list)
     max_runs: int = DEFAULT_MAX_RUNS
 
     @property
@@ -68,10 +75,8 @@ class Step:
         return self.next.get(outcome)
 
     def gates_on(self, outcome: str | None) -> bool:
-        """Ждать ли владельца после этого исхода."""
-        if isinstance(self.human_after, bool):
-            return self.human_after
-        return outcome in self.human_after
+        """Ждать ли владельца после этого хода."""
+        return gates_on(self.human_after, outcome)
 
 
 @dataclass
@@ -197,6 +202,7 @@ def _step(raw: dict, chain_name: str) -> Step:
         human_after=human.get("after", False),
         human_ask=bool(human.get("ask", True)),
         human_moves=list(human.get("moves") or []),
+        zone=[str(z) for z in (raw.get("zone") or [])],
         max_runs=int(limits.get("max_runs", DEFAULT_MAX_RUNS)),
     )
 
@@ -236,7 +242,7 @@ def lint(chain: Chain) -> None:
                 "потому что задача на этом шаге не остановится"
             )
         if not isinstance(s.human_after, (bool, list)):
-            raise ChainError(f"шаг {s.id}: human.after — true, false или список исходов")
+            raise ChainError(f"шаг {s.id}: human.after — false, true или список исходов")
         if isinstance(s.human_after, list):
             unknown = set(s.human_after) - set(s.next)
             if unknown:
@@ -314,11 +320,31 @@ def catalog() -> list[dict]:
                 "custom": is_custom(name),
                 "description": " ".join(head).strip(),
                 "steps": [s.id for s in chain.steps],
+                "edges": [
+                    {
+                        "step": s.id,
+                        "next": dict(s.next),
+                        "after": s.human_after,
+                        "ask": s.human_ask,
+                        "max_runs": s.max_runs,
+                        "context": s.context,
+                    }
+                    for s in chain.steps
+                ],
                 "presets": sorted(chain.presets),
                 "gates": [s.id for s in chain.steps if s.human_after],
             }
         )
     return out
+
+
+def gates_on(after: bool | list[str], outcome: str | None) -> bool:
+    """Ждать ли владельца: одно правило для цепочки и для листа автономии."""
+    if isinstance(after, bool):
+        return after
+    if isinstance(after, list):
+        return outcome in after
+    return False
 
 
 def chains_dir() -> Path:

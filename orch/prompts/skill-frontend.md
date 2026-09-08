@@ -1,4 +1,4 @@
-<!-- Навык. Читают роли: plan, implementation. Подключается по строке `Навыки:` в scoping.md. -->
+<!-- Навык. Читают шаги: plan, implementation. Подключается по строке `Навыки:` в scoping.md. -->
 
 Skill: building user-facing UI. Loaded by Planning, Test Authoring and
 Implementation when `discovery.md` names `frontend` under «Навыки». It adds

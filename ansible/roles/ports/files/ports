@@ -234,7 +234,12 @@ cmd_doctor(){
   # 1) один порт в реестре у двух проектов
   shopt -s nullglob; local files=( "$PORTS_DIR"/*.env ); shopt -u nullglob
   if (( ${#files[@]} )); then
-    local dups; dups="$(for f in "${files[@]}"; do port_lines "$f"; done | cut -d= -f2 | sort | uniq -d)"
+    # `BASE_PORT` — метка начала блока, а не выданный порт: у большинства
+    # проектов он совпадает с `APP_PORT`, и без этого исключения проверка
+    # ругалась на каждый нормальный файл.
+    local dups; dups="$(for f in "${files[@]}"; do
+        port_lines "$f" | grep -v '^BASE_PORT=' | cut -d= -f2 | sort -u
+      done | sort | uniq -d)"
     [[ -z "$dups" ]] || { echo "${c_r}✗ Порт выдан дважды в реестре: $(echo "$dups" | tr '\n' ' ')${c_0}"; problems=1; }
   fi
 

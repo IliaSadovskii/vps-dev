@@ -41,6 +41,11 @@ class Refused(Exception):
 
 
 # ── команды ролей ────────────────────────────────────────────────────────
+# Глаголы, которыми побочная роль может предложить владельцу решение:
+# движок обязан уметь исполнить каждый (`ASIDE-PLAN.md` §4).
+VERBS = {"continue", "restart", "back", "say", "stop", "patch"}
+
+
 def cmd_whoami(args: argparse.Namespace) -> int:
     task = find_task()
     print(f"задача: {task.task_id}")
@@ -103,6 +108,12 @@ def cmd_done(args: argparse.Namespace) -> int:
     named = f" с исходом {outcome}" if outcome else ""
     print(f"ход сдан{named}. Сигнал: {path}")
     print("Дальше двигает движок; правки владельца после остановки вноси в свой файл.")
+    # Роль дословно пересказывала владельцу эту строку («ход сдан исходом
+    # choice») — служебные слова так и доезжали до чата (прогоны T19).
+    print(
+        "Последнее сообщение хода пиши владельцу, а не про меня: ни «ход сдан», "
+        "ни имени исхода, ни слова «сигнал» — он их не знает."
+    )
     return 0
 
 
@@ -165,15 +176,18 @@ def cmd_task_new(args: argparse.Namespace) -> int:
         "base": args.base,
         "preset": args.preset,
         "sheet_edits": sheet_edits,
-        "backlog": bool(args.backlog),
+        # По умолчанию заявка ложится в бэклог: в работу задача уходит
+        # только рукой владельца (кнопка «В работу» или явный `--start`).
+        "backlog": not bool(getattr(args, "start", False)),
         "stand": bool(getattr(args, "stand", False)),
+        "notify": bool(getattr(args, "notify", False)),
         "from_backlog": getattr(args, "from_backlog", None),
         "at": signals.now(),
     }
     INBOX.mkdir(parents=True, exist_ok=True)
     path = INBOX / f"{request['id']}.json"
     path.write_text(json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8")
-    where = "в бэклог" if args.backlog else "в очередь"
+    where = "в очередь" if getattr(args, "start", False) else "в бэклог"
     print(f"заявка {where}: {path}")
     return 0
 
@@ -423,21 +437,57 @@ def cmd_chains(args: argparse.Namespace) -> int:
             continue
         mark = " (правлена владельцем на странице настроек)" if item.get("custom") else ""
         print(f"{item['name']}{mark}: {item['description'] or 'без описания'}")
-        print(f"  шаги: {' → '.join(item['steps'])}")
+        print("  шаги:")
+        for edge in item.get("edges") or []:
+            print(f"    {_edge_line(edge)}")
         print(f"  ворота по умолчанию: {', '.join(item['gates']) or 'нет'}")
         print(f"  пресеты: {', '.join(item['presets']) or 'нет'}")
     return 0
 
 
+def _edge_line(edge: dict) -> str:
+    """Шаг со всеми его выходами: цепочка — граф, а не список.
+
+    Печатать шаги через стрелку в порядке файла нельзя: с тех пор как ревью
+    возвращает работу автору, порядок в файле и порядок хода — разные вещи.
+    """
+    nxt = edge["next"]
+    if list(nxt) == ["*"]:
+        targets = nxt["*"]
+    else:
+        targets = ", ".join(f"{target} ({outcome})" for outcome, target in nxt.items())
+    parts = [f"{edge['step']:<15} → {targets}"]
+    after = edge["after"]
+    if after is True:
+        parts.append("ворота: после любого хода")
+    elif after:
+        parts.append("ворота: после исхода " + ", ".join(after))
+    if not edge["ask"]:
+        parts.append("без вопросов")
+    context = {
+        "own": "заход в своей же сессии",
+        "continue": "заход в сессии прошлого шага",
+    }.get(edge.get("context", "fresh"))
+    if context:
+        parts.append(context)
+    if edge["max_runs"] != 3:
+        parts.append(f"заходов не больше {edge['max_runs']}")
+    return "   ·   ".join(parts)
+
+
 def cmd_branches(args: argparse.Namespace) -> int:
-    """Свежие ветки проекта с пометкой, какие заняты живыми задачами."""
+    """Свежие ветки проекта с пометкой, какие заняты работой.
+
+    Занята — та, в которой прямо сейчас идёт задача: очередь и бэклог
+    рабочую копию не держат.
+    """
     project = Path(args.project).resolve() if args.project else _project_here()
     conn = _ro_db()
     busy = {
         row["branch"]: row["id"]
         for row in conn.execute(
             "SELECT id, branch FROM task WHERE status IN "
-            "('queued','running','waiting','backlog') AND branch IS NOT NULL"
+            "('running','waiting') AND branch IS NOT NULL"
         )
     }
     for item in recent(str(project)):
@@ -497,6 +547,59 @@ def cmd_stand(args: argparse.Namespace) -> int:
         json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     print(f"{message}: владелец увидит это в панели задачи")
+    return 0
+
+
+def cmd_aside(args: argparse.Namespace) -> int:
+    """Побочная роль говорит с движком: находка или конец хода.
+
+    Опознаётся ход по `--id`, который движок напечатал в промпте: своей
+    рабочей копии у побочной роли может не быть вовсе, а окружение AoE
+    обычным сессиям не передаёт (`research/RISKS.md` п. 1).
+    """
+    run_id = str(args.id or "").strip().lstrip("Aa")
+    if not run_id.isdigit():
+        raise Refused("назовите свой ход: --id A17 (номер напечатан в промпте)")
+    if not (args.pass_token or "").strip():
+        raise Refused("нужен пропуск хода: --pass <из промпта>")
+    request = {
+        "id": uuid.uuid4().hex[:12],
+        "kind": "aside",
+        "run": int(run_id),
+        "token": args.pass_token.strip(),
+        "action": args.action,
+        "at": signals.now(),
+    }
+    if args.action == "note":
+        if not args.title:
+            raise Refused('находке нужен заголовок: --title "ревью читало не тот файл"')
+        options = []
+        for item in args.option or []:
+            verb, _, label = item.partition(":")
+            verb, target = (verb.split("=", 1) + [None])[:2] if "=" in verb else (verb, None)
+            if verb not in VERBS:
+                raise Refused(f"вариант {verb!r} движок исполнить не сможет; можно: {', '.join(sorted(VERBS))}")
+            options.append({"verb": verb, "target": target, "label": label.strip() or verb})
+        request.update(
+            severity="hold" if args.hold else "fyi",
+            title=args.title,
+            body=args.body or "",
+            options=options,
+        )
+        message = "находка уйдёт владельцу" if args.hold else "находка ляжет в сводку"
+    elif args.action == "memory":
+        if not args.text:
+            raise Refused('нужен текст: --text "…"')
+        request["text"] = args.text
+        message = "запись ляжет в копилку"
+    else:
+        request["outcome"] = args.outcome
+        message = "ход закрыт"
+    INBOX.mkdir(parents=True, exist_ok=True)
+    (INBOX / f"{request['id']}.json").write_text(
+        json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(f"{message}: движок разберёт заявку ближайшим проходом")
     return 0
 
 
@@ -702,11 +805,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--preset")
     p.add_argument("--after", action="append", metavar="ШАГ=on|off")
     p.add_argument("--ask", action="append", metavar="ШАГ=on|off")
-    p.add_argument("--backlog", action="store_true")
+    p.add_argument(
+        "--start",
+        action="store_true",
+        help="сразу в очередь: задача поедет, как освободится место (по умолчанию — бэклог)",
+    )
+    # Флаг остаётся ради ролей и старых записок: бэклог теперь и так по
+    # умолчанию, так что вреда от него нет.
+    p.add_argument("--backlog", action="store_true", help=argparse.SUPPRESS)
     p.add_argument(
         "--stand",
         action="store_true",
         help="владелец придёт смотреть работу: поднять стенд задачи к первым воротам",
+    )
+    p.add_argument(
+        "--notify",
+        action="store_true",
+        help="звать владельца в Telegram, когда задача встанет на воротах",
     )
     p.add_argument(
         "--branch",
@@ -758,6 +873,29 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("port", nargs="?", type=int, help="порт для «ready»")
     p.add_argument("--reason", help="одной строкой, что мешает (для «failed»)")
     p.set_defaults(func=cmd_stand)
+
+    p = sub.add_parser(
+        "aside",
+        help="побочная роль: записать находку владельцу или закончить ход",
+    )
+    p.add_argument("action", choices=["note", "done", "memory"])
+    p.add_argument("--id", required=True, help="номер вашего хода из промпта, например A17")
+    p.add_argument(
+        "--pass", dest="pass_token", required=True,
+        help="пропуск хода из промпта: без него движок команду не примет",
+    )
+    p.add_argument("--title", help="находка одной строкой")
+    p.add_argument("--body", help="подробности, до двадцати строк")
+    p.add_argument("--hold", action="store_true", help="остановить задачу до ответа владельца")
+    p.add_argument(
+        "--option",
+        action="append",
+        metavar="ГЛАГОЛ[=ЦЕЛЬ]:ПОДПИСЬ",
+        help='вариант ответа, например back=plan:"вернуть на план"',
+    )
+    p.add_argument("--outcome", help="чем кончился ход (для «done»)")
+    p.add_argument("--text", help="текст записи в копилку")
+    p.set_defaults(func=cmd_aside)
 
     p = sub.add_parser("gc", help="рабочие копии, которым не соответствует живая задача")
     p.add_argument("--yes", action="store_true", help="убрать найденное, а не только показать")

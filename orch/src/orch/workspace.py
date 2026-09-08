@@ -75,7 +75,13 @@ class Workspace:
 
     # ── текущее состояние для команды `orch` ─────────────────────────────
     def write_current(self, step: str, run: int, session_id: str | None, state: str,
-                      branch: str | None = None, reads: list[str] | None = None) -> None:
+                      branch: str | None = None, reads: list[str] | None = None,
+                      gate_after: bool | list[str] = False, ask: bool = True) -> None:
+        """Состояние захода для команды `orch`.
+
+        `gate_after` и `ask` — из листа автономии задачи, а не из цепочки:
+        по ним роль в промпте узнаёт, встанет ли задача после её хода.
+        """
         payload = {
             "task": self.task_id,
             "step": step,
@@ -84,6 +90,8 @@ class Workspace:
             "state": state,
             "branch": branch,
             "reads": reads or [],
+            "gate_after": gate_after,
+            "ask": ask,
         }
         tmp = self.path / ".current.json.tmp"
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -95,7 +103,12 @@ class Workspace:
         dest = self.history / f"{step}-{run}"
         dest.mkdir(parents=True, exist_ok=True)
         if self.artifacts.is_dir():
-            shutil.copytree(self.artifacts, dest / "artifacts", dirs_exist_ok=True)
+            # Только файлы ролей: снимки экрана и прочее тяжёлое, что роль
+            # положила рядом, копировать в историю каждого захода незачем.
+            shutil.copytree(
+                self.artifacts, dest / "artifacts", dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns("*.png", "*.jpg", "*.jpeg", "*.webp", "*.pdf"),
+            )
         if self.logs.is_dir():
             shutil.copytree(self.logs, dest / "logs", dirs_exist_ok=True)
         if start_sha:
@@ -164,6 +177,39 @@ def worktree_holder(project: Path | str, branch: str) -> Path | None:
             if ref in (f"refs/heads/{branch}", branch):
                 return path
     return None
+
+
+def touched_files(path: Path | str, base: str = "") -> set[str]:
+    """Файлы, которых задача коснулась в своей копии: коммиты и несохранённое.
+
+    Считается от точки расхождения с базовой веткой, а не от её головы:
+    иначе в список попало бы всё, что база успела уехать вперёд.
+    """
+    root = Path(path)
+    if not root.is_dir():
+        return set()
+    base = base or default_branch(root)
+    files: set[str] = set()
+    code, out = git_try(root, "merge-base", base, "HEAD")
+    point = out.strip() if code == 0 else ""
+    if point:
+        # `core.quotepath=false` — иначе кириллические пути приезжают
+        # экранированными восьмеричными кодами и не совпадают ни с чем.
+        code, out = git_try(
+            root, "-c", "core.quotepath=false", "diff", "--name-only", f"{point}..HEAD"
+        )
+        if code == 0:
+            files |= {line.strip() for line in out.splitlines() if line.strip()}
+    code, out = git_try(root, "-c", "core.quotepath=false", "status", "--porcelain")
+    if code == 0:
+        for line in out.splitlines():
+            name = line[3:].strip()
+            if " -> " in name:            # переименование: интересен новый путь
+                name = name.split(" -> ", 1)[1]
+            if name:
+                files.add(name)
+    # Папка задачи в git не попадает, но в `status` видна: это не работа.
+    return {f for f in files if not f.startswith(".orch/")}
 
 
 def has_work(path: Path | str) -> bool:

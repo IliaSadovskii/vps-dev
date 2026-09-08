@@ -35,12 +35,18 @@
 import html
 import json
 import os
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import yaml
 
+from orch import asides as aside_mod
+from orch import secrets
+from orch.notify import BIND_WINDOW_S
+from orch.telegram import Telegram, TelegramError
+from orch.asides import AsideError
 from orch.chain import (
     VALID_AGENTS,
     VALID_CONTEXT,
@@ -308,6 +314,154 @@ def reset(name):
 
 # ------------------------------------------------------------- страница --
 
+# ── побочные роли (`orch/ASIDE-PLAN.md` §12) ─────────────────────────────
+# Заводское описание лежит в `orch/asides/<имя>.yml`, правки владельца —
+# рядом с базой. Правится только то, что и правда настройка: включена ли
+# роль, чем разбирать каждый повод, бюджет, на каких цепочках. Права на
+# странице не редактируются: это контракт безопасности, а не вкус.
+def aside_view(name):
+    try:
+        spec = aside_mod.load_by_name(name)
+    except (AsideError, OSError) as exc:
+        return {"name": name, "error": str(exc)}
+    return {
+        "name": spec.name,
+        "title": spec.title or spec.name,
+        "scope": spec.scope,
+        "enabled": spec.enabled,
+        "custom": aside_mod.is_custom(name),
+        "rights": sorted(spec.rights),
+        "requires": list(spec.requires),
+        "chains": list(spec.chains),
+        "workspace": spec.workspace,
+        "budget": {
+            "runs_per_task": spec.limit("runs_per_task", 40),
+            "cost_usd": spec.limit("cost_usd", 0),
+        },
+        "wakes": [
+            {"on": list(w.on), "prompt": w.prompt, "agent": w.agent,
+             "model": w.model, "effort": w.effort or ""}
+            for w in spec.wakes
+        ],
+        # Строкой, а не списком: на странице это один абзац.
+        "description": " ".join(header_comment(aside_mod.path_of(name))),
+    }
+
+
+def asides_picture():
+    models, efforts = catalog_options()
+    return {
+        "asides": [aside_view(n) for n in aside_mod.names()],
+        "chains": ordered_names(),
+        "options": {"agents": list(VALID_AGENTS), "models": models, "efforts": efforts},
+        "notify": notify_state(),
+        "user_dir": str(aside_mod.user_dir()),
+    }
+
+
+def aside_apply(name, edits):
+    """Правки поверх заводского описания — как у цепочек."""
+    raw = yaml.safe_load(aside_mod.path_of(name).read_text(encoding="utf-8")) or {}
+    factory = yaml.safe_load(
+        (aside_mod.factory_dir() / f"{name}.yml").read_text(encoding="utf-8")
+    ) or raw
+    factory["enabled"] = bool(edits.get("enabled"))
+    if edits.get("chains") is not None:
+        factory["chains"] = [str(c) for c in edits["chains"]]
+    budget = dict(factory.get("budget") or {})
+    for key in ("runs_per_task", "cost_usd"):
+        value = (edits.get("budget") or {}).get(key)
+        if value not in (None, ""):
+            budget[key] = int(value)
+    if budget:
+        factory["budget"] = budget
+    правки = {tuple(w.get("on") or []): w for w in (edits.get("wakes") or [])}
+    for wake in factory.get("wakes") or []:
+        on = wake.get("on", wake.get(True, wake.get("when")))
+        on = [on] if isinstance(on, str) else list(on or [])
+        edit = правки.get(tuple(on))
+        if not edit:
+            continue
+        run = dict(wake.get("run") or {})
+        if edit.get("model"):
+            run["model"] = edit["model"]
+        if edit.get("agent"):
+            run["agent"] = edit["agent"]
+        if edit.get("effort"):
+            run["effort"] = edit["effort"]
+        else:
+            run.pop("effort", None)
+        wake["run"] = run
+    text = yaml.safe_dump(factory, allow_unicode=True, sort_keys=False)
+    aside_mod.parse(text, source=f"правки {name}")     # тот же разбор, что у движка
+    return text
+
+
+def aside_save(name, edits):
+    text = aside_apply(name, edits)
+    aside_mod.user_dir().mkdir(parents=True, exist_ok=True)
+    (aside_mod.user_dir() / f"{name}.yml").write_text(text, encoding="utf-8")
+
+
+def aside_reset(name):
+    (aside_mod.user_dir() / f"{name}.yml").unlink(missing_ok=True)
+
+
+# ── канал наружу ────────────────────────────────────────────────────────
+def notify_state():
+    block = secrets.telegram()
+    return {
+        "token": bool(block.get("token")),
+        "bot": str(block.get("bot") or ""),
+        "chats": [
+            {"id": str(c), "name": str((block.get("names") or {}).get(str(c)) or c)}
+            for c in (block.get("chats") or [])
+        ],
+        "awaiting": bool(block.get("awaiting_chat"))
+        and float(block.get("awaiting_until") or 0) > time.time(),
+    }
+
+
+def notify_test():
+    """Проверочное сообщение в привязанные чаты: дошло или нет.
+
+    Проверять привязку словами «должно работать» нельзя: между токеном,
+    чатом и телефоном владельца три места, где всё может встать молча.
+    """
+    block = secrets.telegram()
+    chats = [int(c) for c in (block.get("chats") or [])]
+    if not (block.get("token") and chats):
+        raise ValueError("сначала бот и чат")
+    bot = Telegram(str(block["token"]))
+    дошло = []
+    for chat in chats:
+        try:
+            bot.send(chat, "orch на связи. Это проверка канала — отвечать не нужно.")
+        except TelegramError as exc:
+            raise ValueError(f"не дошло в {chat}: {exc}") from exc
+        дошло.append(str(chat))
+    return дошло
+
+
+def notify_token(token):
+    """Записать токен. Чат привяжет движок, когда владелец напишет боту.
+
+    Токен проверяем сразу у Telegram: битый токен, принятый молча, выглядит
+    как рабочая привязка, а отказ виден только в журнале движка.
+    """
+    clean = (token or "").strip()
+    if ":" not in clean or len(clean) < 20:
+        raise ValueError("это не похоже на токен бота")
+    try:
+        name = Telegram(clean).whoami()
+    except TelegramError as exc:
+        raise ValueError(f"бот не отозвался: {exc}") from exc
+    secrets.set_telegram(
+        token=clean, chats=[], offset=0, awaiting_chat=True, bot=name,
+        awaiting_until=time.time() + BIND_WINDOW_S,
+    )
+
+
 def esc(text):
     return html.escape(str(text or ""), quote=True)
 
@@ -369,12 +523,26 @@ PAGE = """<!doctype html><html lang="ru"><head>
     сваливается в одну, и один шаг занимает весь экран. */
  @media(max-width:430px){body{padding:1.25rem .6rem 2rem}.steps,.bar,.cdesc{padding-left:.6rem;padding-right:.6rem}
    .grid{grid-template-columns:1fr 1fr;gap:.4rem}.step{padding:.6rem}}
+ .tabs{display:flex;gap:.4rem;margin:0 0 1rem}
+ .tabs button{background:none;color:inherit;border:1px solid var(--line);font-weight:500}
+ .tabs button.on{background:var(--accent);color:#fff;border-color:transparent}
+ .role{border:1px solid var(--line);border-radius:14px;padding:.9rem 1rem;margin:0 0 .75rem}
+ .role h3{margin:0 0 .2rem;font-size:1rem;display:flex;align-items:center;gap:.5rem}
+ .role .rights{font-size:.8rem;opacity:.55}
+ .off{opacity:.55}
+ input[type=text],input[type=password],input[type=number]{font:inherit;padding:.35rem .5rem;
+   border:1px solid var(--line);border-radius:8px;background:none;color:inherit;width:100%}
 </style></head><body>
-<h1>Цепочки orch</h1>
+<h1>Настройка orch</h1>
 <div class="sub">Правки живут на этой машине и не трогают файлы репозитория. Задача едет по той
  цепочке, какой она была в момент, когда её завели, — правка действует на следующие задачи.</div>
 <div id="back"></div>
+<div class="tabs">
+ <button id="tab-chains" class="on" onclick="showTab('chains')">Цепочки</button>
+ <button id="tab-asides" onclick="showTab('asides')">Агенты</button>
+</div>
 <div id="list">Читаю цепочки…</div>
+<div id="asides" hidden></div>
 <p class="note" id="note"></p>
 <script>
 const S = {};
@@ -542,6 +710,142 @@ function render() {
   for (const c of S.data.chains) list.append(chainBlock(c));
 }
 
+// ── вкладка «Агенты» ───────────────────────────────────────────────────
+// Побочные роли: включение, чем разбирать каждый повод, бюджет, цепочки.
+// Права показываются, но не правятся — это контракт безопасности.
+function showTab(which) {
+  document.getElementById('list').hidden = which !== 'chains';
+  document.getElementById('asides').hidden = which !== 'asides';
+  const note = document.getElementById('note');
+  if (note) note.textContent = which === 'asides'
+    ? 'Настройки ролей лежат в ' + ((S.asidesData || {}).user_dir || '~/.local/share/orch/asides')
+      + ' — сброс удаляет файл оттуда. Роли по умолчанию выключены.'
+    : S.chainsNote || note.textContent;
+  document.getElementById('tab-chains').className = which === 'chains' ? 'on' : '';
+  document.getElementById('tab-asides').className = which === 'asides' ? 'on' : '';
+  if (which === 'asides' && !S.asides) loadAsides();
+}
+
+async function loadAsides() {
+  const box = document.getElementById('asides');
+  box.textContent = 'Читаю роли…';
+  const r = await fetch('/api/asides');
+  S.asidesData = await r.json();
+  S.asides = true;
+  renderAsides();
+}
+
+function renderAsides() {
+  const box = document.getElementById('asides');
+  const data = S.asidesData;
+  box.textContent = '';
+  const note = document.getElementById('note');
+  if (note && !S.chainsNote) S.chainsNote = note.textContent;
+  box.append(notifyCard(data.notify));
+  if (!data.asides.length) {
+    box.append(el('p', { class: 'note', text: 'Побочных ролей на этой машине пока нет.' }));
+    return;
+  }
+  for (const a of data.asides) box.append(roleCard(a, data));
+}
+
+function notifyCard(state) {
+  const card = el('div', { class: 'role' });
+  card.append(el('h3', {}, document.createTextNode('Уведомления в Telegram')));
+  const msg = el('div', { class: 'msg' });
+  const say = (t, ok) => { msg.textContent = t; msg.className = 'msg ' + (ok ? 'ok' : 'bad'); };
+  if (!state.token) {
+    card.append(el('p', { class: 'rights', text:
+      'Пока бота нет, роли пишут только в панель и не могут остановить прогон.' }));
+    const input = el('input', { type: 'password', placeholder: 'токен от @BotFather' });
+    const save = el('button', { text: 'Привязать бота', onclick: async () => {
+      const r = await fetch('/api/notify/token', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: input.value }) });
+      const a = await r.json().catch(() => ({}));
+      if (!r.ok) { say(a.error || 'не вышло', false); return; }
+      S.asidesData.notify = a.notify; renderAsides();
+    } });
+    card.append(el('div', { class: 'bar' }, input, save, msg));
+  } else if (state.awaiting) {
+    card.append(el('p', { class: 'rights', text:
+      'Токен принят. Напишите боту /start с телефона — движок привяжет этот чат сам.' }));
+    card.append(el('div', { class: 'bar' },
+      el('button', { class: 'ghost', text: 'Проверить снова', onclick: loadAsides }),
+      forgetButton()));
+  } else {
+    card.append(el('p', { class: 'rights', text:
+      'Чат привязан: ' + state.chats.map((c) => c.name + ' (' + c.id + ')').join(', ') }));
+    card.append(el('p', { class: 'rights', text:
+      'Находки ролей приходят сюда всегда. Ворота задачи — по флажку в самой задаче: '
+      + 'кнопка «Ворота в Telegram» в её панели или вопрос мастера при заведении.' }));
+    const test = el('button', { class: 'ghost', text: 'Проверить связь', onclick: async () => {
+      say('шлю…', true);
+      const r = await fetch('/api/notify/test', { method: 'POST' });
+      const a = await r.json().catch(() => ({}));
+      say(r.ok ? 'сообщение ушло — посмотрите в телефон' : (a.error || 'не дошло'), r.ok);
+    } });
+    card.append(el('div', { class: 'bar' }, test, forgetButton(), msg));
+  }
+  return card;
+}
+
+function forgetButton() {
+  return el('button', { class: 'ghost', text: 'Отвязать', onclick: async () => {
+    await fetch('/api/notify/forget', { method: 'POST' });
+    S.asides = false; loadAsides();
+  } });
+}
+
+function roleCard(a, data) {
+  const card = el('div', { class: 'role' + (a.enabled ? '' : ' off') });
+  const on = el('input', { type: 'checkbox', ...(a.enabled ? { checked: 'checked' } : {}) });
+  on.addEventListener('change', () => { a.enabled = on.checked; card.className = 'role' + (a.enabled ? '' : ' off'); });
+  card.append(el('h3', {}, on, document.createTextNode(a.title), 
+    a.custom ? el('span', { class: 'rights', text: '· правлено' }) : null));
+  if (a.description) card.append(el('p', { class: 'rights', text: a.description }));
+  card.append(el('p', { class: 'rights', text:
+    'Права: ' + a.rights.join(', ') + ' · область: ' + a.scope +
+    (a.requires.length ? ' · нужен канал наружу' : '') }));
+
+  const grid = el('div', { class: 'grid' });
+  for (const w of a.wakes) {
+    const models = (data.options.models[w.agent] || []);
+    grid.append(field('повод ' + w.on.join(', '), sel(models, w.model, (e) => { w.model = e.target.value; })));
+  }
+  const budget = el('input', { type: 'number', min: '1', value: String(a.budget.runs_per_task) });
+  budget.addEventListener('change', () => { a.budget.runs_per_task = Number(budget.value); });
+  grid.append(field('ходов на задачу', budget));
+  card.append(grid);
+
+  const chains = el('div', { class: 'bar' });
+  for (const name of data.chains) {
+    const box = el('input', { type: 'checkbox',
+      ...(a.chains.includes(name) ? { checked: 'checked' } : {}) });
+    box.addEventListener('change', () => {
+      a.chains = box.checked ? a.chains.concat([name]) : a.chains.filter((c) => c !== name);
+    });
+    chains.append(el('label', { class: 'f' }, box, document.createTextNode(name)));
+  }
+  card.append(el('p', { class: 'rights', text: 'На каких цепочках (ничего не отмечено — на всех):' }));
+  card.append(chains);
+
+  const msg = el('div', { class: 'msg' });
+  const save = el('button', { text: 'Сохранить', onclick: async () => {
+    const r = await fetch('/api/asides/' + encodeURIComponent(a.name), { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a) });
+    const ans = await r.json().catch(() => ({}));
+    msg.textContent = r.ok ? 'сохранено' : (ans.error || 'не сохранил');
+    msg.className = 'msg ' + (r.ok ? 'ok' : 'bad');
+  } });
+  const reset = el('button', { class: 'ghost', text: 'Сбросить до заводских', onclick: async () => {
+    await fetch('/api/asides/' + encodeURIComponent(a.name) + '/reset', { method: 'POST' });
+    S.asides = false; loadAsides();
+  } });
+  card.append(el('div', { class: 'bar' }, save, a.custom ? reset : null, msg));
+  return card;
+}
+
 load().catch((e) => { document.getElementById('list').textContent = 'не открылось: ' + e; });
 </script>
 </body></html>"""
@@ -557,6 +861,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/chains":
             self.reply(200, "application/json; charset=utf-8",
                        json.dumps(picture(), ensure_ascii=False, indent=1).encode("utf-8"))
+        elif path == "/api/asides":
+            self.reply(200, "application/json; charset=utf-8",
+                       json.dumps(asides_picture(), ensure_ascii=False, indent=1).encode("utf-8"))
         elif path == "/healthz":
             self.reply(200, "text/plain; charset=utf-8", b"ok\n")
         else:
@@ -568,6 +875,12 @@ class Handler(BaseHTTPRequestHandler):
             self.fail(403, "запрос пришёл с чужого адреса")
             return
         parts = path.strip("/").split("/")
+        if len(parts) >= 2 and parts[0] == "api" and parts[1] == "notify":
+            self.notify_post(parts)
+            return
+        if len(parts) >= 3 and parts[0] == "api" and parts[1] == "asides":
+            self.aside_post(parts)
+            return
         if len(parts) < 3 or parts[0] != "api" or parts[1] != "chains":
             self.fail(404, "нет такой страницы")
             return
@@ -594,6 +907,54 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.reply(200, "application/json; charset=utf-8",
                    json.dumps({"ok": True, "custom": is_custom(name)}, ensure_ascii=False).encode("utf-8"))
+
+    def aside_post(self, parts):
+        name = urllib.parse.unquote(parts[2])
+        if name not in aside_mod.names():
+            self.fail(404, f"роли {name} нет")
+            return
+        try:
+            if len(parts) == 4 and parts[3] == "reset":
+                aside_reset(name)
+            elif len(parts) == 3:
+                aside_save(name, self.body())
+            else:
+                self.fail(404, "нет такой страницы")
+                return
+        except AsideError as exc:
+            self.fail(400, str(exc))
+            return
+        except (OSError, KeyError, TypeError, ValueError) as exc:
+            log(f"{name}: {exc!r}")
+            self.fail(400, f"не сохранил: {exc}")
+            return
+        self.reply(200, "application/json; charset=utf-8",
+                   json.dumps({"ok": True, "custom": aside_mod.is_custom(name)},
+                              ensure_ascii=False).encode("utf-8"))
+
+    def notify_post(self, parts):
+        action = parts[2] if len(parts) > 2 else ""
+        try:
+            if action == "token":
+                notify_token(self.body().get("token"))
+            elif action == "test":
+                self.reply(
+                    200, "application/json; charset=utf-8",
+                    json.dumps({"ok": True, "sent": notify_test()},
+                               ensure_ascii=False).encode("utf-8"),
+                )
+                return
+            elif action == "forget":
+                secrets.forget_telegram()
+            else:
+                self.fail(404, "нет такой страницы")
+                return
+        except (OSError, TypeError, ValueError) as exc:
+            self.fail(400, str(exc))
+            return
+        self.reply(200, "application/json; charset=utf-8",
+                   json.dumps({"ok": True, "notify": notify_state()},
+                              ensure_ascii=False).encode("utf-8"))
 
     def body(self):
         length = int(self.headers.get("Content-Length") or 0)

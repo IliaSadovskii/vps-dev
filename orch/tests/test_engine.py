@@ -38,6 +38,24 @@ steps:
 
 
 # ── подмостки ────────────────────────────────────────────────────────────
+
+def до_остановки_без_сигнала(engine, fake, sid):
+    """Довести заход до остановки «нет сигнала».
+
+    Движок толкает несколько раз и выдерживает паузу между толчками, поэтому
+    после каждого прохода состариваем отметку толчка: иначе тест ждал бы
+    реального времени.
+    """
+    from orch.engine import NUDGES_BEFORE_STOP
+
+    for _ in range(NUDGES_BEFORE_STOP + 1):
+        fake.finish_turn(sid)
+        engine.reconcile()
+        engine.db.conn.execute(
+            "UPDATE event SET at = '2000-01-01T00:00:00Z' WHERE kind = 'auto_continue'"
+        )
+        engine.db.conn.commit()
+
 def start(engine, repo, **kw):
     """Создать задачу, поставить в очередь и довести до первого промпта."""
     engine.db.conn.execute("DELETE FROM task")
@@ -174,8 +192,9 @@ def test_нет_сигнала(engine, fake, repo):
     assert "подай сигнал" in fake.prompts[-1][1]
     assert engine.db.task(task_id)["status"] == RUNNING
 
-    fake.finish_turn(sid)          # роль снова молчит
-    engine.reconcile()
+    # Толчков несколько, и между ними пауза: роль, ждущая подагентов, тоже
+    # кончает ход молча.
+    до_остановки_без_сигнала(engine, fake, sid)
     task = engine.db.task(task_id)
     assert task["status"] == WAITING and task["wait_reason"] == "no_signal"
     assert fake.urgent[sid] is True
@@ -367,7 +386,7 @@ def test_подталкивание_не_закрывает_ход_на_след
     fake.rows[sid]["idle_entered_at"] = clock.stamp()
     clock.tick(10)
     engine.reconcile()                                   # подтолкнули
-    assert "Заверши работу" in fake.prompts[-1][1]
+    assert "подай сигнал" in fake.prompts[-1][1]
     assert engine.db.open_run(task_id) is not None
 
     # Следующий проход: статус в AoE ещё не сменился.
@@ -549,7 +568,7 @@ def test_правка_артефакта_владельцем_видна_сле�
     (ws.artifacts / "one.md").write_text("## Итог\nправка владельца\n", encoding="utf-8")
 
     sid = turn(engine, fake, task_id, "two", 1, "back")
-    assert "правил владелец после сдачи" in fake.prompts[-1][1]
+    assert "изменился после того, как его роль сдала ход" in fake.prompts[-1][1]
 
 
 def test_возврат_кнопкой_только_по_moves(engine, fake, repo):
@@ -622,7 +641,11 @@ def test_роли_подагентов_берутся_из_текста_роли
     deep = load(chains_dir() / "deep.yml")
     paths = engine.sub_prompts(deep.step("code-review"))
     names = sorted(p.rsplit("/", 1)[-1] for p in paths)
-    assert names == ["sub-review-defects.md", "sub-review-security.md"]
+    assert names == [
+        "sub-review-defects.md",
+        "sub-review-security.md",
+        "sub-review-simplicity.md",
+    ]
     # У шага без подагентов список пуст.
     assert engine.sub_prompts(deep.step("scoping")) == []
 
@@ -682,15 +705,43 @@ def test_задача_на_существующей_ветке(engine, fake, rep
     assert heads.count("feature/pr-4") == 1
 
 
-def test_ветка_занятая_живой_задачей_отклоняется(engine, repo):
-    """Две задачи в одной копии писали бы `.orch/` друг поверх друга."""
-    from orch.chain import ChainError
+def test_на_одну_ветку_копятся_задачи_а_работает_одна(engine, repo):
+    """Две задачи в одной копии писали бы `.orch/` друг поверх друга.
 
+    Поэтому заводятся обе, а в работу выходит одна: вторая ждёт очереди.
+    """
     monkey_chain(engine)
-    engine.create_task(chain_name="t", project_path=str(repo), text="первая", branch="общая")
-    with pytest.raises(ChainError) as exc:
-        engine.create_task(chain_name="t", project_path=str(repo), text="вторая", branch="общая")
-    assert "занята задачей" in str(exc.value)
+    first = engine.create_task(
+        chain_name="t", project_path=str(repo), text="первая", branch="общая"
+    )
+    second = engine.create_task(
+        chain_name="t", project_path=str(repo), text="вторая", branch="общая"
+    )
+    assert engine.db.task(second)["branch"] == "общая"
+
+    engine.promote_queue()
+    assert engine.db.task(first)["status"] == RUNNING
+    assert engine.db.task(second)["status"] == "queued"
+
+    with engine.db.tx():
+        engine.db.bump(first, status="done")
+    engine.promote_queue()
+    assert engine.db.task(second)["status"] == RUNNING
+
+
+def test_задача_на_свободную_ветку_обгоняет_ждущую_ветки(engine, repo):
+    """Ворота ветки держат только свою очередь, а не всю."""
+    monkey_chain(engine)
+    first = engine.create_task(
+        chain_name="t", project_path=str(repo), text="первая", branch="общая"
+    )
+    engine.create_task(chain_name="t", project_path=str(repo), text="вторая", branch="общая")
+    third = engine.create_task(
+        chain_name="t", project_path=str(repo), text="третья", branch="своя"
+    )
+    engine.promote_queue()
+    assert engine.db.task(first)["status"] == RUNNING
+    assert engine.db.task(third)["status"] == RUNNING
 
 
 def test_закрытая_задача_ветку_не_держит(engine, fake, repo):
@@ -790,6 +841,10 @@ def test_титул_без_разметки(engine):
     )
     assert _title_from("# Заголовок\nтекст") == "Заголовок"
     assert _title_from("") == "задача"
+    # Обрезанный титул не должен читаться как обрывок фразы: рвём по границе.
+    assert _title_from(
+        "**Цель.** PR #4 уехал автономно без владельца; привести его к соглашениям"
+    ) == "PR 4 уехал автономно без владельца…"
 
 
 def test_сессия_с_группой_orch_становится_мастером(engine, fake, repo):
@@ -892,13 +947,17 @@ def test_копия_с_работой_не_трогается(engine, fake, repo
 
 
 def test_ветку_живой_задачи_не_отбираем(engine, fake, repo):
-    """Две задачи в одной ветке писали бы `.orch/` в один каталог."""
+    """Две задачи в одной ветке писали бы `.orch/` в один каталог.
+
+    Поэтому вторая не отбирает копию, а стоит в очереди, пока первая на
+    воротах, и едет, когда та закрыта.
+    """
     monkey_chain(engine)
     первая = start(engine, repo)
     ветка = engine.db.task(первая)["branch"]
     with engine.db.tx():
         engine.db.bump(первая, status="waiting", wait_reason="gate")
-    вторая = engine.db.conn.execute(
+    engine.db.conn.execute(
         "INSERT INTO task (id, chain, chain_yaml, title, text, project_path, branch, "
         "group_path, status, human_sheet, revision, created_at) "
         "VALUES ('T99','t',?, 'вторая','вторая',?,?,'orch/T99','queued','{}',1,?)",
@@ -907,10 +966,13 @@ def test_ветку_живой_задачи_не_отбираем(engine, fake, 
     engine.db.conn.commit()
     engine.reconcile()
     task = engine.db.task("T99")
-    assert task["wait_reason"] == "branch_busy"
-    from orch import panels
+    assert task["status"] == "queued" and task["wait_reason"] is None
+    assert task["worktree_path"] is None
 
-    assert первая in panels._what_to_decide(engine.db, task)
+    with engine.db.tx():
+        engine.db.bump(первая, status="closed", wait_reason=None)
+    engine.reconcile()
+    assert engine.db.task("T99")["status"] in ("running", "waiting")
 
 
 def test_ветку_берём_второй_копией_если_старую_не_снять(engine, fake, repo, monkeypatch):
@@ -1026,7 +1088,7 @@ def test_стенд_поднимает_роль_а_движок_даёт_ей_п
     task = engine.db.task(task_id)
     assert engine.button(task_id, task["revision"], "stand") == "роль «Стенд» поднимает окружение"
     task = engine.db.task(task_id)
-    sid = task["stand_session"]
+    sid = engine.stand_session(task_id)
     assert sid and fake.rows[sid]["title"] == f"{task_id} · стенд"
     prompt = [t for target, t in fake.prompts if target == sid][0]
     assert "# Стенд" in prompt and task["stand"] in prompt and "8020" in prompt
@@ -1044,14 +1106,14 @@ def test_стенд_поднимает_роль_а_движок_даёт_ей_п
     name = task["stand"]
     engine.button(task_id, task["revision"], "close")
     task = engine.db.task(task_id)
-    assert task["stand_teardown"], "уборку должна делать роль"
+    assert engine.teardown_session(task_id), "уборку должна делать роль"
     assert downs == [], "движок не гасит, пока уборщик работает"
 
     # Уборщик отдал блок — движок это увидел и закрыл вопрос.
     monkeypatch.setattr(stands, "gone", lambda n: n == name)
     engine.watch_teardown()
     task = engine.db.task(task_id)
-    assert task["stand"] is None and task["stand_teardown"] is None
+    assert task["stand"] is None and engine.teardown_session(task_id) is None
 
 
 def test_роль_стенда_сообщает_о_неудаче(engine, fake, repo, monkeypatch):
@@ -1064,17 +1126,17 @@ def test_роль_стенда_сообщает_о_неудаче(engine, fake, 
     task_id = start(engine, repo)
     task = engine.db.task(task_id)
     engine.button(task_id, task["revision"], "stand")
-    first = engine.db.task(task_id)["stand_session"]
+    first = engine.stand_session(task_id)
     engine.stand_result(task_id, None, "нет docker-compose.yml")
     kinds = [(e["kind"], e["payload"]) for e in engine.db.events(task_id, limit=5)]
     assert any(k == "stand_failed" and "docker-compose" in (p or "") for k, p in kinds)
     task = engine.db.task(task_id)
-    assert task["stand_port"] is None and task["stand_session"] is None
+    assert task["stand_port"] is None and engine.stand_session(task_id) is None
 
     pane = json.dumps(panels.task_pane(engine.db, task, "s9", "http://x"), ensure_ascii=False)
     assert "Поднять стенд снова" in pane and "docker-compose" in pane
     assert engine.button(task_id, task["revision"], "stand") == "роль «Стенд» поднимает окружение"
-    assert engine.db.task(task_id)["stand_session"] not in (None, first)
+    assert engine.stand_session(task_id) not in (None, first)
 
 
 def test_заказанный_стенд_поднимается_на_любой_остановке(engine, fake, repo, monkeypatch):
@@ -1092,7 +1154,7 @@ def test_заказанный_стенд_поднимается_на_любой_
     turn(engine, fake, task_id, "one", 1, None)     # шаг сдан, задача на воротах
     task = engine.db.task(task_id)
     assert task["status"] == "waiting" and task["wait_reason"] == "gate"
-    assert task["stand_session"], "к воротам стенд должен уже подниматься"
+    assert engine.stand_session(task_id), "к воротам стенд должен уже подниматься"
 
 
 def test_движок_добивает_уборку_если_роль_не_справилась(engine, fake, repo, monkeypatch):
@@ -1117,11 +1179,16 @@ def test_движок_добивает_уборку_если_роль_не_сп�
     assert downs == []
 
     with engine.db.tx():                         # прошло больше отпущенного
-        engine.db.bump(task_id, stand_teardown_at="2020-01-01T00:00:00Z")
+        engine.db.conn.execute(
+            "UPDATE aside_run SET started_at = '2020-01-01T00:00:00Z' WHERE id IN "
+            "(SELECT r.id FROM aside_run r JOIN aside a ON a.id = r.aside_id "
+            "WHERE a.name = 'stand-down' AND a.scope_key = ?)",
+            (task_id,),
+        )
     engine.watch_teardown()
     assert downs == [name]
     task = engine.db.task(task_id)
-    assert task["stand"] is None and task["stand_teardown"] is None
+    assert task["stand"] is None and engine.teardown_session(task_id) is None
     kinds = [e["kind"] for e in engine.db.events(task_id, limit=6)]
     assert "teardown_forced" in kinds
 
@@ -1164,9 +1231,279 @@ def test_стенд_поднимается_и_без_ворот(engine, fake, re
     )
     engine.reconcile()
     sid = session_of(engine, task_id)
-    fake.finish_turn(sid)
-    engine.reconcile()          # просьба закончить
-    fake.finish_turn(sid)
-    engine.reconcile()          # встала: нет сигнала
+    до_остановки_без_сигнала(engine, fake, sid)
     task = engine.db.task(task_id)
-    assert task["status"] == "waiting" and task["stand_session"]
+    assert task["status"] == "waiting" and engine.stand_session(task_id)
+
+
+def test_комментарий_владельца_доезжает_до_роли_куда_он_вернул(engine, fake, repo):
+    """Слова владельца — единственное «почему» для роли, к которой он вернул.
+
+    Кнопка панели комментария не несёт; он приходит через `orch gate back
+    --comment` или `orch task move --comment`, и должен оказаться в промпте
+    того захода, который владелец завёл этим движением.
+    """
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "ok")     # ворота на исходе ok
+    task = engine.db.task(task_id)
+    assert task["status"] == WAITING and task["wait_reason"] == "gate"
+
+    engine.button(task_id, task["revision"], "back", target="one", comment="граница не та")
+    engine.reconcile()
+    text = fake.prompts[-1][1]
+    assert "## Комментарии владельца" in text
+    assert "граница не та" in text
+    assert "вернул владелец с комментарием" in text
+
+
+def test_возврат_кнопкой_без_комментария_не_обещает_его_роли(engine, fake, repo):
+    """Пустая рубрика «Комментарии владельца» и обещание «он ниже» — враньё."""
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "ok")
+    task = engine.db.task(task_id)
+
+    engine.button(task_id, task["revision"], "back", target="one")
+    engine.reconcile()
+    text = fake.prompts[-1][1]
+    assert "## Комментарии владельца" not in text
+    assert "вернул владелец кнопкой, без комментария" in text
+
+
+def test_кнопка_владельца_добавляет_заход_шагу_с_исчерпанным_пределом(engine, fake, repo):
+    """Предел заходов держит роли, а не владельца: он послал — шаг обязан пойти."""
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "ok")          # ворота на исходе ok
+
+    # У шага `one` предел по умолчанию три; посылаем туда пять раз и каждый
+    # раз шаг обязан завести заход, а не встать по `max_runs`.
+    for _ in range(5):
+        task = engine.db.task(task_id)
+        assert "вернул на one" in engine.button(task_id, task["revision"], "back", target="one")
+        engine.reconcile()
+        task = engine.db.task(task_id)
+        assert task["wait_reason"] != "max_runs", "кнопка привела задачу на запертый шаг"
+        run = engine.db.open_run(task_id)
+        assert run is not None and run["step"] == "one"
+        turn(engine, fake, task_id, "one", run["n"], None)
+
+    assert len(engine.db.runs_of_step(task_id, "one")) == 6
+
+
+def test_контекст_own_возвращает_роль_в_её_же_сессию(engine, fake, repo, monkeypatch):
+    """Сведение после ревью идёт там же, где шаг работал в первый раз."""
+    chain = parse_chain(CHAIN.replace(
+        "  - id: two\n    run: {agent: claude, model: haiku}",
+        "  - id: two\n    context: own\n    run: {agent: claude, model: haiku}",
+    ), "t")
+    monkeypatch.setattr(engine, "chain_of", lambda task: chain)
+
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    first = engine.db.last_run_of_step(task_id, "two")["session_id"]
+    turn(engine, fake, task_id, "two", 1, "back")     # исход back — снова в one
+    turn(engine, fake, task_id, "one", 2, None)
+    second = engine.db.last_run_of_step(task_id, "two")["session_id"]
+    assert second == first, "второй заход шага должен идти в его же сессии"
+
+
+def test_сессия_прошлого_шага_перестаёт_звать(engine, fake, repo):
+    """Два зовущих шага сразу — владелец не знает, какой из них ждёт его."""
+    task_id = start(engine, repo)
+    first = session_of(engine, task_id)
+    turn(engine, fake, task_id, "one", 1, None)
+    assert fake.urgent.get(first) is False
+    assert fake.notify.get(first) is False
+
+
+def test_возврат_ролью_называет_её_файл_путём(engine, fake, repo):
+    """«Читай её файл» без пути — роль ищет работу наугад."""
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "back")     # two вернул задачу в one
+    text = fake.prompts[-1][1]
+    assert "вернула роль two" in text
+    assert "two.md`) и есть твоя работа" in text
+
+
+def test_запоздавший_сигнал_поднимает_вставшую_задачу(engine, fake, repo):
+    """Роль, ждавшая подагентов, подала `orch done` уже после остановки."""
+    task_id = start(engine, repo)
+    sid = session_of(engine, task_id)
+    до_остановки_без_сигнала(engine, fake, sid)
+    task = engine.db.task(task_id)
+    assert task["status"] == WAITING and task["wait_reason"] == "no_signal"
+
+    sign(engine, task_id, "one", 1, None)      # сигнал пришёл с опозданием
+    engine.reconcile()
+    task = engine.db.task(task_id)
+    assert task["status"] == RUNNING and task["step"] == "two"
+    assert [e for e in engine.db.events(task_id, limit=20) if e["kind"] == "late_signal"]
+
+
+def test_повторный_заход_со_своей_сессией_нумеруется(engine, fake, repo):
+    """Две строки одного шага в сайдбаре без номера не различить."""
+    from orch.naming import session_title
+
+    assert session_title("T1", "code-review") == "T1 · code-review"
+    assert session_title("T1", "code-review", 2) == "T1 · code-review 2"
+    # Шаг, возвращающийся в свою же сессию, остаётся одной строкой.
+    assert session_title("T1", "plan", 2, own_session=True) == "T1 · plan"
+
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "back")     # вернулись в one
+    engine.reconcile()
+    sid = session_of(engine, task_id)
+    assert fake.rows[sid]["title"] == f"{task_id} · one 2"
+
+
+def test_возврат_владельца_обновляет_предел_шагов_ниже(engine, fake, repo):
+    """Круг начат владельцем — шаги ниже идут со своим полным пределом."""
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "back")     # two → one
+    turn(engine, fake, task_id, "one", 2, None)
+    turn(engine, fake, task_id, "two", 2, "ok")       # предел two (2) выбран, ворота
+    task = engine.db.task(task_id)
+    assert task["wait_reason"] == "gate"
+
+    # Владелец вернул работу в one: круг начинается заново.
+    engine.button(task_id, task["revision"], "back", target="one")
+    engine.reconcile()
+    run = engine.db.open_run(task_id)
+    turn(engine, fake, task_id, "one", run["n"], None)
+    task = engine.db.task(task_id)
+    assert task["wait_reason"] != "max_runs", "предел прошлого круга не пускает на шаг"
+    assert engine.db.open_run(task_id)["step"] == "two"
+
+
+# ── предохранитель и сторожа (`ASIDE-PLAN.md` §10, §2) ───────────────────
+def kinds(engine, task_id=None):
+    rows = engine.db.conn.execute(
+        "SELECT kind FROM event" + (" WHERE task_id = ?" if task_id else ""),
+        (task_id,) if task_id else (),
+    )
+    return [r["kind"] for r in rows]
+
+
+def test_заход_отмечен_событиями_старта_и_конца(engine, fake, repo):
+    """Начало и конец захода — поводы проснуться для побочных ролей."""
+    task_id = start(engine, repo)
+    assert "run_started" in kinds(engine, task_id)
+
+    turn(engine, fake, task_id, "one", 1, None)
+    ended = [
+        json.loads(r["payload"])
+        for r in engine.db.conn.execute(
+            "SELECT payload FROM event WHERE kind = 'run_ended' AND task_id = ?", (task_id,)
+        )
+    ]
+    assert len(ended) == 1
+    assert ended[0]["step"] == "one" and ended[0]["signalled"] is True
+
+
+def test_предел_работающих_сессий_придерживает_новый_заход(engine, fake, repo):
+    """Сессий столько, сколько выдержит машина: шаг ждёт, а не падает."""
+    engine.settings.max_sessions = 1
+    first = engine.create_task(chain_name="t", project_path=str(repo), text="Первая.")
+    monkey_chain(engine)
+    engine.reconcile()
+    assert engine.db.open_run(first) is not None      # первая поехала
+
+    second = engine.create_task(chain_name="t", project_path=str(repo), text="Вторая.")
+    engine.reconcile()
+    assert engine.db.open_run(second) is None, "вторая задача завела сессию сверх предела"
+    assert "sessions_capped" in kinds(engine)
+
+    # Первая закончила ход — место освободилось, вторая едет.
+    fake.set_status(session_of(engine, first), "idle")
+    engine.settings.max_sessions = 2
+    engine.reconcile()
+    assert engine.db.open_run(second) is not None
+
+
+def test_нехватка_памяти_придерживает_заход(engine, fake, repo, monkeypatch):
+    import orch.engine as mod
+
+    monkeypatch.setattr(mod, "free_memory_mb", lambda: 100)
+    task_id = engine.create_task(chain_name="t", project_path=str(repo), text="Тесная машина.")
+    monkey_chain(engine)
+    engine.reconcile()
+    assert engine.db.open_run(task_id) is None
+    assert "memory_low" in kinds(engine)
+
+
+def test_сторож_отмечает_слишком_долгий_ход(engine, fake, repo, clock):
+    task_id = start(engine, repo)
+    clock.tick(60 * 60)                     # час на ходу при пороге в 45 минут
+    engine.reconcile()
+    engine.reconcile()                      # второй проход не должен дублировать
+    marks = [k for k in kinds(engine, task_id) if k == "watch_overtime"]
+    assert marks == ["watch_overtime"]
+
+
+def test_сторож_отмечает_дорогой_ход(engine, fake, repo, clock):
+    engine.settings.cost_warn_usd = 1.0
+    fake.cost = 7.5
+    task_id = start(engine, repo)
+    clock.tick(20 * 60)
+    engine.reconcile()
+    payload = [
+        json.loads(r["payload"])
+        for r in engine.db.conn.execute(
+            "SELECT payload FROM event WHERE kind = 'watch_cost' AND task_id = ?", (task_id,)
+        )
+    ]
+    assert payload and payload[0]["cost_usd"] == 7.5
+
+
+def test_сторож_замечает_две_задачи_в_одном_файле(engine, fake, repo):
+    """Соседей не видит ни один шаг: это факт, и его считает git, а не модель."""
+    import json as _json
+
+    monkey_chain(engine)
+    первая = engine.create_task(chain_name="t", project_path=str(repo), text="Первая.")
+    вторая = engine.create_task(chain_name="t", project_path=str(repo), text="Вторая.")
+    engine.reconcile()
+
+    for task_id in (первая, вторая):
+        task = engine.db.task(task_id)
+        (Path(task["worktree_path"]) / "общий.py").write_text("правка\n", encoding="utf-8")
+    engine.reconcile()
+
+    clash = [
+        _json.loads(r["payload"])
+        for r in engine.db.conn.execute("SELECT payload FROM event WHERE kind = 'watch_file_clash'")
+    ]
+    assert clash and "общий.py" in clash[0]["files"]
+    assert {clash[0]["with"], clash[0]["pair"].split("+")[0]} == {первая, вторая}
+
+
+def test_сторож_замечает_выход_за_границы_шага(engine, fake, repo, monkeypatch):
+    """Зона задана в цепочке — движок сам видит, что тронули чужое."""
+    import json as _json
+
+    import orch.engine as mod
+    from orch.chain import parse as parse_chain
+
+    текст = CHAIN.replace("  - id: one\n", "  - id: one\n    zone: [src/]\n")
+    monkeypatch.setattr(mod, "load_chain", lambda path: parse_chain(текст, source="тест"))
+    task_id = engine.create_task(chain_name="t", project_path=str(repo), text="Границы.")
+    engine.reconcile()
+
+    root = Path(engine.db.task(task_id)["worktree_path"])
+    (root / "src").mkdir(exist_ok=True)
+    (root / "src" / "своё.py").write_text("ok\n", encoding="utf-8")
+    (root / "чужое.py").write_text("нет\n", encoding="utf-8")
+    engine.reconcile()
+
+    out = [
+        _json.loads(r["payload"])
+        for r in engine.db.conn.execute(
+            "SELECT payload FROM event WHERE kind = 'watch_out_of_bounds'"
+        )
+    ]
+    assert out and out[0]["files"] == ["чужое.py"]

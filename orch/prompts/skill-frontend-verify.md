@@ -1,4 +1,4 @@
-<!-- Навык. Читают: подагенты sub-review-defects и sub-review-security. Подключается по строке `Навыки:` в scoping.md. -->
+<!-- Навык. Читают шаги: code-review — и передаёт его подагентам sub-review-defects и sub-review-security. Подключается по строке `Навыки:` в scoping.md. -->
 
 Skill: checking user-facing UI. Loaded by Verification, Code Review and
 Fix Review when `discovery.md` names `frontend` under «Навыки». It adds
@@ -29,8 +29,10 @@ through the Playwright MCP tools when the agent has them
 Playwright installation with a throwaway script in a temporary directory,
 headless when there is no display. Reconnaissance before action: navigate,
 wait for the network to settle, take a snapshot, derive selectors from
-roles, text and test ids, then act. Save screenshots under the task's
-artifact directory and cite them by path in the artifact.
+roles, text and test ids, then act. Save screenshots under `shots/`
+in the task directory (create it if absent) — not next to the role files in
+`artifacts/`, which is for markdown the next roles read and which is copied
+whole into history on every run. Cite each shot by path in the artifact.
 
 If neither the MCP tools nor a Playwright installation exist, do not
 install anything silently: name exactly what is missing and the one-line

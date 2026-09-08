@@ -77,6 +77,29 @@ EVENT_TEXT = {
 # порта, что слушает на 127.0.0.1 (`/var/lib/vps-dev/style/machine/ports.md`).
 HOST = "dev-hel1-3.taila4db50.ts.net"
 
+# Файловый менеджер машины (`vps-dev-files.service`, корень — `/`): им и
+# открываются файлы ролей. Маршрут AoE `/api/sessions/{id}/file` — служебный,
+# он отдаёт JSON; соседний `/artifacts/` отдаёт `text/markdown` без charset и
+# ломает кириллицу.
+FILES_PORT = 8067
+
+
+def public(url: str) -> str:
+    """Ссылка, по которой владелец откроет это со своего устройства.
+
+    Движок ходит в AoE на `127.0.0.1`, но панель читают снаружи машины, и
+    петлевой адрес там не открывается. Номер порта тот же, меняются схема и
+    имя хоста.
+    """
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url if "//" in url else f"//{url}", scheme="http")
+    if parts.hostname not in ("127.0.0.1", "localhost", "::1", "0.0.0.0"):
+        return url
+    port = f":{parts.port}" if parts.port else ""
+    tail = url.split(parts.netloc, 1)[1] if parts.netloc in url else ""
+    return f"https://{HOST}{port}{tail}"
+
 # Кнопки по причине остановки: что предлагать владельцу, когда задача встала.
 BUTTONS_BY_REASON = {
     "gate": ("accept", "back"),
@@ -110,9 +133,10 @@ PICK_OUTCOME_REASONS = ("no_signal", "max_runs", "bad_outcome")
 def home_pane(db: Db, projects: list[str] | None = None, cost_warn: float = 5.0) -> dict:
     """Слот `home-pane` «Задачи»: витрина, а не пульт.
 
-    Три секции: что решить, что лежит в бэклоге, где завести новую. Едущих
-    задач и очереди тут нет нарочно — про них рассказывает сайдбар (цвет
-    строки, бейдж шага, счётчик у группы); готовых и снятых тоже нет: список
+    Секции: что решить, что стоит в очереди и не поехало, что лежит
+    в бэклоге, где завести новую. Едущих задач тут нет нарочно — про них
+    рассказывает сайдбар (цвет строки, бейдж шага, счётчик у группы);
+    готовых и снятых тоже нет: список
     прошлого на обзоре ничего не решает, а место на телефоне отнимает
     (`UX-PLAN.md`). Историю смотрят `orch task list` и сайдбар с архивом.
     """
@@ -138,6 +162,48 @@ def home_pane(db: Db, projects: list[str] | None = None, cost_warn: float = 5.0)
                 "title": f"{first['id']}: {_reason_text(first['wait_reason'])}",
                 "detail": _what_to_decide(db, first),
                 "actions": _buttons(db, first),
+            }
+        )
+
+    queued = db.tasks((QUEUED,))
+    if queued:
+        # Задача, ждущая места или занятой ветки, сессии ещё не имеет, а
+        # значит её нет и в сайдбаре: не покажи её тут — и она пропадёт из
+        # виду совсем (так однажды потерялась заявка на весь вечер).
+        rows: list[dict] = []
+        for t in queued[:MAX_TASKS]:
+            held = _branch_holder(db, t)
+            rows.append(
+                {
+                    "kind": "row",
+                    "label": f"{t['id']} · {t['title']}",
+                    "sublabel": (
+                        f"ждёт ветку: в ней работает {held}" if held else "ждёт свободного места"
+                    ),
+                    "value": t["branch"] or "",
+                    "mono": True,
+                }
+            )
+            rows.append(
+                {
+                    "kind": "columns",
+                    "children": [
+                        {
+                            "kind": "action",
+                            "label": "Снять",
+                            "method": "orch.close",
+                            "tooltip": "убрать из очереди: задача не поедет",
+                            "params": {"task": t["id"], "revision": t["revision"]},
+                        }
+                    ],
+                }
+            )
+        blocks.append(
+            {
+                "kind": "section",
+                "title": "В очереди",
+                "badges": [{"text": str(len(queued))}],
+                "children": rows,
             }
         )
 
@@ -285,6 +351,18 @@ def _footer(db: Db, waiting: list) -> dict:
     return {"text": "тихо", "value": "0", "tone": "neutral"}
 
 
+def _branch_holder(db: Db, task) -> str | None:
+    """Кто держит ветку задачи из очереди: одна копия — одна работа."""
+    if not task["branch"]:
+        return None
+    row = db.conn.execute(
+        "SELECT id FROM task WHERE branch = ? AND id != ? "
+        "AND status IN ('running','waiting') LIMIT 1",
+        (task["branch"], task["id"]),
+    ).fetchone()
+    return row["id"] if row else None
+
+
 def _who_filed(task) -> str:
     """Кто завёл заявку: роль сама или владелец.
 
@@ -394,6 +472,11 @@ def task_pane(
             }
         )
 
+    blocks.append(_notify_row(task))
+    clash = _clash_note(db, task)
+    if clash:
+        blocks.append(clash)
+    blocks.extend(_note_blocks(db, task))
     blocks.append(_stand_row(db, task))
 
     wizard = task["wizard_session"] if "wizard_session" in task.keys() else None
@@ -406,7 +489,7 @@ def task_pane(
                 "label": "постановка",
                 "sublabel": "разговор с мастером, где задачу заводили",
                 "value": "открыть",
-                "href": f"{base_url}/session/{wizard}",
+                "href": public(f"{base_url}/session/{wizard}"),
             }
         )
 
@@ -582,14 +665,15 @@ def _what_to_decide(db: Db, task) -> str:
     """Строка «что решить» — то, ради чего владелец открыл панель."""
     reason = task["wait_reason"]
     step = task["step"] or "—"
-    last = db.last_run_of_step(task["id"], step) if task["step"] else None
     if reason == "gate":
-        outcome = last["outcome"] if last else None
-        # У шага с одним переходом исхода нет — не показывать «исходом None».
-        how = f" исходом «{outcome}»" if outcome else ""
+        # Имя исхода («choice», «ok») — словарь движка, владельцу оно ничего
+        # не говорит: что решать, он читает в сообщении роли.
         return (
-            f"Шаг {step} закончил ход{how}. Принять и ехать дальше "
-            f"или вернуть назад с комментарием."
+            f"Шаг {step} закончил ход и ждёт вас. Что решать — в последнем "
+            f"сообщении роли в чате. Там же можно спорить и просить правку: "
+            f"роль перепишет свой файл на месте, задача никуда не уедет. "
+            f"Кнопка двигает задачу молча; чтобы адресат услышал «почему», "
+            f"скажите это роли словами — она передаст."
         )
     if reason == "no_signal":
         answer = _last_orch_answer(db, task)
@@ -612,6 +696,74 @@ def _what_to_decide(db: Db, task) -> str:
     return f"Шаг {step} ждёт вас."
 
 
+def _notify_row(task) -> dict:
+    """Звать ли владельца в Telegram, когда эта задача встанет на воротах."""
+    on = bool(task["notify_gates"])
+    return {
+        "kind": "row",
+        "label": "Ворота в Telegram",
+        "sublabel": "звать вас в мессенджер, когда задача встанет"
+        if on else "задача ждёт молча, решения — в этой панели",
+        "value": "звать" if on else "молча",
+        "value_tone": "accent" if on else "muted",
+        "method": "orch.notify_gates",
+        "params": {"task": task["id"], "revision": task["revision"], "on": not on},
+    }
+
+
+def _clash_note(db: Db, task) -> dict | None:
+    """Соседняя задача правит те же файлы — сказать до того, как рванёт."""
+    for event in db.events(task["id"], limit=30):
+        if event["kind"] != "watch_file_clash":
+            continue
+        payload = json.loads(event["payload"] or "{}")
+        files = ", ".join(payload.get("files") or [])
+        return {
+            "kind": "note",
+            "tone": "warn",
+            "text": f"задача {payload.get('with')} правит те же файлы: {files}",
+        }
+    return None
+
+
+def _note_blocks(db: Db, task) -> list[dict]:
+    """Находки побочных ролей, ждущие решения (`ASIDE-PLAN.md` §9).
+
+    Панель — второй канал наравне с Telegram: без привязанного бота роль
+    остановила бы задачу, а сказать было бы негде.
+    """
+    out: list[dict] = []
+    for note in db.notes(task_id=task["id"]):
+        if note["state"] not in ("open", "sent"):
+            continue
+        options = json.loads(note["options"] or "[]")
+        buttons = [{"label": "Ничего не делать", "method": "orch.note",
+                    "params": {"note": note["id"], "verb": "continue", "target": ""}}]
+        for option in options:
+            buttons.append(
+                {
+                    "label": option.get("label") or option.get("verb"),
+                    "method": "orch.note",
+                    "params": {
+                        "note": note["id"],
+                        "verb": option.get("verb"),
+                        "target": option.get("target") or "",
+                    },
+                }
+            )
+        out.append(
+            {
+                "kind": "callout",
+                "tone": "danger" if note["severity"] == "hold" else "warn",
+                "icon": "hand" if note["severity"] == "hold" else "info",
+                "title": note["title"],
+                "detail": (note["body"] or "")[:1200],
+                "actions": buttons,
+            }
+        )
+    return out
+
+
 def _stand_row(db: Db, task) -> dict:
     """Стенд задачи: ссылка, «поднимается» или кнопка.
 
@@ -620,7 +772,13 @@ def _stand_row(db: Db, task) -> dict:
     """
     stand = task["stand"] if "stand" in task.keys() else None
     port = task["stand_port"] if "stand_port" in task.keys() else None
-    session = task["stand_session"] if "stand_session" in task.keys() else None
+    row = db.conn.execute(
+        "SELECT r.session_id FROM aside a JOIN aside_run r ON r.aside_id = a.id "
+        "WHERE a.name = 'stand' AND a.scope_key = ? AND a.status = 'live' "
+        "AND r.ended_at IS NULL ORDER BY r.id DESC LIMIT 1",
+        (task["id"],),
+    ).fetchone()
+    session = row["session_id"] if row else None
     if stand and port:
         return {
             "kind": "row",
@@ -717,11 +875,17 @@ def _buttons(db: Db, task) -> list[dict]:
         if action == "accept_as_is" and reason in PICK_OUTCOME_REASONS:
             # Не «повторить прошлый исход», а «выберите, каким считать ход»:
             # прошлый исход у предела заходов как раз и ведёт по кругу.
-            for outcome, target in _outcomes_of(chain, task).items():
+            outcomes = _outcomes_of(chain, task)
+            targets = list(outcomes.values())
+            for outcome, target in outcomes.items():
+                # Имя исхода владельцу ничего не говорит и появляется только
+                # там, где без него две кнопки стали бы одинаковыми.
+                same = targets.count(target) > 1
+                where = f"{step_title(target)}" + (f" ({outcome})" if same else "")
                 actions.append(
                     {
                         "kind": "action",
-                        "label": f"Принять как «{outcome}» → {target}",
+                        "label": f"Считать ход законченным → {where}",
                         "method": "orch.accept_as_is",
                         "params": {
                             "task": task["id"],
@@ -742,7 +906,7 @@ def _buttons(db: Db, task) -> list[dict]:
                 actions.append(
                     {
                         "kind": "action",
-                        "label": f"Вернуть на {target}",
+                        "label": f"Вернуть на «{step_title(target)}»",
                         "method": "orch.back",
                         "params": {
                             "task": task["id"],
@@ -786,7 +950,7 @@ def _trail_rows(db: Db, task, chain: Chain, base_url: str) -> list[dict]:
             "selected": run["step"] == task["step"] and not run["ended_at"],
         }
         if run["session_id"]:
-            row["href"] = f"{base_url}/session/{run['session_id']}"
+            row["href"] = public(f"{base_url}/session/{run['session_id']}")
             row["tooltip"] = "открыть сессию этого захода"
         rows.append(row)
     return rows or [{"kind": "note", "text": "заходов ещё не было"}]
@@ -802,6 +966,31 @@ def _outcomes_of(chain: Chain | None, task) -> dict[str, str]:
     if step.single_next is not None:
         return {"дальше": step.single_next}
     return dict(step.next)
+
+
+def step_title(step_id: str) -> str:
+    """Имя роли словами — из заголовка её файла.
+
+    Владельцу `review-fixes` ничего не говорит, «Правки» говорит. Держать
+    второй список имён в движке незачем: заголовок роли и есть её имя.
+    """
+    from .chain import prompts_dir
+
+    path = prompts_dir() / f"role-{step_id}.md"
+    try:
+        first = path.read_text(encoding="utf-8").splitlines()[0]
+    except (OSError, IndexError):
+        return step_id
+    return first.lstrip("# ").strip() or step_id
+
+
+def _after_text(after) -> str:
+    """Ворота словами: «ждать/не ждать» не покрывает ворота на исходе."""
+    if after is True:
+        return "ждать всегда"
+    if after:
+        return "ждать после " + ", ".join(after)
+    return "не ждать"
 
 
 def _sheet_rows(db: Db, task, chain: Chain) -> list[dict]:
@@ -822,7 +1011,7 @@ def _sheet_rows(db: Db, task, chain: Chain) -> list[dict]:
                 "kind": "row",
                 "label": step.id,
                 "sublabel": "пройден" if done_already else "ворота после · вопросы внутри",
-                "value": f"{'ждать' if after else 'не ждать'} · {'можно' if ask else 'нельзя'}",
+                "value": f"{_after_text(after)} · {'можно' if ask else 'нельзя'}",
                 "tooltip": (
                     "шаг уже пройден"
                     if done_already
@@ -846,6 +1035,13 @@ def _sheet_rows(db: Db, task, chain: Chain) -> list[dict]:
     return rows
 
 
+def file_url(path: Path) -> str:
+    """Ссылка на файл в файловом менеджере машины."""
+    from urllib.parse import quote
+
+    return f"https://{HOST}:{FILES_PORT}/files{quote(str(path))}"
+
+
 def _artifact_links(db: Db, task, chain: Chain | None, session_id: str, base: str) -> list[dict]:
     """Файлы ролей, которые уже написаны; файл текущего шага первым.
 
@@ -861,14 +1057,13 @@ def _artifact_links(db: Db, task, chain: Chain | None, session_id: str, base: st
         for name in step.artifact:
             if not (root / name).is_file():
                 continue
-            path = f".orch/{task['id']}/artifacts/{name}"
             current = step.id == task["step"]
             rows.append(
                 {
                     "kind": "row",
                     "label": name,
                     "sublabel": f"{step.id} · текущий шаг" if current else step.id,
-                    "href": f"{base}/api/sessions/{session_id}/file?path={path}",
+                    "href": file_url(root / name),
                     "mono": True,
                     "tone": "info" if current else None,
                 }

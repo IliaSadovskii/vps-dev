@@ -45,6 +45,7 @@ WAIT_REASONS = {
     "branch_busy": "ветку задачи держит другая рабочая копия",
     "artifact": "роль сдала ход, но её файла нет или он не той формы",
     "abandoned": "сессия задачи исчезла",
+    "aside_hold": "побочная роль просит вас посмотреть",
 }
 
 
@@ -206,6 +207,25 @@ class Db:
             "signalled = ? WHERE id = ?",
             (now(), outcome, end_sha, duration, int(signalled), run_id),
         )
+        # Событие пишется здесь, а не в пяти местах движка: конец захода —
+        # повод проснуться для побочных ролей (`ASIDE-PLAN.md` §2), и
+        # забыть его в новом месте закрытия было бы нечем поймать.
+        row = self.conn.execute(
+            "SELECT task_id, step, n FROM run WHERE id = ?", (run_id,)
+        ).fetchone()
+        if row is not None:
+            self.event(
+                row["task_id"],
+                "run_ended",
+                {
+                    "run": run_id,
+                    "step": row["step"],
+                    "n": row["n"],
+                    "outcome": outcome,
+                    "signalled": bool(signalled),
+                    "duration_s": round(duration) if duration else None,
+                },
+            )
 
     def prompt_sent(self, run_id: int, session_id: str | None = None, prompt_sha: str | None = None) -> None:
         """Промпт ушёл в сессию — сейчас.
@@ -243,6 +263,171 @@ class Db:
                 (task_id,),
             )
         ]
+
+    # ── побочные роли ────────────────────────────────────────────────────
+    def aside_open(self, name: str, scope: str, scope_key: str, task_id: str | None) -> int:
+        """Найти живую роль на этой области или завести её."""
+        row = self.conn.execute(
+            "SELECT id FROM aside WHERE name = ? AND scope_key = ? AND status = 'live'",
+            (name, scope_key),
+        ).fetchone()
+        if row is not None:
+            return int(row["id"])
+        cur = self.conn.execute(
+            "INSERT INTO aside (name, scope, scope_key, task_id, status, created_at) "
+            "VALUES (?,?,?,?,'live',?)",
+            (name, scope, scope_key, task_id, now()),
+        )
+        return int(cur.lastrowid)
+
+    def aside(self, aside_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM aside WHERE id = ?", (aside_id,)).fetchone()
+
+    def aside_live(self, name: str, scope_key: str) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM aside WHERE name = ? AND scope_key = ? AND status = 'live'",
+            (name, scope_key),
+        ).fetchone()
+
+    def asides_live(self, name: str | None = None) -> list[sqlite3.Row]:
+        if name:
+            return list(self.conn.execute(
+                "SELECT * FROM aside WHERE status = 'live' AND name = ? ORDER BY id", (name,)
+            ))
+        return list(self.conn.execute(
+            "SELECT * FROM aside WHERE status = 'live' ORDER BY id"
+        ))
+
+    def aside_close(self, aside_id: int, status: str = "done") -> None:
+        self.conn.execute(
+            "UPDATE aside SET status = ?, ended_at = ? WHERE id = ?", (status, now(), aside_id)
+        )
+
+    def aside_run_start(
+        self, aside_id: int, wake: str, cause_seq: int | None, token: str = ""
+    ) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO aside_run (aside_id, wake, cause_seq, started_at, token) "
+            "VALUES (?,?,?,?,?)",
+            (aside_id, wake, cause_seq, now(), token or None),
+        )
+        return int(cur.lastrowid)
+
+    def aside_run(self, run_id: int) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM aside_run WHERE id = ?", (run_id,)
+        ).fetchone()
+
+    def aside_run_open(self, aside_id: int) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM aside_run WHERE aside_id = ? AND ended_at IS NULL "
+            "ORDER BY id DESC LIMIT 1",
+            (aside_id,),
+        ).fetchone()
+
+    def aside_runs_open(self) -> list[sqlite3.Row]:
+        """Все незакрытые побочные ходы: за ними следит проход движка."""
+        return list(self.conn.execute(
+            "SELECT r.*, a.name, a.scope, a.scope_key, a.task_id FROM aside_run r "
+            "JOIN aside a ON a.id = r.aside_id WHERE r.ended_at IS NULL ORDER BY r.id"
+        ))
+
+    def aside_run_sent(self, run_id: int, session_id: str | None = None) -> None:
+        sets, values = ["prompt_sent_at = ?"], [now_precise()]
+        if session_id is not None:
+            sets.append("session_id = ?")
+            values.append(session_id)
+        self.conn.execute(
+            f"UPDATE aside_run SET {', '.join(sets)} WHERE id = ?", [*values, run_id]
+        )
+
+    def aside_run_end(self, run_id: int, outcome: str | None, cost: float | None = None) -> None:
+        self.conn.execute(
+            "UPDATE aside_run SET ended_at = ?, outcome = ?, cost_usd = ? WHERE id = ?",
+            (now(), outcome, cost, run_id),
+        )
+
+    def aside_runs_of(self, aside_id: int) -> list[sqlite3.Row]:
+        return list(self.conn.execute(
+            "SELECT * FROM aside_run WHERE aside_id = ? ORDER BY id", (aside_id,)
+        ))
+
+    # ── находки ──────────────────────────────────────────────────────────
+    def note_add(
+        self,
+        aside_id: int,
+        run_id: int | None,
+        task_id: str | None,
+        severity: str,
+        title: str,
+        body: str,
+        options: list[dict],
+    ) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO aside_note (aside_id, run_id, task_id, severity, title, body, "
+            "options, state, created_at) VALUES (?,?,?,?,?,?,?,'open',?)",
+            (
+                aside_id, run_id, task_id, severity, title, body,
+                json.dumps(options, ensure_ascii=False), now(),
+            ),
+        )
+        return int(cur.lastrowid)
+
+    def note(self, note_id: int) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM aside_note WHERE id = ?", (note_id,)
+        ).fetchone()
+
+    def notes(self, state: str | None = None, task_id: str | None = None) -> list[sqlite3.Row]:
+        sql = "SELECT * FROM aside_note WHERE 1=1"
+        args: list = []
+        if state:
+            sql += " AND state = ?"
+            args.append(state)
+        if task_id:
+            sql += " AND task_id = ?"
+            args.append(task_id)
+        return list(self.conn.execute(sql + " ORDER BY id", args))
+
+    def note_state(self, note_id: int, state: str, **fields) -> None:
+        sets = ["state = ?"]
+        values: list = [state]
+        for key, value in fields.items():
+            sets.append(f"{key} = ?")
+            values.append(value)
+        self.conn.execute(
+            f"UPDATE aside_note SET {', '.join(sets)} WHERE id = ?", [*values, note_id]
+        )
+
+    # ── курсор подписки ──────────────────────────────────────────────────
+    def cursor_of(self, name: str, scope_key: str) -> int:
+        """Докуда роль разобрала журнал. `-1` — курсора ещё нет вовсе.
+
+        Ноль от «нет курсора» отличается: на чистой базе журнал начинается
+        с первого события, и потерять его нельзя.
+        """
+        row = self.conn.execute(
+            "SELECT seq FROM aside_cursor WHERE name = ? AND scope_key = ?", (name, scope_key)
+        ).fetchone()
+        return int(row["seq"]) if row else -1
+
+    def cursor_set(self, name: str, scope_key: str, seq: int) -> None:
+        self.conn.execute(
+            "INSERT INTO aside_cursor (name, scope_key, seq) VALUES (?,?,?) "
+            "ON CONFLICT(name, scope_key) DO UPDATE SET seq = excluded.seq",
+            (name, scope_key, seq),
+        )
+
+    def events_after(self, seq: int, kinds: tuple[str, ...], limit: int = 200) -> list[sqlite3.Row]:
+        marks = ",".join("?" * len(kinds))
+        return list(self.conn.execute(
+            f"SELECT * FROM event WHERE seq > ? AND kind IN ({marks}) ORDER BY seq LIMIT ?",
+            (seq, *kinds, limit),
+        ))
+
+    def last_seq(self) -> int:
+        row = self.conn.execute("SELECT MAX(seq) AS s FROM event").fetchone()
+        return int(row["s"] or 0)
 
     # ── движения и журнал ────────────────────────────────────────────────
     def move(

@@ -11,14 +11,14 @@ includes: [common-protocol, common-git-safety]
 
 steps:
   - id: conventions
-    run: { agent: claude, model: sonnet, effort: high }
+    run: { agent: claude, model: "opus[1m]", effort: medium }
     context: fresh
     artifact: [conventions.md]
     next: conventions-check
     human: { ask: true }         # приоритеты и границы знает только владелец
 
   - id: conventions-check
-    run: { agent: claude, model: sonnet, effort: high }   # пробный прогон; целевое: { agent: claude, model: "opus[1m]", effort: high }
+    run: { agent: claude, model: "opus[1m]", effort: medium }
     context: fresh
     prompt: { reads: [conventions.md] }
     artifact: [conventions-review.md]

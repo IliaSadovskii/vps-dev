@@ -31,6 +31,7 @@ from .chain import (
     ChainError,
     Step,
     apply_preset,
+    gates_on as chain_gates_on,
     load as load_chain,
     parse as parse_chain,
     path_of as chain_path,
@@ -48,6 +49,7 @@ from .db import (
     epoch,
     now,
 )
+from .aside_role import AsideMixin
 from .buttons import ButtonsMixin
 from .inbox import InboxMixin
 from .naming import GROUP_ROOT, session_title, slug, title_from
@@ -57,8 +59,10 @@ from .wizard import WizardMixin
 from .workspace import (
     Workspace,
     create_worktree,
+    git_try,
     has_work,
     remove_worktree,
+    touched_files,
     worktree_holder,
 )
 
@@ -67,6 +71,9 @@ ARCHIVE_AFTER_H = 168
 # Пробуждение уснувшего воркера: сколько раз пробуем и сколько ждём после
 # отправки промпта, прежде чем считать воркер уснувшим.
 WAKE_LIMIT = 3
+NUDGES_BEFORE_STOP = 4
+# Пауза между толчками: роль, ждущая подагентов, отвечает мгновенно.
+NUDGE_GRACE_S = 120.0
 WAKE_GRACE_S = 30.0
 
 
@@ -80,13 +87,27 @@ class Settings:
     projects_dir: str = "/projects"
     # Модель для служебных ходов, где думать не о чем: уборка стенда.
     cheap_model: str = "haiku"
+    # Предел одновременно работающих сессий AoE: шаги цепочек, стенды,
+    # побочные роли.
+    # `max_running` считает задачи и до сессий не дотягивается, поэтому
+    # три задачи со стендами и наблюдателями клали машину по памяти
+    # (`ASIDE-PLAN.md` §10).
+    max_sessions: int = 6
+    # Сколько памяти должно остаться свободным, чтобы поднимать ещё сессию.
+    min_free_mb: int = 1500
+    # Ход дольше этого — повод сторожу сказать «идёт слишком долго».
+    overtime_min: int = 45
 
 
-class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMixin):
+class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, PromptContextMixin):
     def __init__(self, db: Db, aoe: Aoe | None = None, settings: Settings | None = None) -> None:
         self.db = db
         self.aoe = aoe or Aoe()
         self.settings = settings or Settings()
+        self.live_sessions = 0
+        # Канал наружу заводится лениво: без токена он молчит, а движок
+        # работает как работал.
+        self.notifier = None
 
     # ── проход ───────────────────────────────────────────────────────────
     def reconcile(self) -> None:
@@ -100,6 +121,13 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
         except AoeError as exc:
             self.db.event(None, "aoe_unreachable", {"error": str(exc)})
             return
+        # Считаем не все живые сессии, а работающие: память и процессор
+        # ест ход агента, а сессия в `Idle` стоит почти ничего и висит до
+        # архивации неделю. Предохранитель резервирует место под каждую
+        # новую сессию (`capacity`), резерв живёт один проход.
+        self.live_sessions = sum(
+            1 for s in sessions.values() if s.status in (RUNNING, STARTING)
+        )
         self.adopt_wizards(sessions)
         self.watch_teardown()
         for row in self.db.tasks(LIVE):
@@ -107,6 +135,11 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
                 self.step_task(row, sessions)
             except Exception as exc:  # noqa: BLE001 — одна задача не роняет проход
                 self.db.event(row["id"], "engine_error", {"error": repr(exc)})
+        self.watch_clashes()
+        # Побочные роли — последними: шаг цепочки важнее наблюдателя и
+        # место под сессию занимает первым (`ASIDE-PLAN.md` §2).
+        self.pump_asides(sessions)
+        self.pump_notify()
         self.archive_old()
 
     def step_task(self, task, sessions: dict[str, Session]) -> None:
@@ -118,6 +151,8 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
             # Остальные остановки ждут кнопки.
             if task["wait_reason"] == "ask":
                 self.resume_after_answer(task, sessions)
+            if task["wait_reason"] == "no_signal":
+                self.late_signal(task)
             return
         chain = self.chain_of(task)
         if chain is None:
@@ -128,6 +163,54 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
             self.begin_run(task, chain)
             return
         self.watch_run(task, chain, run, sessions)
+
+    def late_signal(self, task) -> None:
+        """Сигнал, пришедший после того, как задача встала без него.
+
+        Роль, ждущая подагентов, заканчивает ход короткими репликами («жду»),
+        и движок принимает их за конец работы. Настоящий `orch done` приходит
+        минутами позже, когда задача уже стоит. Терять его нельзя: работа
+        сделана, файл написан, а владельца зовут разбираться на пустом месте.
+        """
+        chain = self.chain_of(task)
+        if chain is None or not task["step"] or not task["worktree_path"]:
+            return
+        try:
+            step = chain.step(task["step"])
+        except ChainError:
+            return
+        row = self.db.conn.execute(
+            "SELECT * FROM run WHERE task_id = ? AND step = ? ORDER BY id DESC LIMIT 1",
+            (task["id"], step.id),
+        ).fetchone()
+        if row is None or not row["ended_at"]:
+            return
+        ws = self.workspace(task)
+        signal = signals.read(signals.done_path(ws.signals, step.id, row["n"]))
+        if not signal or signal.get("kind") != "done":
+            return
+        outcome = signal.get("outcome")
+        if outcome is not None and outcome not in step.next:
+            return
+        target = step.target(outcome)
+        if target is None:
+            return
+        with self.db.tx():
+            self.db.conn.execute(
+                "UPDATE run SET outcome = ?, signalled = 1 WHERE id = ?", (outcome, row["id"])
+            )
+            revision = self.db.bump(task["id"], status=ST_RUNNING, step=target, wait_reason=None)
+            self.db.move(
+                task["id"], step.id, target, "agent", f"signal_late:{outcome or ''}", revision
+            )
+            self.db.event(
+                task["id"],
+                "late_signal",
+                {"step": step.id, "run": row["n"], "outcome": outcome, "to": target},
+            )
+        if row["session_id"]:
+            self.aoe.set_urgent(row["session_id"], False)
+            self.aoe.set_color(row["session_id"], "green")
 
     def resume_after_answer(self, task, sessions: dict[str, Session]) -> None:
         """Владелец ответил роли в чате — задача снова едет."""
@@ -158,6 +241,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
         author: str | None = None,
         from_backlog: str | None = None,
         stand: bool = False,
+        notify_gates: bool = False,
     ) -> str:
         """Завести задачу.
 
@@ -165,6 +249,10 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
         садится на уже открытый PR. Ветка есть — движок подключится к ней,
         нет — заведёт с этим именем. `base` — от чего ответвляться, если
         ветки ещё нет.
+
+        Заводить на занятую ветку можно сколько угодно задач: очередь и
+        бэклог места в рабочей копии не занимают. Одна копия — одна работа
+        держится позже, на выходе из очереди (`promote_queue`).
         """
         chain = load_chain(chain_path(chain_name))
         sheet = chain.sheet_with_preset(preset)
@@ -172,21 +260,13 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
             sheet = apply_preset(sheet, sheet_edits)
         task_id = self.db.next_task_id()
         title = title or title_from(text)
-        if branch:
-            busy = self.task_on_branch(branch)
-            if busy:
-                raise ChainError(
-                    f"ветка {branch} занята задачей {busy['id']} ({busy['status']}). "
-                    "Одна рабочая копия — одна задача: закройте ту или возьмите "
-                    "другую ветку"
-                )
-        else:
+        if not branch:
             branch = f"{task_id.lower()}-{slug(title)}"
         with self.db.tx():
             self.db.conn.execute(
                 "INSERT INTO task (id, chain, chain_yaml, title, text, project_path, branch, "
                 "group_path, step, status, human_sheet, base_branch, author, stand_wanted, "
-                "revision, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)",
+                "notify_gates, revision, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)",
                 (
                     task_id,
                     chain.name,
@@ -202,6 +282,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
                     base or None,
                     author or None,
                     1 if stand else 0,
+                    1 if notify_gates else 0,
                     now(),
                 ),
             )
@@ -223,16 +304,27 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
         return task_id
 
     def promote_queue(self) -> None:
-        """Одновременно `running` не больше `max_running`; остальные ждут."""
+        """Одновременно `running` не больше `max_running`; остальные ждут.
+
+        Вторые ворота — ветка: на одной ветке одна рабочая копия, поэтому
+        задача на занятой ветке стоит в очереди, пока та, что в работе, не
+        закончится. Задачи на разные ветки её при этом обгоняют.
+        """
         running = [t for t in self.db.tasks((ST_RUNNING,))]
         free = self.settings.max_running - len(running)
         if free <= 0:
             return
-        for task in self.db.tasks((QUEUED,))[:free]:
+        for task in self.db.tasks((QUEUED,)):
+            if free <= 0:
+                return
             chain = self.chain_of(task)
             if chain is None:
                 self.stop(task["id"], "chain_broken")
                 continue
+            busy = self.task_on_branch(task["branch"], skip=task["id"])
+            if busy:
+                continue
+            free -= 1
             with self.db.tx():
                 revision = self.db.bump(task["id"], status=ST_RUNNING, step=chain.first.id)
                 self.db.move(task["id"], None, chain.first.id, "engine", "start", revision)
@@ -249,7 +341,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
             if task["archived_at"]:
                 continue
             self.drop_stand(task)
-            if task["stand_teardown"] or self.db.task(task["id"])["stand_teardown"]:
+            if self.teardown_session(task["id"]):
                 # Уборщик стенда работает в этой копии — снесём её на
                 # следующем проходе, когда он закончит.
                 continue
@@ -271,7 +363,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
             if closed is None or (time.time() - closed) / 3600 < ARCHIVE_AFTER_H:
                 continue
             self.drop_stand(task)
-            if self.db.task(task["id"])["stand_teardown"]:
+            if self.teardown_session(task["id"]):
                 continue
             for sid in self.db.sessions_of_task(task["id"]):
                 self.aoe.archive(sid)
@@ -289,7 +381,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
     # ── старт захода ─────────────────────────────────────────────────────
     def begin_run(self, task, chain: Chain) -> None:
         step = chain.step(task["step"])
-        done_runs = self.db.runs_of_step(task["id"], step.id)
+        done_runs = self.runs_this_cycle(task, step)
         if len(done_runs) >= self.runs_allowed(task, step):
             self.stop(task["id"], "max_runs")
             return
@@ -304,15 +396,25 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
         ws.ensure(task["text"], task["chain_yaml"])
         start_sha = ws.head()
 
+        if not self.capacity(task["id"], f"шаг {step.id}"):
+            return
+
         with self.db.tx():
             run_id = self.db.start_run(task["id"], step.id, step.context, start_sha)
+            self.db.event(
+                task["id"],
+                "run_started",
+                {"run": run_id, "step": step.id, "n": len(done_runs) + 1,
+                 "context": step.context},
+            )
         run = self.db.conn.execute("SELECT * FROM run WHERE id = ?", (run_id,)).fetchone()
 
         session = self.attach_session(task, chain, step, run)
         if session is None:
             return
         ws.write_current(
-            step.id, run["n"], session.id, "running", task["branch"], list(step.reads)
+            step.id, run["n"], session.id, "running", task["branch"], list(step.reads),
+            gate_after=self.gate_after(task, step), ask=self.ask_allowed(task, step),
         )
 
         self.apply_model(task, step, session)
@@ -334,18 +436,196 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
                 "prompt_sent",
                 {"step": step.id, "run": run["n"], "disposition": disposition, "sha": sha[:12]},
             )
-        self.dress(task, chain, step, session.id)
+        self.dress(task, chain, step, session.id, run["n"])
 
-    def task_on_branch(self, branch: str):
+    def notify(self):
+        """Канал наружу. Создаётся один раз и переживает проходы."""
+        if self.notifier is None:
+            from .notify import Notifier
+
+            self.notifier = Notifier(self)
+        return self.notifier
+
+    def pump_notify(self) -> None:
+        try:
+            self.notify().pump()
+        except Exception as exc:  # noqa: BLE001 — канал не роняет проход
+            self.note_once(None, "notify_error", {"error": repr(exc)[:300]})
+
+    def capacity(self, task_id: str | None, what: str) -> bool:
+        """Можно ли поднять ещё одну сессию AoE.
+
+        Место резервируется сразу: за проход движок заводит несколько
+        сессий, и считать их постфактум поздно. Резерв живёт один проход —
+        следующий пересчитает от списка AoE.
+        """
+        if self.live_sessions >= self.settings.max_sessions:
+            self.note_once(
+                task_id,
+                "sessions_capped",
+                {"live": self.live_sessions, "limit": self.settings.max_sessions, "for": what},
+            )
+            return False
+        free = free_memory_mb()
+        if free is not None and free < self.settings.min_free_mb:
+            self.note_once(
+                task_id,
+                "memory_low",
+                {"free_mb": free, "need_mb": self.settings.min_free_mb, "for": what},
+            )
+            return False
+        self.live_sessions += 1
+        return True
+
+    def note_once(self, task_id: str | None, kind: str, payload: dict, within_s: float = 300.0) -> None:
+        """Событие, которое повторяется каждый проход, пишется раз в пять минут.
+
+        Нехватка памяти держится часами: без выдержки журнал забился бы
+        одной и той же строкой раз в пять секунд.
+        """
+        # Дроссель считается по виду и задаче: та же нехватка памяти на
+        # другой задаче — другой сигнал, и молчать о нём нельзя.
+        if task_id:
+            row = self.db.conn.execute(
+                "SELECT at FROM event WHERE kind = ? AND task_id = ? ORDER BY seq DESC LIMIT 1",
+                (kind, task_id),
+            ).fetchone()
+        else:
+            row = self.db.conn.execute(
+                "SELECT at FROM event WHERE kind = ? AND task_id IS NULL ORDER BY seq DESC LIMIT 1",
+                (kind,),
+            ).fetchone()
+        last = epoch(row["at"]) if row else None
+        if last is not None and _epoch_now() - last < within_s:
+            return
+        self.db.event(task_id, kind, payload)
+
+    def watch_clashes(self) -> None:
+        """Две живые задачи полезли в один файл.
+
+        Единственное, чего не видит ни один шаг цепочки: соседей. Но это
+        факт, а не суждение, — считается git-ом, без модели и без агента
+        (`ASIDE-PLAN.md` §2, сторожа).
+        """
+        live = [
+            t for t in self.db.tasks(LIVE)
+            if t["worktree_path"] and Path(t["worktree_path"]).is_dir()
+        ]
+        if len(live) < 2:
+            return
+        touched = {
+            t["id"]: touched_files(t["worktree_path"], t["base_branch"] or "")
+            for t in live
+        }
+        seen = set()
+        for one in live:
+            for other in live:
+                if one["id"] >= other["id"]:
+                    continue
+                shared = sorted(touched[one["id"]] & touched[other["id"]])
+                if not shared:
+                    continue
+                pair = f"{one['id']}+{other['id']}"
+                if pair in seen:
+                    continue
+                seen.add(pair)
+                self.note_once(
+                    one["id"],
+                    "watch_file_clash",
+                    {"pair": pair, "with": other["id"], "files": shared[:10]},
+                    3600.0,
+                )
+
+    def watch_bounds(self, task, run) -> None:
+        """Роль вышла за границы шага: отправила ветку или тронула чужое.
+
+        Считается git-ом по ходу захода, без модели. Дальше это повод для
+        Наладчика — но заметить обязан движок, роль о себе не расскажет.
+        """
+        path = task["worktree_path"]
+        if not path or not Path(path).is_dir():
+            return
+        if not self.db.run_events(task["id"], "watch_pushed", run["id"]):
+            code, out = git_try(path, "rev-parse", "--abbrev-ref", "@{upstream}")
+            if code == 0 and out.strip():
+                # Ветка задачи ушла на сервер: пуш делает шаг PR и только он.
+                if run["step"] != "pr":
+                    self.db.event(
+                        task["id"], "watch_pushed",
+                        {"run": run["id"], "step": run["step"], "upstream": out.strip()[:80]},
+                    )
+        zone = self.step_zone(task, run)
+        if zone is None or self.db.run_events(task["id"], "watch_out_of_bounds", run["id"]):
+            return
+        touched = touched_files(path, task["base_branch"] or "")
+        чужое = sorted(f for f in touched if not any(f.startswith(p) for p in zone))
+        if чужое:
+            self.db.event(
+                task["id"], "watch_out_of_bounds",
+                {"run": run["id"], "step": run["step"], "files": чужое[:10]},
+            )
+
+    def step_zone(self, task, run) -> list[str] | None:
+        """Пути, которые шагу можно трогать, или None — если ограничений нет.
+
+        Зона задаётся в цепочке (`zone:` у шага). Без неё сторож молчит:
+        выдумывать границы за владельца движок не станет.
+        """
+        chain = self.chain_of(task)
+        if chain is None:
+            return None
+        try:
+            step = chain.step(run["step"])
+        except ChainError:
+            return None
+        return list(step.zone) or None
+
+    def watch_alarms(self, task, run, session: Session) -> None:
+        """Сторожа идущего хода: дёшево, без модели, только событие.
+
+        Думать о находке будет побочная роль (`ASIDE-PLAN.md` §2); дело
+        сторожа — заметить и сказать один раз за заход.
+        """
+        sent = parse_time(run["prompt_sent_at"])
+        if sent is None:
+            return
+        age = _epoch_now() - sent
+        self.watch_bounds(task, run)
+        if age > self.settings.overtime_min * 60 and not self.db.run_events(
+            task["id"], "watch_overtime", run["id"]
+        ):
+            self.db.event(
+                task["id"],
+                "watch_overtime",
+                {"run": run["id"], "step": run["step"], "minutes": round(age / 60)},
+            )
+        # Стоимость спрашиваем у AoE не каждый проход: это лишний запрос на
+        # каждую идущую задачу. Через десять минут хода и не чаще пяти минут.
+        if age < 600 or self.db.run_events(task["id"], "watch_cost", run["id"]):
+            return
+        if self.recently(task, "cost_checked", run, 300.0):
+            return
+        self.db.event(task["id"], "cost_checked", {"run": run["id"]})
+        cost, _ = self.aoe.usage(session.id)
+        if cost is not None and cost > self.settings.cost_warn_usd:
+            self.db.event(
+                task["id"],
+                "watch_cost",
+                {"run": run["id"], "step": run["step"], "cost_usd": cost},
+            )
+
+    def task_on_branch(self, branch: str, skip: str | None = None):
         """Задача, которая уже работает в этой ветке, или None.
 
         Две задачи в одной рабочей копии писали бы `.orch/` друг поверх
-        друга, и `orch` в сессии не смог бы понять, чей он.
+        друга, и `orch` в сессии не смог бы понять, чей он. Копию занимает
+        только начатая работа: в очереди и в бэклоге на одной ветке задачи
+        копятся свободно.
         """
         return self.db.conn.execute(
-            "SELECT id, status FROM task WHERE branch = ? "
-            "AND status IN ('backlog','queued','running','waiting') LIMIT 1",
-            (branch,),
+            "SELECT id, status FROM task WHERE branch = ? AND id IS NOT ? "
+            "AND status IN ('running','waiting') LIMIT 1",
+            (branch, skip),
         ).fetchone()
 
     def ensure_worktree(self, task) -> bool:
@@ -424,7 +704,23 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
         return True
 
     def attach_session(self, task, chain: Chain, step: Step, run) -> Session | None:
-        """`fresh` — новая сессия; `continue` — последняя сессия этого агента."""
+        """Где идёт заход.
+
+        `fresh` — новая сессия; `continue` — последняя сессия того же агента
+        (продолжение разговора предыдущего шага); `own` — последняя сессия
+        этого же шага: роль возвращается к себе и помнит свой прошлый заход.
+        """
+        if step.context == "own":
+            prev = self.db.conn.execute(
+                "SELECT session_id FROM run WHERE task_id = ? AND step = ? AND id <> ? "
+                "AND session_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+                (task["id"], step.id, run["id"]),
+            ).fetchone()
+            if prev:
+                session = self.aoe.session(prev["session_id"])
+                if session:
+                    return session
+
         if step.context == "continue":
             same_agent = [s.id for s in chain.steps if s.agent == step.agent]
             prev = self.db.last_run_of_agent(task["id"], same_agent)
@@ -445,7 +741,9 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
                 agent=step.agent,
                 model=step.model,
                 effort=step.effort,
-                title=session_title(task["id"], step.id),
+                title=session_title(
+                    task["id"], step.id, run["n"], step.context in ("own", "continue")
+                ),
                 group=task["group_path"] or f"{GROUP_ROOT}/{task['id']}",
                 idempotency_key=key,
             )
@@ -473,6 +771,12 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
         Отказ не останавливает задачу: ход пойдёт на модели по умолчанию, но
         это будет видно в журнале, а не тихо.
         """
+        if step.effort and not self.aoe.apply_effort(session.id, step.effort):
+            self.db.event(
+                task["id"],
+                "effort_not_applied",
+                {"session": session.id, "want": step.effort},
+            )
         if self.aoe.apply_model(session.id, step.model):
             return
         self.db.event(
@@ -500,6 +804,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
             return
 
         if session.status in (RUNNING, STARTING):
+            self.watch_alarms(task, run, session)
             return
 
         if session.status == WAITING:
@@ -529,7 +834,10 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
         task = self.db.task(task["id"])
         ws = self.workspace(task)
         ws.ensure(task["text"], task["chain_yaml"])
-        ws.write_current(step.id, run["n"], session.id, "running", task["branch"], list(step.reads))
+        ws.write_current(
+            step.id, run["n"], session.id, "running", task["branch"], list(step.reads),
+            gate_after=self.gate_after(task, step), ask=self.ask_allowed(task, step),
+        )
         self.apply_model(task, step, session)
         text, sha, comment_ids = self.assemble(task, chain, step, run, ws)
         (ws.prompts / f"{step.id}-{run['n']}.md").write_text(text, encoding="utf-8")
@@ -541,11 +849,22 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
         with self.db.tx():
             self.db.prompt_sent(run["id"], session.id, sha)
             self.db.mark_delivered(comment_ids)
-        self.dress(task, chain, step, session.id)
+        self.dress(task, chain, step, session.id, run["n"])
 
     def on_waiting(self, task, chain: Chain, step: Step, run, session: Session) -> None:
         """`Waiting` = вопрос роли или запрос разрешения."""
         if self.ask_allowed(task, step):
+            # Отметка о заданном вопросе живёт в папке задачи: по ней
+            # `orch done` отличает выбор, сделанный владельцем внутри хода,
+            # от выбора, отложенного на ворота.
+            ws = self.workspace(task)
+            if not signals.count(ws.signals, "ask", step.id, run["n"]):
+                signals.write_aux(ws.signals, "ask", step.id, run["n"], "роль спросила владельца")
+                # Отдельное событие, а не общий `stopped`: на вопрос роли
+                # подписан Тимлид, и будить его на каждой остановке незачем.
+                self.db.event(
+                    task["id"], "role_asked", {"step": step.id, "run": run["id"]}
+                )
             self.stop(task["id"], "ask", urgent=True)
             return
         # Вопросы выключены листом автономии: закрываем ход и говорим решать самой.
@@ -709,14 +1028,27 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
         Один раз просим закончить автоматически — роль часто просто забыла
         последнюю команду (`PLAN.md` §5 п. 4). Второй раз задача встаёт.
         """
-        if not self.db.run_events(task["id"], "auto_continue", run["id"]):
+        # Толкаем несколько раз, а не один: роль, ждущая подагентов, кончает
+        # ход короткой репликой («жду три чтения»), и это неотличимо от
+        # забытой команды. Один толчок закрывал такой заход за полминуты,
+        # когда работа шла (T19, 14:41).
+        # Считать толчки мало: роль отвечает на них мгновенно («жду»), и
+        # четыре толчка сгорали за 38 секунд (T19, 15:32:57 → 15:33:29).
+        # Между толчками нужна пауза — тогда предел означает время, а не
+        # число реплик.
+        if self.recently(task, "auto_continue", run, NUDGE_GRACE_S):
+            return
+        nudges = len(self.db.run_events(task["id"], "auto_continue", run["id"]))
+        if nudges < NUDGES_BEFORE_STOP:
             self.db.event(task["id"], "auto_continue", {"run": run["id"], "step": step.id})
             if self.repeat_prompt(
                 run,
                 session,
-                "Ход закончился без сигнала. Заверши работу и подай сигнал: "
-                "последнее действие — `orch done`. Если закончить нечем, "
-                "запиши в `## Не решено`, чего не хватает.",
+                "Ход закончился без сигнала. Если ты ждёшь подагентов или "
+                "долгую команду — просто продолжай, я спрошу снова. Если "
+                "работа закончена, подай сигнал: последнее действие — "
+                "`orch done`. Если закончить нечем, запиши в `## Не решено`, "
+                "чего не хватает.",
             ):
                 return
 
@@ -754,6 +1086,26 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
         entry = self.sheet(task).get(step.id) or {}
         return bool(entry.get("ask", step.human_ask))
 
+    def runs_this_cycle(self, task, step: Step) -> list:
+        """Заходы шага после последнего движения владельца.
+
+        Предел держит роли, а не владельца: вернув работу назад, он начинает
+        круг заново, и шаги ниже по цепочке должны идти со своим полным
+        пределом. Иначе задача, отправленная в Реализацию с воротов, тут же
+        встаёт «предел заходов» на Ревью кода, потратившем заходы в прошлом
+        круге (T19, 18:59).
+        """
+        runs = self.db.runs_of_step(task["id"], step.id)
+        row = self.db.conn.execute(
+            "SELECT at FROM move WHERE task_id = ? AND actor = 'human' ORDER BY id DESC LIMIT 1",
+            (task["id"],),
+        ).fetchone()
+        if row is None:
+            return runs
+        # Строго позже: заход, начатый в ту же секунду, что и движение
+        # владельца, — это и есть заход нового круга.
+        return [r for r in runs if (r["started_at"] or "") > row["at"]]
+
     def runs_allowed(self, task, step: Step) -> int:
         """Предел заходов плюс те, что владелец добавил кнопкой «Ещё заход».
 
@@ -770,12 +1122,10 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
 
     def gates_on(self, task, step: Step, outcome: str | None) -> bool:
         entry = self.sheet(task).get(step.id)
-        after = entry.get("after") if entry else step.human_after
-        if isinstance(after, bool):
-            return after
-        if isinstance(after, list):
-            return outcome in after
-        return False
+        # Ключа может не быть, если лист старше цепочки: тогда действует
+        # значение шага, а не «ворот нет».
+        after = entry.get("after", step.human_after) if entry else step.human_after
+        return chain_gates_on(after, outcome)
 
     def stop(self, task_id: str, reason: str, status: str = ST_WAITING, urgent: bool = False) -> None:
         with self.db.tx():
@@ -797,17 +1147,58 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, PromptContextMix
         self.aoe.set_color(session_id, "red")
         self.aoe.set_urgent(session_id, True)
 
-    def dress(self, task, chain: Chain, step: Step, session_id: str) -> None:
+    def quiet_others(self, task, keep: str | None) -> None:
+        """Снять зов со всех сессий задачи, кроме текущей.
+
+        Сессия шага, который уже сходил, оставалась с флагом уведомления и
+        красным цветом: сайдбар показывал два зовущих шага сразу, и владелец
+        не понимал, какой из них ждёт его на самом деле.
+        """
+        for row in self.db.conn.execute(
+            "SELECT DISTINCT session_id FROM run WHERE task_id = ? AND session_id IS NOT NULL",
+            (task["id"],),
+        ):
+            sid = row["session_id"]
+            if not sid or sid == keep:
+                continue
+            self.aoe.set_urgent(sid, False)
+            self.aoe.set_notify(sid, False)
+            self.aoe.set_color(sid, "green")
+
+    def dress(self, task, chain: Chain, step: Step, session_id: str, run_n: int = 1) -> None:
         """Титул, группа, цвет, пуш — ставятся каждый раз, они безвредны."""
-        self.aoe.set_title(session_id, session_title(task["id"], step.id))
+        self.quiet_others(task, session_id)
+        self.aoe.set_title(
+            session_id,
+            session_title(task["id"], step.id, run_n, step.context in ("own", "continue")),
+        )
         self.aoe.set_group(session_id, task["group_path"] or f"{GROUP_ROOT}/{task['id']}")
         self.aoe.set_color(session_id, "amber")
         self.aoe.set_urgent(session_id, False)
-        gated = self.gates_on(task, step, None) or isinstance(
-            (self.sheet(task).get(step.id) or {}).get("after", step.human_after), list
-        )
+        # Уведомление ставим щедро: шаг, который может встать хоть на каком-то
+        # исходе или на вопросе, зовёт владельца заранее.
+        after = (self.sheet(task).get(step.id) or {}).get("after", step.human_after)
+        gated = bool(after)
         self.aoe.set_notify(session_id, bool(gated))
 
 # ── свободные функции ────────────────────────────────────────────────────
+def free_memory_mb() -> int | None:
+    """Сколько памяти реально доступно, по `MemAvailable`.
+
+    Не `MemFree`: кэш страниц ядро отдаёт само, и по `MemFree` машина с
+    тёплым кэшем всегда выглядит забитой.
+    """
+    try:
+        text = Path("/proc/meminfo").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if line.startswith("MemAvailable:"):
+            parts = line.split()
+            if len(parts) >= 2 and parts[1].isdigit():
+                return int(parts[1]) // 1024
+    return None
+
+
 def _epoch_now() -> float:
     return time.time()

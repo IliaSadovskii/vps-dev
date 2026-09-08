@@ -20,15 +20,38 @@ from .workspace import Workspace
 
 
 class PromptContextMixin:
+    def gate_after(self, task, step: Step) -> bool | list[str]:
+        """Ворота шага по листу автономии задачи, а не по цепочке.
+
+        Лист переключают в панели по ходу, поэтому спрашивать надо его.
+        """
+        return (self.sheet(task).get(step.id) or {}).get("after", step.human_after)
+
+    # Сколько копилки отдаём шагу: последние записи, а не всё подряд —
+    # промпт не резиновый, а старое обычно уже в коде.
+    MEMORY_TAIL = 6000
+
+    def project_memory(self, task) -> str:
+        """Копилка проекта, которую ведёт Менеджер (`ASIDE-PLAN.md` §11)."""
+        from .db import STATE_DIR
+        from .naming import slug
+
+        path = STATE_DIR / "memory" / f"manager-{slug(task['project_path'])}.md"
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            return ""
+        return text[-self.MEMORY_TAIL:] if len(text) > self.MEMORY_TAIL else text
+
     def extra_includes(self, task, step: Step) -> list[str]:
         """Общие файлы, которые движок добавляет по состоянию, а не по цепочке.
 
-        Правило про ворота нужно только роли, после которой задача встанет:
-        остальным оно даёт команду, которой они всё равно не смогут
-        воспользоваться (`PROMPT-NOTES.md`, прогон T16).
+        Правила про ворота и про отчёт владельцу нужны только роли, после
+        которой задача встанет: остальным это сто строк не по адресу — команда,
+        которой им не воспользоваться, и форма сообщения, которого они не
+        пишут (`PROMPT-NOTES.md`, прогон T16).
         """
-        after = (self.sheet(task).get(step.id) or {}).get("after", step.human_after)
-        return ["common-gate"] if after else []
+        return ["common-report", "common-gate"] if self.gate_after(task, step) else []
 
     def assemble(self, task, chain: Chain, step: Step, run, ws: Workspace):
         """Собрать промпт и вернуть (текст, sha, id доставленных комментариев)."""
@@ -49,22 +72,41 @@ class PromptContextMixin:
             root=ws.root,
             run_n=run["n"],
             path_steps=self.db.path_steps(task["id"]),
-            came_from=self.came_from(task, step, run),
+            came_from=self.came_from(task, step, run, has_comment=bool(comments)),
             comments=[c["comment"] for c in comments],
             ask_allowed=self.ask_allowed(task, step),
             changed_since=ws.diff_stat(prev_end),
             later_artifacts=self.later_artifacts(ws, step, prev),
-            owner_edited=self.owner_edited(task, ws, chain),
+            owner_edited=self.owner_edited(task, ws, chain, step),
             sub_prompts=self.sub_prompts(step),
             extra_includes=self.extra_includes(task, step),
+            gate_after=self.gate_after(task, step),
+            memory_text=self.project_memory(task),
             stand_name=stands.name_of(task) if task["worktree_path"] else "",
+            branch=task["branch"] or "",
+            base_branch=task["base_branch"] or "",
+            start_sha=self.task_start_sha(task),
         )
         text = promptbuild.build(ctx)
         if ctx.oversized:
             self.db.event(task["id"], "prompt_oversized", {"step": step.id, "run": run["n"]})
         return text, hashlib.sha256(text.encode()).hexdigest(), [c["id"] for c in comments]
 
-    def came_from(self, task, step: Step, run) -> str:
+    def task_start_sha(self, task) -> str:
+        """Коммит, с которого началась работа задачи.
+
+        Стартовый снимок первого захода: от него считают дифф Ревью кода,
+        скрипт владения тестами и PR. Не путать с началом текущего захода —
+        тот показывает только последний кусок работы.
+        """
+        row = self.db.conn.execute(
+            "SELECT start_sha FROM run WHERE task_id = ? AND start_sha IS NOT NULL "
+            "ORDER BY id LIMIT 1",
+            (task["id"],),
+        ).fetchone()
+        return (row["start_sha"] or "")[:12] if row else ""
+
+    def came_from(self, task, step: Step, run, has_comment: bool = True) -> str:
         if run["n"] == 1 and not self.db.moves(task["id"], limit=2):
             return ""
         # Первый заход шага: продолжать нечего, даже если сюда привела кнопка
@@ -86,9 +128,18 @@ class PromptContextMixin:
         if last["actor"] == "human":
             if last["from_step"] == step.id:
                 return promptbuild.came_from_phrase("again")
-            return promptbuild.came_from_phrase("human")
+            return promptbuild.came_from_phrase("human", has_comment=has_comment)
         if last["actor"] == "agent" and last["from_step"] != step.id:
-            return promptbuild.came_from_phrase("role", last["from_step"])
+            files = ""
+            try:
+                sender = self.chain_of(task).step(last["from_step"])
+                ws = self.workspace(task)
+                files = ", ".join(f"`{ws.artifacts / a}`" for a in sender.artifact)
+            except (ChainError, KeyError, TypeError):
+                pass
+            return promptbuild.came_from_phrase(
+                "role", last["from_step"], detail_files=files
+            )
         return ""
 
     def later_artifacts(self, ws: Workspace, step: Step, prev) -> list[str]:
@@ -108,7 +159,7 @@ class PromptContextMixin:
                 continue
         return out
 
-    def owner_edited(self, task, ws: Workspace, chain: Chain) -> list[str]:
+    def owner_edited(self, task, ws: Workspace, chain: Chain, step: Step) -> list[str]:
         """Файлы, отпечаток которых изменился после сдачи роли (`PLAN.md` §5).
 
         Смотрим последнюю сдачу каждого шага: владелец мог поправить руками
@@ -128,7 +179,10 @@ class PromptContextMixin:
                 continue
             current = artifact_sha(ws, prev_step)
             if current and current != move["artifact_sha"]:
-                out.extend(prev_step.artifact)
+                # Только про файлы, которые этот шаг читает или пишет сам:
+                # про чужие ему знать незачем, а строка выглядит как поручение.
+                mine = set(step.reads) | set(step.artifact)
+                out.extend(a for a in prev_step.artifact if a in mine)
         return out
 
     def sub_prompts(self, step: Step) -> list[str]:

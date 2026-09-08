@@ -12,14 +12,14 @@ includes: [common-protocol, common-git-safety, common-knowledge-shape]
 
 steps:
   - id: blueprint
-    run: { agent: claude, model: sonnet, effort: high }   # пробный прогон; целевое: { agent: claude, model: "opus[1m]", effort: high }
+    run: { agent: claude, model: "opus[1m]", effort: medium }
     context: fresh
     artifact: [blueprint.md]
     next: blueprint-check
     human: { ask: true }         # противоречия и концовки сценариев
 
   - id: blueprint-check
-    run: { agent: claude, model: sonnet, effort: high }   # пробный прогон; целевое: { agent: claude, model: "opus[1m]", effort: high }
+    run: { agent: claude, model: "opus[1m]", effort: medium }
     context: fresh
     prompt: { reads: [blueprint.md] }
     artifact: [blueprint-review.md]

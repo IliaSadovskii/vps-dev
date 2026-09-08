@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -42,30 +43,38 @@ class Context:
     owner_edited: list[str] = field(default_factory=list)
     sub_prompts: list[str] = field(default_factory=list)
     stand_name: str = ""
+    # Копилка проекта: что прошлые задачи решили и что отвергли. Без неё
+    # каждый шаг начинает с чистой памятью и переоткрывает те же грабли.
+    memory_text: str = ""
+    branch: str = ""
+    base_branch: str = ""
+    start_sha: str = ""
     # Общие файлы сверх цепочки: движок добавляет их по состоянию задачи.
     extra_includes: list[str] = field(default_factory=list)
+    # Ворота листа автономии: True — встаёт на любом исходе, список — только
+    # на этих, False — не встаёт.
+    gate_after: bool | list[str] = False
     oversized: bool = False
 
 
 def build(ctx: Context) -> str:
-    parts = [
+    head = [
         _includes(ctx),
         _role(ctx),
         _instructions(ctx),
         _task(ctx),
+        _memory(ctx),
         _where(ctx),
-        _files(ctx, inline=True),
-        _comments(ctx),
-        _questions(ctx),
-        _finish(ctx),
     ]
+    files_at = len(head)          # индекс блока файлов: он один пересобирается
+    parts = [*head, _files(ctx, inline=True), _comments(ctx), _questions(ctx), _finish(ctx)]
     parts = [_drop_empty_files(p) for p in parts]
     text = "\n\n".join(p for p in parts if p).strip() + "\n"
     if len(text) / CHARS_PER_TOKEN <= TOKEN_LIMIT:
         return text
     # Слишком тяжёлый промпт: файлы остаются путями, содержание роль читает сама.
     ctx.oversized = True
-    parts[5] = _files(ctx, inline=False)
+    parts[files_at] = _files(ctx, inline=False)
     return "\n\n".join(p for p in parts if p).strip() + "\n"
 
 
@@ -116,6 +125,22 @@ def _task(ctx: Context) -> str:
     )
 
 
+def _memory(ctx: Context) -> str:
+    """Копилка проекта, если Менеджер её вёл.
+
+    Отдаётся всем шагам: копилка, которую никто не читает, — работа в стол.
+    """
+    if not ctx.memory_text.strip():
+        return ""
+    return (
+        "## Память проекта\n\n"
+        "Что решили и что отвергли прошлые задачи. Это не приказ, но и не "
+        "пустой звук: отвергнутое второй раз не предлагают, не назвав, что "
+        "изменилось.\n\n"
+        f"{ctx.memory_text.strip()}"
+    )
+
+
 def _where(ctx: Context) -> str:
     lines = ["## Где ты", ""]
     trail = " → ".join(ctx.path_steps) if ctx.path_steps else ctx.step.id
@@ -124,6 +149,18 @@ def _where(ctx: Context) -> str:
     if ctx.came_from:
         lines.append(ctx.came_from)
     lines.append(f"Задача {ctx.task_id}, папка задачи `{ctx.task_dir}`.")
+    if ctx.branch:
+        base = f", база `{ctx.base_branch}`" if ctx.base_branch else ""
+        lines.append(f"Ветка задачи `{ctx.branch}`{base}.")
+    if ctx.start_sha:
+        # Границу работы задачи роли иначе не узнать: в ветке лежит и то, что
+        # было до задачи. Ревью кода, скрипт владения тестами и PR считают
+        # дифф именно отсюда.
+        lines.append(
+            f"Работа задачи начинается с коммита `{ctx.start_sha}` — это стартовый "
+            "коммит задачи: всё, что после него, сделано в этой задаче, всё, что "
+            "до, существовало раньше."
+        )
     lines.append(
         f"Логи команд — `{ctx.task_dir / 'logs'}`, свой файл пиши в "
         f"`{ctx.task_dir / 'artifacts'}`."
@@ -164,8 +201,9 @@ def _files(ctx: Context, inline: bool) -> str:
     if missing:
         lines.append("")
         lines.append(
-            "Этих файлов нет — шаг пропущен или задача начата с середины. "
-            "Строку об этом в `## Допущения`, работай от кода и текста задачи: "
+            "Этих файлов нет: роль, которая их пишет, ещё не ходила, шаг "
+            "пропущен или задача начата с середины. Строку об этом в "
+            "`## Допущения`, работай от кода и текста задачи: "
             + ", ".join(f"`{m}`" for m in missing)
         )
     if not inline:
@@ -179,8 +217,14 @@ def _files(ctx: Context, inline: bool) -> str:
         own = [a for a in ctx.step.artifact]
         if own:
             lines.append("")
+            same = (
+                "Это тот же разговор, что и в прошлый заход: что ты решала и почему, "
+                "ты помнишь. "
+                if ctx.step.context == "own"
+                else ""
+            )
             lines.append(
-                "Твой файл с прошлого захода — перепиши его, новый не заводи: "
+                same + "Твой файл с прошлого захода — перепиши его, новый не заводи: "
                 + ", ".join(f"`{base / a}`" for a in own)
             )
     if ctx.changed_since.strip():
@@ -198,12 +242,16 @@ def _files(ctx: Context, inline: bool) -> str:
         )
     for name in ctx.owner_edited:
         lines.append("")
-        lines.append(f"Файл `{name}` правил владелец после сдачи.")
+        lines.append(
+            f"Файл `{name}` изменился после того, как его роль сдала ход: "
+            "правил владелец или сама роль в разговоре на воротах. Читай его "
+            "заново, а не по памяти о прошлом заходе."
+        )
     # Путь к навыкам называем только когда навыки есть: иначе роль получает
     # дорогу в репозиторий самого оркестратора и ходит туда без нужды
     # (наблюдение прогона Conventions, `PROMPT-NOTES.md`).
-    skills = sorted(prompts_dir().glob("skill-*.md"))
-    if skills and ctx.step.reads:
+    skills = [p for p in sorted(prompts_dir().glob("skill-*.md")) if _reads_skill(p, ctx.step.id)]
+    if skills:
         lines.append("")
         lines.append(
             "Навыки, если `scoping.md` их называет: "
@@ -263,6 +311,19 @@ def _finish(ctx: Context) -> str:
             + ", ".join(f"`{base / a}`" for a in step.artifact)
             + ". Первый заголовок файла — `## Итог` или `## Для владельца`."
         )
+    gate = ctx.gate_after
+    if gate is True:
+        lines.append("После твоего хода задача встанет и будет ждать владельца.")
+    elif gate:
+        named = ", ".join(f"`{o}`" for o in gate)
+        rest = [o for o in step.outcomes if o not in set(gate)]
+        tail = (
+            " Остальные исходы (" + ", ".join(f"`{o}`" for o in rest) + ") владельца "
+            "не останавливают."
+            if rest
+            else ""
+        )
+        lines.append(f"Задача встанет и будет ждать владельца на исходе {named}.{tail}")
     lines.append(
         "После остановки правки владельца вноси в свой файл, второй раз "
         "`orch done` не вызывай."
@@ -289,16 +350,51 @@ def _summary(path: Path) -> str:
     return "\n".join(out).strip()
 
 
+def _reads_skill(path: Path, step_id: str) -> bool:
+    """Навык называет своих читателей первой строкой: `Читают шаги: a, b`.
+
+    Раздавать навыки всем подряд нельзя: путь к ним ведёт в репозиторий
+    оркестратора, и роль, которой навык не нужен, уходит туда читать
+    (`PROMPT-NOTES.md`, прогон Conventions).
+    """
+    try:
+        head = path.read_text(encoding="utf-8")[:400]
+    except OSError:
+        return False
+    m = re.search(r"Читают шаги:([^.\n]*)", head)
+    if not m:
+        return False
+    return step_id in re.findall(r"[a-z][a-z0-9-]*", m.group(1))
+
+
 def _indent(text: str) -> str:
     return "\n".join("  " + line if line else "" for line in text.splitlines())
 
 
-def came_from_phrase(kind: str, detail: str = "") -> str:
-    """Одна из трёх фраз, откуда роль сюда попала (`PLAN.md` §7 п. 5)."""
+def came_from_phrase(
+    kind: str, detail: str = "", has_comment: bool = True, detail_files: str = ""
+) -> str:
+    """Одна из трёх фраз, откуда роль сюда попала (`PLAN.md` §7 п. 5).
+
+    Кнопка панели комментария не несёт: поля ввода у панели нет, комментарий
+    доезжает только через `orch gate --comment` или `orch task move`. Обещать
+    комментарий, которого нет, нельзя — роль пойдёт его искать.
+    """
     if kind == "human":
+        if not has_comment:
+            return (
+                "Сюда тебя вернул владелец кнопкой, без комментария: он читал "
+                "файлы и решил, что работа у тебя. Что не так — ищи в файле "
+                "шага, с которого он вернул, и в своём прошлом файле; не "
+                "уверена — спроси его."
+            )
         return "Сюда тебя вернул владелец с комментарием — он ниже."
     if kind == "role":
-        return f"Сюда задачу вернула роль {detail} — читай её файл, там работа."
+        where = f" ({detail_files})" if detail_files else ""
+        return (
+            f"Сюда задачу вернула роль {detail} — её файл{where} и есть твоя "
+            "работа, читай его первым."
+        )
     if kind == "again":
         return (
             "Владелец нажал «ещё заход» / «продолжай»: продолжи с места "

@@ -17,6 +17,20 @@ from orch.db import Db
 from orch.engine import Engine, Settings
 
 
+@pytest.fixture(autouse=True)
+def _не_трогаем_живой_inbox(tmp_path_factory, monkeypatch):
+    """Ни один тест не читает настоящий `~/.local/share/orch/inbox`.
+
+    `reconcile()` начинается с `take_inbox()`, и тест, забывший подменить
+    каталог, съедал живую заявку владельца молча: файл удаляется всегда, а
+    задача заводилась в базе теста. Однажды такой прогон снёс и рабочую
+    копию живой задачи (`free_branch` увидел «чужую» ветку).
+    """
+    import orch.inbox as inbox_mod
+
+    monkeypatch.setattr(inbox_mod, "INBOX", tmp_path_factory.mktemp("inbox"))
+
+
 class FakeAoe:
     """Тот же интерфейс, что у `orch.aoe.Aoe`, но без сети."""
 
@@ -134,6 +148,20 @@ class FakeAoe:
 
 def _later(now=time.time) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now() + 60))
+
+
+@pytest.fixture(autouse=True)
+def без_канала(tmp_path: Path, monkeypatch):
+    """Ни один тест не должен дотянуться до настоящего бота.
+
+    Движок заводит канал наружу лениво и читает токен из секретов машины;
+    без этой подмены прогон тестов слал живому владельцу сообщения о
+    выдуманных задачах и ходил в сеть на каждых воротах.
+    """
+    from orch import secrets
+
+    monkeypatch.setattr(secrets, "PATH", tmp_path / "секреты" / "secrets.json")
+    return tmp_path
 
 
 @pytest.fixture

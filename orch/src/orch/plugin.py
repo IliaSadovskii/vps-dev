@@ -142,6 +142,29 @@ class Worker:
             db.bump(task["id"], human_sheet=json.dumps(sheet, ensure_ascii=False))
             db.event(task["id"], "sheet_edited", {"step": params["step"], **knobs})
 
+    def btn_notify_gates(self, session_id, params) -> None:
+        """Переключатель «Ворота в Telegram» на карточке задачи."""
+        if self.engine is None:
+            self.notify("orch", "движок ведёт другой процесс", tone="warn")
+            return
+        answer = self.engine.set_notify_gates(
+            str(params.get("task")), int(params.get("revision", -1)), bool(params.get("on"))
+        )
+        self.notify("orch", answer, tone="info")
+
+    def btn_note(self, session_id, params) -> None:
+        """Решение владельца под находкой побочной роли."""
+        if self.engine is None:
+            self.notify("orch", "движок ведёт другой процесс", tone="warn")
+            return
+        answer = self.engine.note_decision(
+            int(params.get("note")),
+            str(params.get("verb") or "continue"),
+            (params.get("target") or None),
+            who="panel",
+        )
+        self.notify("orch", answer, tone="info")
+
     def btn_wizard(self, session_id, params) -> None:
         """«Новая задача» и «В работу»: разговор вместо листа переключателей.
 
@@ -189,6 +212,9 @@ class Worker:
         "aoe_url": "",
         "projects_dir": "/projects",
         "cheap_model": "haiku",
+        "max_sessions": 6,
+        "min_free_mb": 1500,
+        "overtime_min": 45,
     }
 
     def read_settings(self) -> None:
@@ -214,6 +240,9 @@ class Worker:
             aoe_url=str(self.settings.get("aoe_url") or ""),
             projects_dir=str(self.settings.get("projects_dir") or "/projects"),
             cheap_model=str(self.settings.get("cheap_model") or "haiku"),
+            max_sessions=int(self.settings.get("max_sessions", 6)),
+            min_free_mb=int(self.settings.get("min_free_mb", 1500)),
+            overtime_min=int(self.settings.get("overtime_min", 45)),
         )
 
     @property

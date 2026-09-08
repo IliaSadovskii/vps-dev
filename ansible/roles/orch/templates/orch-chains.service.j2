@@ -18,7 +18,9 @@ ExecStart={{ orch_venv }}/bin/python {{ orch_bin_dir }}/orch-chains
 Restart=on-failure
 RestartSec=5
 
-# Страница правит ровно один каталог — правленые цепочки рядом с базой.
+# Страница правит три каталога рядом с базой: правленые цепочки, правленые
+# описания побочных ролей и токен бота. Базу задач она не открывает вовсе —
+# писатель у базы один.
 # Всё остальное, включая заводские файлы в репозитории, только на чтение.
 NoNewPrivileges=true
 PrivateTmp=true
@@ -27,7 +29,7 @@ ProtectHome=read-only
 ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-ReadWritePaths={{ orch_state_dir }}/chains
+ReadWritePaths={{ orch_state_dir }}/chains {{ orch_state_dir }}/asides {{ orch_state_dir }}/secrets
 
 [Install]
 WantedBy=multi-user.target

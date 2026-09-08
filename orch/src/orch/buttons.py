@@ -46,6 +46,18 @@ class ButtonsMixin:
             self.close_open_run(task, chain, action)
         return handler(task, chain, target, comment)
 
+    def set_notify_gates(self, task_id: str, revision: int, on: bool) -> str:
+        """Кнопка «Ворота в Telegram» в панели задачи."""
+        task = self.db.task(task_id)
+        if task is None:
+            return "нет такой задачи"
+        if int(revision) != int(task["revision"]):
+            return "устаревшая кнопка, панель перерисована"
+        with self.db.tx():
+            self.db.bump(task_id, notify_gates=1 if on else 0)
+            self.db.event(task_id, "notify_gates", {"on": bool(on)})
+        return "буду звать в Telegram" if on else "звать в Telegram не буду"
+
     def close_open_run(self, task, chain: Chain, action: str) -> None:
         """Заход, который ещё числится идущим, закрывается перед ходом владельца.
 
@@ -110,14 +122,29 @@ class ButtonsMixin:
         return "принято"
 
     def _btn_back(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
+        """Владелец отправляет задачу на другой шаг.
+
+        Предел заходов держит роли, а не владельца: если у шага, куда он
+        посылает, заходы кончились, кнопка сама добавляет один. Иначе
+        «Отправить на ревью ещё раз» приводила бы задачу на шаг, который
+        движок тут же остановит по пределу.
+        """
         step = chain.step(task["step"])
         if not target or target not in step.human_moves:
             return f"вернуть можно на: {', '.join(step.human_moves) or '—'}"
+        target_step = chain.step(target)
+        done_runs = len(self.db.runs_of_step(task["id"], target))
+        grant = done_runs >= self.runs_allowed(task, target_step)
         with self.db.tx():
             revision = self.db.bump(task["id"], status=ST_RUNNING, step=target, wait_reason=None)
-            self.db.move(task["id"], step.id, target, "human", "button", revision, comment=comment)
-            self.db.event(task["id"], "button", {"action": "back", "to": target})
-        return f"вернул на {target}"
+            self.db.move(
+                task["id"], step.id, target, "human",
+                "grant_run" if grant else "button", revision, comment=comment,
+            )
+            self.db.event(
+                task["id"], "button", {"action": "back", "to": target, "grant": grant}
+            )
+        return f"вернул на {target}" + (" (заход добавлен)" if grant else "")
 
     def _btn_again(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
         """«Ещё заход» / «Продолжай».

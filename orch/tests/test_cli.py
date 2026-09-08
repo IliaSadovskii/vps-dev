@@ -150,6 +150,29 @@ def test_task_new_кладёт_заявку(task, capsys, tmp_path, monkeypatch)
     assert request["chain"] == "smoke" and request["backlog"] is True
 
 
+def test_task_new_по_умолчанию_в_бэклог(task, capsys, tmp_path, monkeypatch):
+    """В работу задача уходит рукой владельца, а не потому, что её завели."""
+    import orch.cli as mod
+
+    inbox = tmp_path / "inbox"
+    monkeypatch.setattr(mod, "INBOX", inbox)
+    code, text = run(["task", "new", "новая задача", "--chain", "smoke"], capsys)
+    assert code == 0 and "в бэклог" in text
+    request = json.loads(list(inbox.glob("*.json"))[0].read_text(encoding="utf-8"))
+    assert request["backlog"] is True
+
+
+def test_task_new_start_ставит_в_очередь(task, capsys, tmp_path, monkeypatch):
+    import orch.cli as mod
+
+    inbox = tmp_path / "inbox"
+    monkeypatch.setattr(mod, "INBOX", inbox)
+    code, text = run(["task", "new", "новая задача", "--chain", "smoke", "--start"], capsys)
+    assert code == 0 and "в очередь" in text
+    request = json.loads(list(inbox.glob("*.json"))[0].read_text(encoding="utf-8"))
+    assert request["backlog"] is False
+
+
 def _fake_db(tmp_path, monkeypatch, **fields):
     """База только на чтение: одна задача с нужным статусом."""
     import sqlite3
@@ -289,3 +312,9 @@ def test_gc_показывает_сирот_и_не_трогает_без_сог
     code, text = run(["gc", "--yes"], capsys)
     assert code == 0 and "убрана" in text
     assert not сирота.exists()
+
+
+def _current(task: Path, **kw):
+    data = json.loads((task / "current.json").read_text(encoding="utf-8"))
+    data.update(kw)
+    (task / "current.json").write_text(json.dumps(data), encoding="utf-8")

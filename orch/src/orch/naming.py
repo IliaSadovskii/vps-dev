@@ -22,7 +22,16 @@ def title_from(text: str) -> str:
             first = line
             break
     words = (first or "задача").split()
-    return " ".join(words[:7])[:60] or "задача"
+    title = " ".join(words[:7])[:60].rstrip(" ,;:.—-")
+    if len(words) > 7:
+        # Титул рвался на полуслове («PR 4 уехал автономно без владельца;
+        # привести»), и в панели это читалось как сообщение движка, а не как
+        # обрезанное начало ТЗ. Обрываем по границе фразы и ставим многоточие.
+        edge = max(title.rfind(ch) for ch in ";,:")
+        if edge > len(title) // 2:
+            title = title[:edge]
+        title += "…"
+    return title or "задача"
 
 
 def slug(title: str) -> str:
@@ -39,6 +48,14 @@ def slug(title: str) -> str:
     return s[:32].strip("-") or "task"
 
 
-def session_title(task_id: str, step_id: str) -> str:
-    """Титул сессии шага в сайдбаре: `T12 · plan`."""
-    return f"{task_id} · {step_id}"
+def session_title(task_id: str, step_id: str, run_n: int = 1, own_session: bool = False) -> str:
+    """Титул сессии шага в сайдбаре: `T12 · plan`, на повторе — `T12 · plan 2`.
+
+    Номер появляется со второго захода и только там, где у каждого захода
+    своя сессия (`context: fresh`): в сайдбаре встают две строки одного шага,
+    и без номера их не различить. Шаг, который возвращается в свою же сессию,
+    остаётся одной строкой без номера — нумеровать нечего.
+    """
+    if own_session or run_n < 2:
+        return f"{task_id} · {step_id}"
+    return f"{task_id} · {step_id} {run_n}"
