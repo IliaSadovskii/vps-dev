@@ -278,35 +278,66 @@ class AsideMixin:
                 "Правила этой работы ты уже читала выше в этой переписке "
                 f"(«{wake.title or wake.prompt}») — держись их."
             )
-        parts.append(self.aside_context(spec, run, task, event))
+        parts.append(self.aside_context(spec, run, task, event, кратко=bool(было)))
         return "\n\n".join(parts)
 
-    def aside_context(self, spec: Aside, run, task, event) -> str:
-        """Блок задачи для побочной роли: id хода, повод, что читать.
+    def aside_context(self, spec: Aside, run, task, event, кратко: bool = False) -> str:
+        """Что случилось. В первый раз — со всей справкой, дальше коротко.
 
-        Опознаётся роль по `--id`: своей рабочей копии у неё может не быть,
-        а окружение AoE обычным сессиям не передаёт (`RISKS.md` п. 1).
+        Справочное (где лежит задача, как смотреть ход, какие права) роль
+        прочитала в начале переписки и видит его выше. Повторять это на
+        каждом шаге значит платить за одно и то же по десять раз.
         """
         payload = json.loads(event["payload"] or "{}")
+        повод = self.wake_title(spec, event["kind"])
+        шаг = payload.get("step") or (task["step"] if task is not None else "")
+        заход = payload.get("n")
+        где = f"Шаг `{шаг}`" + (f", заход {заход}" if заход else "") if шаг else ""
+
+        if кратко:
+            строки = ["# Что случилось", "", f"**{повод}.** {где}".rstrip(". ") + "."]
+            строки.append(
+                f"Твой ход `A{run['id']}`, пропуск `{run['token'] or ''}`. "
+                "Правила ты знаешь — действуй."
+            )
+            # Пять строк на каждый повод дешевле, чем роль, забывшая к
+            # десятому шагу, что находка бывает только с последствием.
+            строки += [
+                "",
+                "Коротко, чтобы не сбиться: находка — только когда из-за неё ход "
+                "пошёл иначе; без флага она копится до сводки, `--hold` останавливает "
+                "прогон; сама ничего не правишь и не двигаешь; чисто — молчи; "
+                f"ход закончи `orch aside done --id A{run['id']} --pass {run['token'] or ''}`.",
+            ]
+            хвост = self.short_tail(spec, task, payload, шаг, заход)
+            if хвост:
+                строки += ["", хвост]
+            return "\n".join(строки)
+
         lines = [
             "# Что случилось",
             "",
+            f"**{повод}.** {где}".rstrip(". ") + ".",
             f"Твой ход: `A{run['id']}`, пропуск `{run['token'] or ''}`.",
             "Команды `orch aside` требуют оба: "
-            f"`--id A{run['id']} --pass {run['token'] or ''}`. Пропуск никому не показывай.",
-            f"Повод: `{event['kind']}` в {event['at']}.",
+            f"`--id A{run['id']} --pass {run['token'] or ''}`. У каждого хода они свои, "
+            "новые придут вместе с новым поводом. Пропуск никому не показывай.",
         ]
-        if payload:
-            lines.append("Подробности повода: " + json.dumps(payload, ensure_ascii=False))
         if task is not None:
+            папка = Path(task["worktree_path"] or task["project_path"]) / ".orch" / task["id"]
             lines += [
                 "",
                 f"Задача {task['id']}: {task['title']}",
-                f"Цепочка: `{task['chain']}`, шаг сейчас: `{task['step'] or '—'}`",
-                f"Проект: `{task['project_path']}`",
+                f"Цепочка: `{task['chain']}`. Проект: `{task['project_path']}`",
                 f"Рабочая копия задачи: `{task['worktree_path'] or task['project_path']}`",
-                f"Папка задачи: `{Path(task['worktree_path'] or task['project_path']) / '.orch' / task['id']}`",
+                f"Папка задачи: `{папка}` — внутри `prompts/` (задания шагов), "
+                "`artifacts/` (файлы ролей), `logs/`, `chain.yml` (замороженная цепочка).",
             ]
+        lines += ["", "Права, выданные тебе: " + ", ".join(sorted(spec.rights)) + "."]
+        if spec.may("memory"):
+            lines.append(
+                f"Твоя копилка: `{self.memory_path(spec, {'task_id': task['id'] if task is not None else None, 'scope_key': self.aside_key(spec, task, event) or ''})}`"
+            )
         mirror = self.aside_mirror(spec, task)
         if mirror:
             lines += [
@@ -314,21 +345,43 @@ class AsideMixin:
                 f"Живое дерево, правки в нём действуют сразу: `{mirror[0]}`",
                 f"Твоя копия под коммиты и ветку: `{mirror[1]}`",
             ]
-        lines += ["", "Права, выданные тебе: " + ", ".join(sorted(spec.rights)) + "."]
-        if spec.may("memory"):
-            # Без пути роль не знает, где её собственная память, и пишет
-            # заново то, что уже записала в прошлый раз.
-            lines.append(f"Твоя копилка: `{self.memory_path(spec, {'task_id': task['id'] if task is not None else None, 'scope_key': self.aside_key(spec, task, event) or ''})}`")
+        if task is not None:
+            lines += [
+                "",
+                "## Как смотреть чужой ход",
+                "",
+                "Скелет хода — вызовы с исходами, ошибки, тронутые файлы, финальное "
+                "сообщение роли:",
+                "",
+                "```sh",
+                f"orch digest {task['id']} <шаг> <заход>",
+                "```",
+                "",
+                "Не хватило — весь транскрипт лежит в "
+                f"`{dg.TRANSCRIPTS / dg.project_slug(task['worktree_path'] or task['project_path'])}/`, "
+                "по файлу на сессию; читай выборочно, подряд он весит сотни тысяч знаков.",
+            ]
         note = self.note_block(payload)
         if note:
             lines += ["", note]
         лента = self.notes_ledger(spec, task, payload)
         if лента:
             lines += ["", лента]
-        skeleton = self.aside_digest(task, payload)
-        if skeleton:
-            lines += ["", skeleton]
         return "\n".join(lines)
+
+    def wake_title(self, spec: Aside, kind: str) -> str:
+        wake = spec.wake_for(kind)
+        return (wake.title if wake and wake.title else kind)
+
+    def short_tail(self, spec: Aside, task, payload: dict, шаг, заход) -> str:
+        """Короткий хвост: чем смотреть ход и ответ владельца, если он был."""
+        куски = []
+        if шаг and заход and task is not None:
+            куски.append(f"Ход: `orch digest {task['id']} {шаг} {заход}`.")
+        note = self.note_block(payload)
+        if note:
+            куски.append(note)
+        return "\n\n".join(куски)
 
     def notes_ledger(self, spec: Aside, task, payload: dict) -> str:
         """Что ты уже говорила по этой задаче и что владелец ответил.
@@ -407,19 +460,34 @@ class AsideMixin:
         return str(project), str(path)
 
     def aside_digest(self, task, payload: dict) -> str:
-        """Скелет хода, о котором речь, — если повод про заход."""
+        """Где смотреть разбираемый ход. Сам ход в задание не вклеиваем.
+
+        Транскрипт лежит на диске целиком, и роль читает его сама: копий
+        движок не делает, а обзор собирается командой по требованию.
+        """
         run_id = payload.get("run")
         if task is None or not run_id:
             return ""
-        row = self.db.conn.execute(
-            "SELECT * FROM run WHERE id = ?", (run_id,)
-        ).fetchone()
+        row = self.db.conn.execute("SELECT * FROM run WHERE id = ?", (run_id,)).fetchone()
         if row is None or not task["worktree_path"]:
             return ""
-        data = dg.digest(
-            task["worktree_path"], since=row["started_at"], until=row["ended_at"]
-        )
-        return dg.render(data) if data["turns"] else ""
+        папка = dg.TRANSCRIPTS / dg.project_slug(task["worktree_path"])
+        return "\n".join([
+            "## Разбираемый ход",
+            "",
+            f"Шаг `{row['step']}`, заход {row['n']}, сессия `{row['session_id'] or '?'}`, "
+            f"окно {row['started_at']} … {row['ended_at'] or 'ещё идёт'}.",
+            "",
+            "Скелет хода — вызовы с исходами, ошибки, тронутые файлы, финальное "
+            "сообщение роли:",
+            "",
+            "```sh",
+            f"orch digest {task['id']} {row['step']} {row['n']}",
+            "```",
+            "",
+            f"Не хватит — весь транскрипт лежит в `{папка}/{row['session_id'] or '<сессия>'}.jsonl`; "
+            "читай его выборочно, подряд он весит сотни тысяч знаков.",
+        ])
 
     # ── конец хода ───────────────────────────────────────────────────────
     def watch_aside_runs(self, sessions: dict[str, Session]) -> None:

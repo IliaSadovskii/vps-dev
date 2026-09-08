@@ -509,7 +509,11 @@ def test_ответ_доходит_и_после_конца_задачи(engine,
 
     assert engine.db.task(task_id)["status"] == "done"
     engine.note_decision(note_id, "say", "Всё равно поправь", who="telegram")
-    engine.reconcile()
+    for _ in range(3):
+        for ход in engine.db.aside_runs_open():
+            if ход["session_id"]:
+                fake.finish_turn(ход["session_id"])
+        engine.reconcile()
     assert any(
         "Всё равно поправь" in текст for _, текст in fake.prompts
     ), "слова владельца пропали после закрытия задачи"
@@ -568,3 +572,34 @@ def test_правила_шлются_один_раз_на_переписку(eng
     assert "уже читала выше в этой переписке" in третий
     assert "# Что случилось" in третий
     assert len(третий) < len(первый) / 3
+
+
+def test_на_шаг_идёт_короткое_сообщение(engine, fake, repo, tune):
+    """Справочное роль читает один раз; на повод — что случилось и действуй."""
+    def промпты_роли():
+        sid = асайды(engine)[0]["session_id"]
+        return [текст for кому, текст in fake.prompts if кому == sid]
+
+    task_id = start(engine, repo)
+    engine.reconcile()
+    первый = промпты_роли()[0]
+    assert "Как смотреть чужой ход" in первый, "справка нужна в первом сообщении"
+    assert "orch digest" in первый
+
+    for _ in range(3):
+        for ход in engine.db.aside_runs_open():
+            fake.finish_turn(ход["session_id"])
+        engine.reconcile()
+    turn(engine, fake, task_id, "one", 1, None)
+    for _ in range(3):
+        for ход in engine.db.aside_runs_open():
+            fake.finish_turn(ход["session_id"])
+        engine.reconcile()
+
+    последний = промпты_роли()[-1]
+    assert "Как смотреть чужой ход" not in последний, "справка ушла дважды"
+    assert "Правила ты знаешь — действуй" in последний
+    assert "Твой ход `A" in последний, "номер и пропуск нужны каждый раз"
+    assert "Коротко, чтобы не сбиться" in последний, "свод правил нужен каждый раз"
+    assert len(последний) < 1200, f"сообщение на повод раздуто: {len(последний)}"
+

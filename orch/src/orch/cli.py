@@ -655,6 +655,36 @@ def cmd_aside(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_digest(args: argparse.Namespace) -> int:
+    """Скелет чужого хода: что роль делала, коротко.
+
+    Транскрипт агента лежит на диске целиком, но читать его подряд дорого:
+    сотни тысяч знаков, из которых половина — вывод инструментов. Команда
+    собирает из него обзор: вызовы с целями и исходами, ошибки, тронутые
+    файлы, вопросы владельцу, финальное сообщение.
+    """
+    from . import digest as dg
+
+    db = _ro_db()
+    row = db.conn.execute(
+        "SELECT r.*, t.worktree_path, t.project_path FROM run r JOIN task t ON t.id = r.task_id "
+        "WHERE r.task_id = ? AND r.step = ? ORDER BY r.n DESC LIMIT 1"
+        if args.run is None else
+        "SELECT r.*, t.worktree_path, t.project_path FROM run r JOIN task t ON t.id = r.task_id "
+        "WHERE r.task_id = ? AND r.step = ? AND r.n = ?",
+        (args.task, args.step) if args.run is None else (args.task, args.step, args.run),
+    ).fetchone()
+    if row is None:
+        raise Refused(f"у {args.task} нет захода {args.step}" + (f"/{args.run}" if args.run else ""))
+    root = row["worktree_path"] or row["project_path"]
+    data = dg.digest(root, since=row["started_at"], until=row["ended_at"], max_tools=args.tools)
+    if not data["turns"]:
+        print("транскрипта за это окно нет")
+        return 0
+    print(dg.render(data))
+    return 0
+
+
 def cmd_gc(args: argparse.Namespace) -> int:
     """Сироты на диске: рабочие копии, которым не соответствует живая задача.
 
@@ -951,6 +981,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--after", action="append", metavar="ШАГ=on|off", help="ворота шага")
     p.add_argument("--ask", action="append", metavar="ШАГ=on|off", help="вопросы шага")
     p.set_defaults(func=cmd_task_autonomy)
+
+    p = sub.add_parser("digest", help="скелет чужого хода: что роль делала, коротко")
+    p.add_argument("task")
+    p.add_argument("step")
+    p.add_argument("run", nargs="?", type=int, help="номер захода; по умолчанию последний")
+    p.add_argument("--tools", type=int, default=120, help="сколько вызовов показывать")
+    p.set_defaults(func=cmd_digest)
 
     p = sub.add_parser("gc", help="рабочие копии, которым не соответствует живая задача")
     p.add_argument("--yes", action="store_true", help="убрать найденное, а не только показать")
