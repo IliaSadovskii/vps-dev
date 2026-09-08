@@ -255,14 +255,29 @@ class AsideMixin:
 
     def aside_prompt(self, spec: Aside, wake: Wake, run, task, event) -> str:
         """Промпт повода плюс блок «Что случилось»."""
+        # Сессия у роли одна на задачу, и переписка перед глазами: слать
+        # общие правила и текст роли на каждый повод значит платить за них
+        # заново каждый ход. Полный текст идёт, только пока он новый для этой
+        # переписки; дальше — короткая шапка и «что случилось».
+        было = [
+            r["wake"] for r in self.db.aside_runs_of(int(run["aside_id"]))
+            if int(r["id"]) != int(run["id"])
+        ]
         parts = []
-        for name in spec.includes:
-            common = prompts_dir() / f"{name}.md"
-            if common.exists():
-                parts.append(common.read_text(encoding="utf-8").strip())
+        if not было:
+            for name in spec.includes:
+                common = prompts_dir() / f"{name}.md"
+                if common.exists():
+                    parts.append(common.read_text(encoding="utf-8").strip())
         path = prompts_dir() / f"{wake.prompt}.md"
-        if path.exists():
+        if path.exists() and wake.prompt not in было:
             parts.append(path.read_text(encoding="utf-8").strip())
+        elif path.exists():
+            parts.append(
+                f"# {wake.title or wake.prompt}\n\n"
+                "Правила этой работы ты уже читала выше в этой переписке "
+                f"(«{wake.title or wake.prompt}») — держись их."
+            )
         parts.append(self.aside_context(spec, run, task, event))
         return "\n\n".join(parts)
 

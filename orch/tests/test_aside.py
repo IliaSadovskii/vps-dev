@@ -533,3 +533,38 @@ def test_сводка_пишется_и_когда_задачу_принял_в�
 
     assert engine.db.task(task_id)["status"] == "done"
     assert any(x["wake"] == "role-tune-summary" for x in асайды(engine)), "сводки нет"
+
+
+def test_правила_шлются_один_раз_на_переписку(engine, fake, repo, tune):
+    """Сессия одна на задачу: повторять общие правила каждый ход — платить
+    за них заново."""
+    def промпты_роли():
+        sid = асайды(engine)[0]["session_id"]
+        return [текст for кому, текст in fake.prompts if кому == sid]
+
+    task_id = start(engine, repo)
+    engine.reconcile()
+    первый = промпты_роли()[0]
+    assert "Ты побочная роль" in первый, "в первый раз правила нужны"
+    assert "Наладчик: проверка входа" in первый
+
+    # Тот же повод второй раз: правила и текст роли уже в переписке.
+    for ход in engine.db.aside_runs_open():
+        fake.finish_turn(ход["session_id"])
+    turn(engine, fake, task_id, "one", 1, None)
+    engine.reconcile()
+    engine.reconcile()
+    второй = промпты_роли()[-1]
+    assert "Ты побочная роль" not in второй, "общие правила ушли дважды"
+    assert "Наладчик: разбор хода" in второй, "новый повод — новые правила"
+
+    # Тот же повод второй раз: правила уже в переписке, идёт короткая шапка.
+    for ход in engine.db.aside_runs_open():
+        fake.finish_turn(ход["session_id"])
+    engine.reconcile()
+    engine.reconcile()
+    третий = промпты_роли()[-1]
+    assert "Наладчик: проверка входа" not in третий, "текст роли ушёл дважды"
+    assert "уже читала выше в этой переписке" in третий
+    assert "# Что случилось" in третий
+    assert len(третий) < len(первый) / 3
