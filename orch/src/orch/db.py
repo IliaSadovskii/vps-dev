@@ -304,12 +304,17 @@ class Db:
         )
 
     def aside_run_start(
-        self, aside_id: int, wake: str, cause_seq: int | None, token: str = ""
+        self,
+        aside_id: int,
+        wake: str,
+        cause_seq: int | None,
+        token: str = "",
+        task_id: str | None = None,
     ) -> int:
         cur = self.conn.execute(
-            "INSERT INTO aside_run (aside_id, wake, cause_seq, started_at, token) "
-            "VALUES (?,?,?,?,?)",
-            (aside_id, wake, cause_seq, now(), token or None),
+            "INSERT INTO aside_run (aside_id, wake, cause_seq, started_at, token, task_id) "
+            "VALUES (?,?,?,?,?,?)",
+            (aside_id, wake, cause_seq, now(), token or None, task_id),
         )
         return int(cur.lastrowid)
 
@@ -347,7 +352,17 @@ class Db:
             (now(), outcome, cost, run_id),
         )
 
-    def aside_runs_of(self, aside_id: int) -> list[sqlite3.Row]:
+    def aside_runs_of(self, aside_id: int, task_id: str | None = None) -> list[sqlite3.Row]:
+        """Ходы роли: все или только про эту задачу.
+
+        У ролей с областью «проект» запись одна на весь проект, поэтому
+        бюджет «ходов на задачу» считается по задаче, а не по записи.
+        """
+        if task_id:
+            return list(self.conn.execute(
+                "SELECT * FROM aside_run WHERE aside_id = ? AND task_id = ? ORDER BY id",
+                (aside_id, task_id),
+            ))
         return list(self.conn.execute(
             "SELECT * FROM aside_run WHERE aside_id = ? ORDER BY id", (aside_id,)
         ))

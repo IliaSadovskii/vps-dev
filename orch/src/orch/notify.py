@@ -1,10 +1,9 @@
-"""Уведомления владельцу и его решения обратно (`ASIDE-PLAN.md` §9).
+"""Ворота задачи в Telegram: сообщение владельцу и его решение обратно.
 
-Движок знает про `Notifier`, а не про Telegram: канал — сменная деталь.
-Сейчас каналов два: панель (рисуется из базы, ничего отправлять не надо) и
-Telegram. Наружу уходит одно и то же — находка побочной роли или задача,
-вставшая на владельце, — с кнопками, под каждой из которых глагол, который
-движок умеет исполнить.
+Канал возит ровно одно — задачу, вставшую на владельце, — и только если
+владелец сам попросил об этом флажком на задаче. Побочные роли в мессенджер
+не пишут: их находки видны в панели, а отчёт они кладут в свою сессию, которая
+живёт до конца прогона и ждёт владельца (решение 2026-09-08).
 """
 
 from __future__ import annotations
@@ -16,9 +15,6 @@ import time
 from . import secrets
 from .db import WAIT_REASONS
 from .telegram import Telegram, TelegramError
-
-# Глаголы вариантов: то же, что проверяет `orch aside note` (`§4`).
-VERBS = ("continue", "restart", "back", "say", "stop", "patch")
 
 # Сколько ждём `/start` после ввода токена. Окно короткое намеренно: пока
 # оно открыто, привязаться может любой, кто знает имя бота.
@@ -105,38 +101,11 @@ class Notifier:
         if not self.live:
             return
         try:
-            self.send_notes()
             self.send_gates()
         except TelegramError as exc:
             self.engine.note_once(None, "notify_failed", {"error": str(exc)[:200]})
 
     # ── исходящее ────────────────────────────────────────────────────────
-    def send_notes(self) -> None:
-        for note in self.db.notes(state="open"):
-            options = json.loads(note["options"] or "[]")
-            buttons = [
-                {"label": o.get("label") or o["verb"],
-                 "data": f"n:{note['id']}:{o['verb']}:{o.get('target') or ''}"}
-                for o in options
-                if o.get("verb") in VERBS
-            ]
-            # «Ничего не делать» есть всегда и стоит первой: сама постановка
-            # вопроса не должна подталкивать вмешаться (`§4`).
-            buttons.insert(0, {"label": "Ничего не делать", "data": f"n:{note['id']}:continue:"})
-            text = self.note_text(note)
-            msg = ""
-            for chat in self.chats:
-                msg = self.telegram.send(chat, text, buttons) or msg
-            with self.db.tx():
-                self.db.note_state(note["id"], "sent", channel_msg=msg)
-
-    def note_text(self, note) -> str:
-        head = "🔴" if note["severity"] == "hold" else "🔸"
-        task = f" · {note['task_id']}" if note["task_id"] else ""
-        body = (note["body"] or "").strip()
-        tail = "\n\nЗадача ждёт вашего решения." if note["severity"] == "hold" else ""
-        return f"{head} <b>{escape(note['title'])}</b>{escape(task)}\n\n{escape(body)}{tail}"
-
     def send_gates(self) -> None:
         """Задача встала на владельце — сказать об этом там, где он есть.
 
@@ -231,6 +200,70 @@ class Notifier:
             for target in step.human_moves[:3]
         ]
 
+    def gate_text(self, task, reason: str) -> str:
+        """Сообщение о воротах: то, что сказала роль, а не служебная причина.
+
+        Владелец решает по этому тексту, с телефона. «Ворота: ждёт вашего
+        решения» ему не говорит ничего.
+        """
+        from . import panels
+
+        step = panels.step_title(task["step"]) if task["step"] else "—"
+        head = f"⏸ <b>{escape(task['title'])}</b> · {task['id']}\nШаг: {escape(step)}"
+        said = self.trim(self.role_said(task))
+        if said:
+            return f"{head}\n\n{escape(said)}"
+        return (
+            f"{head}\n\n{escape(WAIT_REASONS.get(reason, reason))}\n"
+            f"{escape(panels._what_to_decide(self.db, task))}"
+        )
+
+    # Сколько слов роли уносим в мессенджер: длинное сообщение Telegram
+    # обрежет сам, и лучше это сделаем мы — по границе абзаца.
+    SAY_LIMIT = 1500
+
+    def role_said(self, task) -> str:
+        """Последнее, что роль сказала владельцу, — из её же хода."""
+        from . import digest as dg
+
+        run = self.db.last_run_of_step(task["id"], task["step"] or "")
+        if run is None or not task["worktree_path"]:
+            return ""
+        try:
+            data = dg.digest(
+                task["worktree_path"], since=run["started_at"], until=run["ended_at"]
+            )
+        except OSError:
+            return ""
+        return (data.get("final") or "").strip()
+
+    def trim(self, said: str) -> str:
+        """Обрезка по границе абзаца: Telegram обрежет сам и посреди слова."""
+        said = (said or "").strip()
+        if len(said) <= self.SAY_LIMIT:
+            return said
+        cut = said[: self.SAY_LIMIT].rsplit("\n\n", 1)[0].rstrip()
+        return f"{cut}\n\n… дальше в чате задачи."
+
+    def back_buttons(self, task) -> list[dict]:
+        """Возвраты, которые цепочка разрешает шагу, — человеческими именами."""
+        from . import panels
+
+        chain = panels._chain(task)
+        if chain is None or not task["step"]:
+            return []
+        try:
+            step = chain.step(task["step"])
+        except Exception:  # noqa: BLE001 — сломанная цепочка не роняет канал
+            return []
+        return [
+            {
+                "label": f"Вернуть на «{panels.step_title(target)}»",
+                "data": f"b:{task['id']}:{task['revision']}:back:{target}",
+            }
+            for target in step.human_moves[:3]
+        ]
+
     def already(self, kind: str, mark: str) -> bool:
         row = self.db.conn.execute(
             "SELECT 1 FROM event WHERE kind = ? AND payload LIKE ? LIMIT 1",
@@ -295,9 +328,6 @@ class Notifier:
         """Нажатие: находка или кнопка задачи. Разбирает движок, не канал."""
         kind, _, rest = data.partition(":")
         parts = rest.split(":")
-        if kind == "n" and len(parts) >= 3:
-            note_id, verb, target = int(parts[0]), parts[1], parts[2] or None
-            return self.engine.note_decision(note_id, verb, target, who="telegram")
         if kind == "b" and len(parts) >= 3:
             task_id, revision, action = parts[0], int(parts[1]), parts[2]
             target = parts[3] or None if len(parts) > 3 else None

@@ -35,6 +35,7 @@
 import html
 import json
 import os
+import re
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -43,8 +44,6 @@ from pathlib import Path
 import yaml
 
 from orch import asides as aside_mod
-from orch import secrets
-from orch.notify import BIND_WINDOW_S
 from orch.telegram import Telegram, TelegramError
 from orch.asides import AsideError
 from orch.chain import (
@@ -331,7 +330,6 @@ def aside_view(name):
         "enabled": spec.enabled,
         "custom": aside_mod.is_custom(name),
         "rights": sorted(spec.rights),
-        "requires": list(spec.requires),
         "chains": list(spec.chains),
         "workspace": spec.workspace,
         "budget": {
@@ -339,12 +337,16 @@ def aside_view(name):
             "cost_usd": spec.limit("cost_usd", 0),
         },
         "wakes": [
-            {"on": list(w.on), "prompt": w.prompt, "agent": w.agent,
-             "model": w.model, "effort": w.effort or ""}
+            {"on": list(w.on), "title": w.title or ", ".join(w.on), "prompt": w.prompt,
+             "agent": w.agent, "model": w.model, "effort": w.effort or ""}
             for w in spec.wakes
         ],
-        # Строкой, а не списком: на странице это один абзац.
-        "description": " ".join(header_comment(aside_mod.path_of(name))),
+        # Строкой, а не списком: на странице это один абзац. Ссылки на
+        # спецификацию из шапки файла владельцу не нужны — они для того, кто
+        # правит yml руками.
+        "description": re.sub(
+            r"\s*\(`[^`]+`[^)]*\)", "", " ".join(header_comment(aside_mod.path_of(name)))
+        ),
     }
 
 
@@ -354,7 +356,6 @@ def asides_picture():
         "asides": [aside_view(n) for n in aside_mod.names()],
         "chains": ordered_names(),
         "options": {"agents": list(VALID_AGENTS), "models": models, "efforts": efforts},
-        "notify": notify_state(),
         "user_dir": str(aside_mod.user_dir()),
     }
 
@@ -405,61 +406,6 @@ def aside_save(name, edits):
 
 def aside_reset(name):
     (aside_mod.user_dir() / f"{name}.yml").unlink(missing_ok=True)
-
-
-# ── канал наружу ────────────────────────────────────────────────────────
-def notify_state():
-    block = secrets.telegram()
-    return {
-        "token": bool(block.get("token")),
-        "bot": str(block.get("bot") or ""),
-        "chats": [
-            {"id": str(c), "name": str((block.get("names") or {}).get(str(c)) or c)}
-            for c in (block.get("chats") or [])
-        ],
-        "awaiting": bool(block.get("awaiting_chat"))
-        and float(block.get("awaiting_until") or 0) > time.time(),
-    }
-
-
-def notify_test():
-    """Проверочное сообщение в привязанные чаты: дошло или нет.
-
-    Проверять привязку словами «должно работать» нельзя: между токеном,
-    чатом и телефоном владельца три места, где всё может встать молча.
-    """
-    block = secrets.telegram()
-    chats = [int(c) for c in (block.get("chats") or [])]
-    if not (block.get("token") and chats):
-        raise ValueError("сначала бот и чат")
-    bot = Telegram(str(block["token"]))
-    дошло = []
-    for chat in chats:
-        try:
-            bot.send(chat, "orch на связи. Это проверка канала — отвечать не нужно.")
-        except TelegramError as exc:
-            raise ValueError(f"не дошло в {chat}: {exc}") from exc
-        дошло.append(str(chat))
-    return дошло
-
-
-def notify_token(token):
-    """Записать токен. Чат привяжет движок, когда владелец напишет боту.
-
-    Токен проверяем сразу у Telegram: битый токен, принятый молча, выглядит
-    как рабочая привязка, а отказ виден только в журнале движка.
-    """
-    clean = (token or "").strip()
-    if ":" not in clean or len(clean) < 20:
-        raise ValueError("это не похоже на токен бота")
-    try:
-        name = Telegram(clean).whoami()
-    except TelegramError as exc:
-        raise ValueError(f"бот не отозвался: {exc}") from exc
-    secrets.set_telegram(
-        token=clean, chats=[], offset=0, awaiting_chat=True, bot=name,
-        awaiting_until=time.time() + BIND_WINDOW_S,
-    )
 
 
 def esc(text):
@@ -530,6 +476,18 @@ PAGE = """<!doctype html><html lang="ru"><head>
  .role h3{margin:0 0 .2rem;font-size:1rem;display:flex;align-items:center;gap:.5rem}
  .role .rights{font-size:.8rem;opacity:.55}
  .off{opacity:.55}
+ .sub2{margin:.9rem 0 .35rem;font-size:.78rem;letter-spacing:.04em;text-transform:uppercase;opacity:.5}
+ .hint{font-size:.82rem;opacity:.62;margin:.25rem 0 .5rem;line-height:1.45}
+ .tag{font-size:.7rem;padding:.1rem .4rem;border:1px solid var(--line);border-radius:6px;opacity:.6}
+ /* `.bar` на странице цепочек живёт в карточке без внутренних отступов и
+    добавляет свои. В карточке роли отступ уже есть — иначе всё, что лежит
+    в баре (галочки цепочек, кнопки), уезжает вправо от остального текста. */
+ .role .bar{padding:0;margin:.4rem 0 0}
+ .role .grid{margin-top:.3rem}
+ .wakes{display:flex;flex-direction:column;gap:.4rem}
+ .wake{display:grid;grid-template-columns:1fr 11rem;gap:.6rem;align-items:center}
+ .wake .wname{font-size:.9rem}
+ @media(max-width:430px){.wake{grid-template-columns:1fr;gap:.2rem}}
  input[type=text],input[type=password],input[type=number]{font:inherit;padding:.35rem .5rem;
    border:1px solid var(--line);border-radius:8px;background:none;color:inherit;width:100%}
 </style></head><body>
@@ -741,7 +699,6 @@ function renderAsides() {
   box.textContent = '';
   const note = document.getElementById('note');
   if (note && !S.chainsNote) S.chainsNote = note.textContent;
-  box.append(notifyCard(data.notify));
   if (!data.asides.length) {
     box.append(el('p', { class: 'note', text: 'Побочных ролей на этой машине пока нет.' }));
     return;
@@ -749,75 +706,46 @@ function renderAsides() {
   for (const a of data.asides) box.append(roleCard(a, data));
 }
 
-function notifyCard(state) {
-  const card = el('div', { class: 'role' });
-  card.append(el('h3', {}, document.createTextNode('Уведомления в Telegram')));
-  const msg = el('div', { class: 'msg' });
-  const say = (t, ok) => { msg.textContent = t; msg.className = 'msg ' + (ok ? 'ok' : 'bad'); };
-  if (!state.token) {
-    card.append(el('p', { class: 'rights', text:
-      'Пока бота нет, роли пишут только в панель и не могут остановить прогон.' }));
-    const input = el('input', { type: 'password', placeholder: 'токен от @BotFather' });
-    const save = el('button', { text: 'Привязать бота', onclick: async () => {
-      const r = await fetch('/api/notify/token', { method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: input.value }) });
-      const a = await r.json().catch(() => ({}));
-      if (!r.ok) { say(a.error || 'не вышло', false); return; }
-      S.asidesData.notify = a.notify; renderAsides();
-    } });
-    card.append(el('div', { class: 'bar' }, input, save, msg));
-  } else if (state.awaiting) {
-    card.append(el('p', { class: 'rights', text:
-      'Токен принят. Напишите боту /start с телефона — движок привяжет этот чат сам.' }));
-    card.append(el('div', { class: 'bar' },
-      el('button', { class: 'ghost', text: 'Проверить снова', onclick: loadAsides }),
-      forgetButton()));
-  } else {
-    card.append(el('p', { class: 'rights', text:
-      'Чат привязан: ' + state.chats.map((c) => c.name + ' (' + c.id + ')').join(', ') }));
-    card.append(el('p', { class: 'rights', text:
-      'Находки ролей приходят сюда всегда. Ворота задачи — по флажку в самой задаче: '
-      + 'кнопка «Ворота в Telegram» в её панели или вопрос мастера при заведении.' }));
-    const test = el('button', { class: 'ghost', text: 'Проверить связь', onclick: async () => {
-      say('шлю…', true);
-      const r = await fetch('/api/notify/test', { method: 'POST' });
-      const a = await r.json().catch(() => ({}));
-      say(r.ok ? 'сообщение ушло — посмотрите в телефон' : (a.error || 'не дошло'), r.ok);
-    } });
-    card.append(el('div', { class: 'bar' }, test, forgetButton(), msg));
-  }
-  return card;
-}
-
-function forgetButton() {
-  return el('button', { class: 'ghost', text: 'Отвязать', onclick: async () => {
-    await fetch('/api/notify/forget', { method: 'POST' });
-    S.asides = false; loadAsides();
-  } });
-}
-
 function roleCard(a, data) {
   const card = el('div', { class: 'role' + (a.enabled ? '' : ' off') });
   const on = el('input', { type: 'checkbox', ...(a.enabled ? { checked: 'checked' } : {}) });
   on.addEventListener('change', () => { a.enabled = on.checked; card.className = 'role' + (a.enabled ? '' : ' off'); });
-  card.append(el('h3', {}, on, document.createTextNode(a.title), 
-    a.custom ? el('span', { class: 'rights', text: '· правлено' }) : null));
-  if (a.description) card.append(el('p', { class: 'rights', text: a.description }));
-  card.append(el('p', { class: 'rights', text:
-    'Права: ' + a.rights.join(', ') + ' · область: ' + a.scope +
-    (a.requires.length ? ' · нужен канал наружу' : '') }));
+  card.append(el('h3', {}, on, document.createTextNode(a.title),
+    a.custom ? el('span', { class: 'tag', text: 'правлено' }) : null));
+  if (a.description) card.append(el('p', { class: 'hint', text: a.description }));
+  const RIGHTS = { read: 'читает', hold: 'может остановить ход', move: 'двигает задачу',
+    patch: 'правит файлы', pr: 'коммитит и открывает PR', memory: 'ведёт копилку' };
+  const SCOPE = { run: 'заход', task: 'задача', project: 'проект', machine: 'машина' };
+  card.append(el('p', { class: 'hint' },
+    el('b', { text: 'Что умеет: ' }),
+    document.createTextNode(a.rights.map((r) => RIGHTS[r] || r).join(', ')
+      + ' · следит за: ' + (SCOPE[a.scope] || a.scope)
+      ));
 
-  const grid = el('div', { class: 'grid' });
+  // Поводы: когда роль просыпается и чем разбирает. Ключ события
+  // («run_ended») владельцу ничего не говорит — показываем имя из описания.
+  card.append(el('h4', { class: 'sub2', text: 'Когда просыпается' }));
+  const wakes = el('div', { class: 'wakes' });
   for (const w of a.wakes) {
     const models = (data.options.models[w.agent] || []);
-    grid.append(field('повод ' + w.on.join(', '), sel(models, w.model, (e) => { w.model = e.target.value; })));
+    const row = el('div', { class: 'wake' });
+    row.append(el('div', { class: 'wname', text: w.title }));
+    row.append(sel(models, w.model, (e) => { w.model = e.target.value; }));
+    wakes.append(row);
   }
+  card.append(wakes);
+
+  card.append(el('h4', { class: 'sub2', text: 'Пределы' }));
   const budget = el('input', { type: 'number', min: '1', value: String(a.budget.runs_per_task) });
   budget.addEventListener('change', () => { a.budget.runs_per_task = Number(budget.value); });
+  const grid = el('div', { class: 'grid' });
   grid.append(field('ходов на задачу', budget));
   card.append(grid);
+  card.append(el('p', { class: 'hint', text:
+    'Сколько раз роль может проснуться в одной задаче. Кончились — молчит до '
+    + 'следующей: предохранитель от круга и лишних трат.' }));
 
+  card.append(el('h4', { class: 'sub2', text: 'На каких цепочках' }));
   const chains = el('div', { class: 'bar' });
   for (const name of data.chains) {
     const box = el('input', { type: 'checkbox',
@@ -827,8 +755,8 @@ function roleCard(a, data) {
     });
     chains.append(el('label', { class: 'f' }, box, document.createTextNode(name)));
   }
-  card.append(el('p', { class: 'rights', text: 'На каких цепочках (ничего не отмечено — на всех):' }));
   card.append(chains);
+  card.append(el('p', { class: 'hint', text: 'Ничего не отмечено — роль работает на всех цепочках.' }));
 
   const msg = el('div', { class: 'msg' });
   const save = el('button', { text: 'Сохранить', onclick: async () => {
@@ -875,9 +803,6 @@ class Handler(BaseHTTPRequestHandler):
             self.fail(403, "запрос пришёл с чужого адреса")
             return
         parts = path.strip("/").split("/")
-        if len(parts) >= 2 and parts[0] == "api" and parts[1] == "notify":
-            self.notify_post(parts)
-            return
         if len(parts) >= 3 and parts[0] == "api" and parts[1] == "asides":
             self.aside_post(parts)
             return
@@ -930,30 +855,6 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.reply(200, "application/json; charset=utf-8",
                    json.dumps({"ok": True, "custom": aside_mod.is_custom(name)},
-                              ensure_ascii=False).encode("utf-8"))
-
-    def notify_post(self, parts):
-        action = parts[2] if len(parts) > 2 else ""
-        try:
-            if action == "token":
-                notify_token(self.body().get("token"))
-            elif action == "test":
-                self.reply(
-                    200, "application/json; charset=utf-8",
-                    json.dumps({"ok": True, "sent": notify_test()},
-                               ensure_ascii=False).encode("utf-8"),
-                )
-                return
-            elif action == "forget":
-                secrets.forget_telegram()
-            else:
-                self.fail(404, "нет такой страницы")
-                return
-        except (OSError, TypeError, ValueError) as exc:
-            self.fail(400, str(exc))
-            return
-        self.reply(200, "application/json; charset=utf-8",
-                   json.dumps({"ok": True, "notify": notify_state()},
                               ensure_ascii=False).encode("utf-8"))
 
     def body(self):

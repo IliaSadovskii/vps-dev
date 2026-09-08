@@ -34,6 +34,9 @@ class Wake:
 
     on: tuple[str, ...]
     prompt: str
+    # Имя повода словами: ключи событий (`run_ended`) владельцу ничего не
+    # говорят, а держать их перевод в странице значит держать второй список.
+    title: str = ""
     agent: str = "claude"
     model: str = "sonnet"
     effort: str | None = None
@@ -57,7 +60,6 @@ class Aside:
     rights: frozenset[str] = field(default_factory=lambda: frozenset({"read"}))
     includes: tuple[str, ...] = ("common-aside",)   # общие правила побочных ролей
     chains: tuple[str, ...] = ()          # пусто — на всех цепочках
-    requires: tuple[str, ...] = ()        # notify — нужен канал наружу
     budget: dict = field(default_factory=dict)
     enabled: bool = False
     title: str = ""
@@ -174,6 +176,7 @@ def parse(text: str, source: str = "?") -> Aside:
             Wake(
                 on=tuple(str(k) for k in on),
                 prompt=prompt,
+                title=str(item.get("title") or ""),
                 agent=str(run.get("agent") or "claude"),
                 model=str(run.get("model") or "sonnet"),
                 effort=(str(run["effort"]) if run.get("effort") else None),
@@ -203,7 +206,6 @@ def parse(text: str, source: str = "?") -> Aside:
         rights=frozenset(rights),
         includes=tuple(str(c) for c in (raw.get("includes") or ["common-aside"])),
         chains=tuple(str(c) for c in (raw.get("chains") or [])),
-        requires=tuple(str(c) for c in (raw.get("requires") or [])),
         budget=dict(raw.get("budget") or {}),
         enabled=bool(raw.get("enabled", False)),
         title=str(raw.get("title") or ""),

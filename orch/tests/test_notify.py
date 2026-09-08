@@ -63,75 +63,6 @@ def зови(engine, task_id):
     engine.set_notify_gates(task_id, task["revision"], True)
 
 
-def находка(engine, задача, severity="hold", options=None):
-    aside_id = engine.db.aside_open("tune", "run", задача, задача)
-    with engine.db.tx():
-        return engine.db.note_add(
-            aside_id, None, задача, severity, "Ревью читало не тот файл", "Подробности.",
-            options if options is not None else [
-                {"verb": "restart", "target": None, "label": "перезапустить шаг"}
-            ],
-        )
-
-
-def test_находка_уходит_с_кнопками_и_отказом_первым(engine, fake, repo, bot):
-    task_id = start(engine, repo)
-    находка(engine, task_id)
-    engine.notify().pump()
-
-    assert len(bot.sent) >= 1
-    письмо = bot.sent[0]
-    подписи = [b["label"] for b in письмо["buttons"]]
-    assert подписи[0] == "Ничего не делать", "кнопка отказа должна стоять первой"
-    assert "перезапустить шаг" in подписи
-    assert "Ревью читало не тот файл" in письмо["text"]
-    assert engine.db.note(1)["state"] == "sent"
-
-    engine.notify().pump()
-    assert len([s for s in bot.sent if "Ревью" in s["text"]]) == 1, "находка ушла дважды"
-
-
-def test_нажатие_исполняет_решение(engine, fake, repo, bot):
-    task_id = start(engine, repo)
-    note_id = находка(engine, task_id)
-    engine.stop(task_id, "aside_hold")
-    engine.notify().pump()
-
-    bot.queue = [{
-        "update_id": 1,
-        "callback_query": {
-            "id": "cb1",
-            "data": f"n:{note_id}:continue:",
-            "message": {"message_id": 101, "chat": {"id": 42}, "text": "…"},
-        },
-    }]
-    engine.notify().pump()
-
-    note = engine.db.note(note_id)
-    assert note["state"] == "answered" and note["decision"].startswith("continue")
-    assert engine.db.task(task_id)["status"] != WAITING, "задача осталась стоять"
-    assert any(k["kind"] == "note_decided" for k in [
-        {"kind": r["kind"]} for r in engine.db.events(task_id, limit=50)
-    ])
-
-
-def test_чужой_чат_ничего_не_двигает(engine, fake, repo, bot):
-    task_id = start(engine, repo)
-    note_id = находка(engine, task_id)
-    engine.notify().pump()
-    bot.queue = [{
-        "update_id": 5,
-        "callback_query": {
-            "id": "cb2",
-            "data": f"n:{note_id}:restart:",
-            "message": {"message_id": 1, "chat": {"id": 999}, "text": "…"},
-        },
-    }]
-    engine.notify().pump()
-    assert engine.db.note(note_id)["state"] == "sent"
-    assert "не привязан" in bot.answers[-1]
-
-
 def test_ворота_уходят_один_раз_на_ревизию(engine, fake, repo, bot):
     task_id = start(engine, repo)
     зови(engine, task_id)
@@ -239,9 +170,16 @@ def test_ворота_в_телеграм_по_умолчанию_не_ходя�
     engine.notify().pump()
     assert not [s for s in bot.sent if s["text"].startswith("⏸")]
 
-    # Находка роли уходит и без этой настройки: ради неё канал и заводился.
+    # Находки побочных ролей в мессенджер не ходят вовсе: они видны в панели,
+    # а отчёт роль кладёт в свою сессию, которая ждёт владельца.
     aside_id = engine.db.aside_open("tune", "run", task_id, task_id)
     with engine.db.tx():
-        engine.db.note_add(aside_id, None, task_id, "fyi", "Нашлось", "…", [])
+        engine.db.note_add(aside_id, None, task_id, "hold", "Нашлось", "…", [])
     engine.notify().pump()
-    assert [s for s in bot.sent if "Нашлось" in s["text"]]
+    assert not [s for s in bot.sent if "Нашлось" in s["text"]]
+
+    # А ворота с флажком — приходят.
+    engine.set_notify_gates(task_id, engine.db.task(task_id)["revision"], True)
+    engine.notify().pump()
+    assert [s for s in bot.sent if s["text"].startswith("⏸")]
+

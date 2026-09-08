@@ -99,11 +99,13 @@ def test_пресеты_deep_накладываются():
     sheet = c.sheet_with_preset("auto")
     assert sheet["pr"]["after"] is True
     assert sheet["plan-review"]["after"] is False
-    assert all(v["ask"] is False for v in sheet.values())
+    # Вопросы ходят парой с воротами: на PR они остаются вместе с ним.
+    assert [s for s, v in sheet.items() if v["ask"]] == ["pr"]
 
-    sheet = c.sheet_with_preset("hands-off")
-    assert sheet["plan-review"]["after"] is False
-    assert sheet["pr"]["after"] is True  # как записано в шаге
+    # `hands-off` больше нет: имя обещало автономию, а снимало одни ворота
+    # плана — на нём владелец и обжёгся (прогон T24).
+    sheet = c.sheet_with_preset("default")
+    assert sheet["review-fixes"]["after"] == ["ready"] and sheet["solution"]["after"] is True
 
 
 def test_пресета_нет():
@@ -132,3 +134,52 @@ def test_ревью_возвращает_автору_и_автор_прыгае
     assert plan.next == {"review": "plan-review", "ready": "implementation"}
     assert plan.gates_on("ready") and not plan.gates_on("review")
     assert deep.step("plan-review").single_next == "plan"
+
+
+def test_пресеты_deep_покрывают_обе_стороны_автономии():
+    """Пресет меняет и ворота, и вопросы: «не трогай меня» — это и то, и другое."""
+    from orch.chain import load_by_name
+
+    chain = load_by_name("deep")
+    # Пресеты различаются одним: сколько раз останавливают владельца.
+    # Частные наборы («план со мной», «тихо») собираются руками — держать
+    # под них имена значит заставлять выбирать из похожего.
+    assert set(chain.presets) == {"default", "auto", "step-by-step"}
+    # `default` — именованное «как записано в шагах»: пустой набор ручек,
+    # чтобы он не мог разойтись с самой цепочкой.
+    assert chain.sheet_with_preset("default") == chain.default_sheet()
+    assert all(chain.preset_notes.get(name) for name in chain.presets), "пресет без пояснения"
+
+    # Ворота и вопросы ходят парой: шаг либо с обоими, либо без обоих. У
+    # самих шагов причины свои (вопрос на Реализации — признак плохого
+    # плана), поэтому правило проверяется на пресетах, а не на цепочке.
+    for name in set(chain.presets) - {"default"}:
+        sheet = chain.sheet_with_preset(name)
+        for step, knobs in sheet.items():
+            assert bool(knobs["after"]) == bool(knobs["ask"]), f"{name}: {step} врозь"
+
+    до_pr = chain.sheet_with_preset("auto")
+    assert [s for s, v in до_pr.items() if v["after"]] == ["pr"]
+
+    под_присмотром = chain.sheet_with_preset("step-by-step")
+    assert all(v["after"] and v["ask"] for v in под_присмотром.values())
+
+    под_присмотром = chain.sheet_with_preset("step-by-step")
+    assert all(v["after"] and v["ask"] for v in под_присмотром.values())
+
+
+def test_пресет_можно_писать_плоско_и_с_пояснением():
+    """Старый формат (плоский словарь) читается как прежде."""
+    from orch.chain import parse
+
+    chain = parse(
+        "name: t\n"
+        "presets:\n"
+        "  старый: { '*.ask': false }\n"
+        "  новый: { when: «зачем», set: { '*.after': false } }\n"
+        "steps:\n"
+        "  - id: one\n    run: {agent: claude, model: haiku}\n    next: done\n"
+    )
+    assert chain.sheet_with_preset("старый")["one"]["ask"] is False
+    assert chain.sheet_with_preset("новый")["one"]["after"] is False
+    assert chain.preset_notes["новый"] == "«зачем»"

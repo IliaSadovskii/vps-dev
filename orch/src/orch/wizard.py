@@ -150,8 +150,16 @@ class WizardMixin:
             lines.append(
                 f"- `{item['name']}` — {item['description'] or 'без описания'}\n"
                 f"  шаги: {' → '.join(item['steps'])}\n"
-                f"  ворота по умолчанию: {gates}; пресеты: "
-                f"{', '.join(item['presets']) or 'нет'}"
+                f"  ворота по умолчанию: {gates}\n"
+                "  пресеты автономии:\n"
+                + (
+                    "\n".join(
+                        f"    - `{name}` — "
+                        f"{(item.get('preset_notes') or {}).get(name) or 'без пояснения'}"
+                        for name in item["presets"]
+                    )
+                    or "    - нет"
+                )
             )
         if task is not None:
             lines += [

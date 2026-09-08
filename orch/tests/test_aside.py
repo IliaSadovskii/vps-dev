@@ -27,6 +27,12 @@ wakes:
   - on: [run_ended]
     prompt: role-tune-review
     run: {agent: claude, model: "opus[1m]", effort: medium}
+  - on: [note_decided]
+    prompt: role-tune-apply
+    run: {agent: claude, model: "opus[1m]", effort: medium}
+  - on: [done, closed]
+    prompt: role-tune-summary
+    run: {agent: claude, model: sonnet}
 """
 
 
@@ -49,7 +55,7 @@ def tune(tmp_path, monkeypatch, engine):
 # ── описание ─────────────────────────────────────────────────────────────
 def test_описание_читается_и_знает_свои_поводы(tune):
     spec = asides.load_by_name("tune")
-    assert spec.kinds() == ("run_started", "run_ended")
+    assert spec.kinds() == ("run_started", "run_ended", "note_decided", "done", "closed")
     assert spec.wake_for("run_ended").model == "opus[1m]"
     assert spec.may("hold") and not spec.may("pr")
     assert asides.enabled() and asides.enabled()[0].name == "tune"
@@ -137,7 +143,7 @@ def test_ход_роли_закрывается_когда_сессия_осво
     fake.finish_turn(sid)
     engine.reconcile()
     assert асайды(engine)[0]["ended_at"], "ход роли не закрылся"
-    assert sid in fake.archived
+    assert sid not in fake.archived, "сессия живёт до владельца"
 
 
 # ── находки ──────────────────────────────────────────────────────────────
@@ -164,7 +170,7 @@ def test_роль_без_права_останавливать_только_со
     engine.reconcile()
     run_id = engine.db.aside_runs_open()[0]["id"]
     engine.aside_note(int(run_id), "hold", "Что-то не то", "", [], пропуск(engine, run_id))
-    assert engine.db.note(1)["severity"] == "fyi"
+    assert engine.db.note(1)["severity"] == "log"
     assert engine.db.task(task_id)["status"] != WAITING
 
 
@@ -196,7 +202,7 @@ def test_промпт_склеен_из_общих_правил_роли_и_ко
     объект = mod.Aside(
         name=spec.name, scope=spec.scope, wakes=spec.wakes, workspace="task",
         memory=spec.memory, rights=spec.rights, includes=spec.includes,
-        chains=(), requires=(), budget={}, enabled=True, title=spec.title,
+        chains=(), budget={}, enabled=True, title=spec.title,
     )
     monkeypatch.setattr(mod, "enabled", lambda: [объект])
     monkeypatch.setattr(engine, "aside_specs", lambda: [объект])
@@ -208,7 +214,7 @@ def test_промпт_склеен_из_общих_правил_роли_и_ко
     assert "Ты побочная роль" in текст, "общие правила не приклеились"
     assert "Наладчик: проверка входа" in текст, "промпт повода не приклеился"
     assert "Твой ход: `A1`" in текст and task_id in текст
-    assert "Права, выданные тебе: hold, patch, pr, read" in текст
+    assert "Права, выданные тебе: hold, memory, patch, pr, read" in текст
 
 
 # ── копилка (Менеджер проекта) ───────────────────────────────────────────
@@ -219,7 +225,8 @@ scope: project
 enabled: true
 workspace: task
 memory: project
-rights: [read, memory]
+rights: [read, memory, patch, pr]
+mirror: worktree:project
 wakes:
   - on: [done, closed]
     prompt: role-manager
@@ -282,7 +289,7 @@ def test_копилка_проекта_дописывается(engine, fake, re
 
 def test_без_права_копилки_роль_не_пишет(engine, fake, repo, manager):
     (manager / "manager.yml").write_text(
-        MANAGER.replace("[read, memory]", "[read]"), encoding="utf-8"
+        MANAGER.replace("[read, memory, patch, pr]", "[read]"), encoding="utf-8"
     )
     до_конца(engine, fake, repo)
     engine.reconcile()
@@ -346,22 +353,6 @@ def test_бюджет_роли_в_деньгах_прекращает_ходы(e
     assert any(r["kind"] == "aside_budget" for r in engine.db.events(limit=30))
 
 
-def test_без_канала_роль_не_останавливает_прогон(engine, fake, repo, tune, monkeypatch):
-    """`requires: notify` без бота — роль говорит, но прогон не стопорит."""
-    (tune / "tune.yml").write_text(
-        SPEC.replace("rights: [read, hold]", "rights: [read, hold]\nrequires: [notify]"),
-        encoding="utf-8",
-    )
-    task_id = start(engine, repo)
-    engine.reconcile()
-    run_id = int(engine.db.aside_runs_open()[0]["id"])
-    monkeypatch.setattr(type(engine.notify()), "live", property(lambda self: False))
-
-    engine.aside_note(run_id, "hold", "Едет не туда", "", [], пропуск(engine, run_id))
-    assert engine.db.note(1)["severity"] == "fyi"
-    assert engine.db.task(task_id)["status"] != WAITING
-
-
 def test_наладчику_дают_живое_дерево_и_копию_под_коммиты(engine, fake, repo, tmp_path, monkeypatch):
     """Правит там, где прогон это увидит; коммитит там, где не заденет чужое."""
     from orch import asides as mod
@@ -391,3 +382,134 @@ def test_наладчику_дают_живое_дерево_и_копию_по�
     assert f"Живое дерево, правки в нём действуют сразу: `{живое}`" in текст
     assert "Твоя копия под коммиты и ветку:" in текст
     assert "-orch/aside/tune" in текст, "копия под коммиты не отдельная"
+
+
+def test_вес_находки_по_умолчанию_самый_тихий(engine, fake, repo, tune):
+    """Без флага находка копится: в мессенджер уходит только названное."""
+    task_id = start(engine, repo)
+    engine.reconcile()
+    run_id = int(engine.db.aside_runs_open()[0]["id"])
+
+    engine.aside_note(run_id, "непонятно-что", "Мелочь", "", [], пропуск(engine, run_id))
+    assert engine.db.note(1)["severity"] == "log"
+    assert engine.db.task(task_id)["status"] != WAITING
+
+
+def test_умершая_сессия_роли_поднимается_ещё_раз(engine, fake, repo, tune):
+    """Повод уже прошёл курсор и сам не вернётся: без повтора запись пропала бы."""
+    start(engine, repo)
+    engine.reconcile()
+    первый = engine.db.aside_runs_open()[0]
+    fake.drop(первый["session_id"])          # сессия исчезла, ход не сдан
+
+    engine.reconcile()
+    ходы = асайды(engine)
+    assert len(ходы) == 2, "роль не подняли заново"
+    assert ходы[0]["ended_at"] and not ходы[1]["ended_at"]
+    assert ходы[1]["wake"] == ходы[0]["wake"]
+
+    # Второй раз — не случайность: третий ход не заводим.
+    fake.drop(ходы[1]["session_id"])
+    engine.reconcile()
+    assert len(асайды(engine)) == 2
+
+
+def test_менеджеру_дают_копию_проекта_под_документы(engine, fake, repo, manager):
+    """Правит документацию не в копии задачи, а в своей ветке проекта."""
+    до_конца(engine, fake, repo)
+    engine.reconcile()
+    текст = fake.prompts[-1][1]
+    assert "Твоя копия под коммиты и ветку:" in текст
+    assert "-orch/aside/manager" in текст, "копия под документы не отдельная"
+
+
+def test_вес_находки_по_умолчанию_самый_тихий(engine, fake, repo, tune):
+    """Без флага находка копится: в мессенджер уходит только названное."""
+    task_id = start(engine, repo)
+    engine.reconcile()
+    run_id = int(engine.db.aside_runs_open()[0]["id"])
+
+    engine.aside_note(run_id, "непонятно-что", "Мелочь", "", [], пропуск(engine, run_id))
+    assert engine.db.note(1)["severity"] == "log"
+    assert engine.db.task(task_id)["status"] != WAITING
+
+
+def test_умершая_сессия_роли_поднимается_ещё_раз(engine, fake, repo, tune):
+    """Повод уже прошёл курсор и сам не вернётся: без повтора запись пропала бы."""
+    start(engine, repo)
+    engine.reconcile()
+    первый = engine.db.aside_runs_open()[0]
+    fake.drop(первый["session_id"])          # сессия исчезла, ход не сдан
+
+    engine.reconcile()
+    ходы = асайды(engine)
+    assert len(ходы) == 2, "роль не подняли заново"
+    assert ходы[0]["ended_at"] and not ходы[1]["ended_at"]
+    assert ходы[1]["wake"] == ходы[0]["wake"]
+
+    # Второй раз — не случайность: третий ход не заводим.
+    fake.drop(ходы[1]["session_id"])
+    engine.reconcile()
+    assert len(асайды(engine)) == 2
+
+
+
+
+def test_сессия_роли_одна_на_задачу_и_живёт_до_владельца(engine, fake, repo, tune):
+    """Отчёт роль оставляет в своей сессии, и закрывает её владелец сам."""
+    task_id = start(engine, repo)
+    engine.reconcile()
+    первый = engine.db.aside_runs_open()[0]
+    sid = первый["session_id"]
+
+    engine.aside_done(int(первый["id"]), "clean", пропуск(engine, int(первый["id"])))
+    engine.reconcile()
+    assert sid not in fake.archived, "сессию с отчётом убрали без владельца"
+
+    # Следующий повод приходит в ту же переписку, а не заводит вторую.
+    turn(engine, fake, task_id, "one", 1, None)
+    engine.reconcile()
+    ходы = асайды(engine)
+    assert len(ходы) >= 2
+    assert {x["session_id"] for x in ходы} == {sid}, "роль завела вторую сессию"
+
+def test_роль_помнит_разговор_лентой_находок(engine, fake, repo, tune):
+    """Сессии не переживают ход: без ленты роль на третьем круге не помнит,
+    с чего начали."""
+    task_id = start(engine, repo)
+    engine.reconcile()
+    run_id = int(engine.db.aside_runs_open()[0]["id"])
+    engine.aside_note(run_id, "tell", "Первая находка", "…", [], пропуск(engine, run_id))
+    engine.note_decision(1, "say", "Правь только промпт", who="telegram")
+    engine.aside_done(run_id, "done", пропуск(engine, run_id))
+
+    engine.reconcile()   # владелец ответил — роль поднимают заново
+    engine.reconcile()
+    текст = fake.prompts[-1][1]
+    assert "Твоя находка, на которую ответил владелец" in текст
+    assert "Правь только промпт" in текст
+    assert "Первая находка" in текст
+
+
+def test_ответ_доходит_и_после_конца_задачи(engine, fake, repo, tune):
+    """Владелец мог написать, когда задача уже кончилась."""
+    task_id = до_конца(engine, fake, repo)
+    engine.reconcile()
+    открытые = engine.db.aside_runs_open()
+    run_id = int(открытые[0]["id"]) if открытые else None
+    if run_id is None:                      # роль уже закрыла ход — заведём находку руками
+        aside_id = engine.db.aside_open("tune", "run", task_id, task_id)
+        with engine.db.tx():
+            engine.db.note_add(aside_id, None, task_id, "tell", "После конца", "…", [])
+        note_id = 1
+    else:
+        engine.aside_note(run_id, "tell", "После конца", "…", [], пропуск(engine, run_id))
+        engine.aside_done(run_id, "done", пропуск(engine, run_id))
+        note_id = 1
+
+    assert engine.db.task(task_id)["status"] == "done"
+    engine.note_decision(note_id, "say", "Всё равно поправь", who="telegram")
+    engine.reconcile()
+    assert any(
+        "Всё равно поправь" in текст for _, текст in fake.prompts
+    ), "слова владельца пропали после закрытия задачи"

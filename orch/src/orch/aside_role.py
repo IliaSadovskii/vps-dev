@@ -94,7 +94,9 @@ class AsideMixin:
         if task is not None and spec.scope in ("run", "task") and task["status"] not in LIVE:
             # Задача уже закрыта: наблюдать за ней нечего, кроме ролей,
             # которые именно на закрытие и подписаны.
-            if event["kind"] not in ("done", "closed"):
+            # Ответ владельца доходит всегда: он мог написать, когда задача
+            # уже кончилась, и молча терять его слова нельзя.
+            if event["kind"] not in ("done", "closed", "note_decided"):
                 return "skip"
 
         aside_id = self.db.aside_live(spec.name, key)
@@ -115,7 +117,9 @@ class AsideMixin:
         token = uuid.uuid4().hex[:12]
         with self.db.tx():
             aside_id = self.db.aside_open(spec.name, spec.scope, key, event["task_id"])
-            run_id = self.db.aside_run_start(aside_id, wake.prompt, int(event["seq"]), token)
+            run_id = self.db.aside_run_start(
+                aside_id, wake.prompt, int(event["seq"]), token, event["task_id"]
+            )
             self.db.event(
                 event["task_id"],
                 "aside_started",
@@ -141,7 +145,9 @@ class AsideMixin:
 
     def aside_budget_ok(self, spec: Aside, aside_id: int, task_id: str | None) -> bool:
         """Бюджет роли: сколько ходов и сколько денег ей отпущено."""
-        runs = self.db.aside_runs_of(aside_id)
+        # Считаем ходы про эту задачу: у роли с областью «проект» запись
+        # одна на весь проект, и общий счёт молча заткнул бы её навсегда.
+        runs = self.db.aside_runs_of(aside_id, task_id)
         limit = spec.limit("runs_per_task", 40)
         if len(runs) >= limit:
             self.note_once(
@@ -160,17 +166,7 @@ class AsideMixin:
         return True
 
     def may_hold(self, spec: Aside | None) -> bool:
-        """Право останавливать есть, и есть куда сказать об остановке.
-
-        Роль с `requires: [notify]` без привязанного канала теряет `hold`:
-        иначе она застопорит задачу, а сказать об этом будет негде
-        (`ASIDE-PLAN.md` §12).
-        """
-        if spec is None or not spec.may("hold"):
-            return False
-        if "notify" in spec.requires and not self.notify().live:
-            return False
-        return True
+        return spec is not None and spec.may("hold")
 
     # ── ход роли ─────────────────────────────────────────────────────────
     def aside_send(self, spec: Aside, wake: Wake, aside_id: int, run_id: int, event) -> None:
@@ -183,19 +179,36 @@ class AsideMixin:
                 self.db.aside_run_end(run_id, "no_workspace")
             return
         run = self.db.aside_run(run_id)
+        aside = self.db.aside(aside_id)
+        session = None
+        if aside is not None and aside["session_id"]:
+            # Одна сессия на задачу: роль просыпается новым промптом в свою
+            # же переписку. Так у неё есть память о прошлых ходах, а у
+            # владельца — одна карточка в сайдбаре вместо десятка.
+            session = self.aoe.session(aside["session_id"])
         try:
-            session = self.aoe.create(
+            session = session or self.aoe.create(
                 path=str(path),
                 agent=wake.agent,
                 model=wake.model,
                 effort=wake.effort,
                 title=f"{spec.title or spec.name} · {event['task_id'] or 'машина'}",
                 group=(task["group_path"] if task is not None else None) or f"{GROUP_ROOT}/побочные",
-                idempotency_key=f"aside/{spec.name}/{event['seq']}",
+                # Номер хода в ключе: повтор после умершей сессии должен
+                # завести новую, а не получить обратно мёртвую по старому
+                # ключу. Внутри одного хода ключ постоянен — за это
+                # идемпотентность и держат.
+                idempotency_key=f"aside/{spec.name}/{aside_id}",
             )
         except AoeError as exc:
             self.db.event(
                 event["task_id"], "aside_failed", {"aside": spec.name, "error": str(exc)[:300]}
+            )
+            return
+        if session is None:
+            self.db.event(
+                event["task_id"], "aside_failed",
+                {"aside": spec.name, "why": "сессия не создалась"},
             )
             return
         self.aoe.apply_model(session.id, wake.model)
@@ -209,6 +222,10 @@ class AsideMixin:
             return
         with self.db.tx():
             self.db.aside_run_sent(run_id, session.id)
+            if aside is None or aside["session_id"] != session.id:
+                self.db.conn.execute(
+                    "UPDATE aside SET session_id = ? WHERE id = ?", (session.id, aside_id)
+                )
         self.aoe.set_notify(session.id, False)
         self.aoe.set_color(session.id, "blue")
 
@@ -275,7 +292,7 @@ class AsideMixin:
                 f"Рабочая копия задачи: `{task['worktree_path'] or task['project_path']}`",
                 f"Папка задачи: `{Path(task['worktree_path'] or task['project_path']) / '.orch' / task['id']}`",
             ]
-        mirror = self.aside_mirror(spec)
+        mirror = self.aside_mirror(spec, task)
         if mirror:
             lines += [
                 "",
@@ -287,16 +304,85 @@ class AsideMixin:
             # Без пути роль не знает, где её собственная память, и пишет
             # заново то, что уже записала в прошлый раз.
             lines.append(f"Твоя копилка: `{self.memory_path(spec, {'task_id': task['id'] if task is not None else None, 'scope_key': self.aside_key(spec, task, event) or ''})}`")
+        note = self.note_block(payload)
+        if note:
+            lines += ["", note]
+        лента = self.notes_ledger(spec, task, payload)
+        if лента:
+            lines += ["", лента]
         skeleton = self.aside_digest(task, payload)
         if skeleton:
             lines += ["", skeleton]
         return "\n".join(lines)
 
-    def aside_mirror(self, spec: Aside) -> tuple[str, str] | None:
-        """Пара «живое дерево, копия под коммиты» — для ролей с `mirror`."""
+    def notes_ledger(self, spec: Aside, task, payload: dict) -> str:
+        """Что ты уже говорила по этой задаче и что владелец ответил.
+
+        Каждый ход — новая сессия с чистой памятью, а разговор с владельцем
+        идёт кругами: без ленты роль на третьем сообщении не помнит, с чего
+        начали, и предлагает то же самое заново.
+        """
+        if task is None:
+            return ""
+        текущая = int(payload.get("note") or 0)
+        строки = []
+        for note in self.db.notes(task_id=task["id"]):
+            aside = self.db.aside(int(note["aside_id"]))
+            if aside is None or aside["name"] != spec.name or int(note["id"]) == текущая:
+                continue
+            ответ = note["decision"] or ("ждёт ответа" if note["state"] == "sent" else "не отправлена")
+            строки.append(f"- «{note['title']}» → {ответ}")
+        if not строки:
+            return ""
+        return "## Твои находки по этой задаче\n\n" + "\n".join(строки[-12:])
+
+    def note_block(self, payload: dict) -> str:
+        """Находка и решение владельца — когда роль будят его ответом.
+
+        Без этого роль просыпается на «владелец ответил» и не помнит, о чём
+        речь: её сессия закрыта, память живёт в файлах и здесь.
+        """
+        note = self.db.note(int(payload["note"])) if payload.get("note") else None
+        if note is None:
+            return ""
+        verb = payload.get("verb") or ""
+        target = payload.get("target") or ""
+        решение = {
+            "continue": "оставить как есть",
+            "restart": "перезапустить шаг",
+            "back": f"вернуть на «{target}»",
+            "stop": "остановить задачу",
+            "patch": "править",
+            "say": "сказал словами",
+        }.get(verb, verb)
+        lines = [
+            "# Твоя находка, на которую ответил владелец",
+            "",
+            f"**{note['title']}**",
+            "",
+            (note["body"] or "").strip(),
+            "",
+            f"Владелец выбрал: **{решение}**.",
+        ]
+        if verb == "say" and target:
+            lines += ["", "Его слова:", "", f"> {target.strip()}"]
+        return "\n".join(lines)
+
+    def aside_mirror(self, spec: Aside, task=None) -> tuple[str, str] | None:
+        """Пара «живое дерево, копия под коммиты» — для ролей с `mirror`.
+
+        `worktree:project` — копия того проекта, за которым роль приставлена:
+        у Менеджера проект свой в каждом прогоне, зашить путь нельзя.
+        """
         if not spec.mirror.startswith("worktree:"):
             return None
-        project = Path(spec.mirror[9:]).expanduser()
+        цель = spec.mirror[9:]
+        if цель == "project":
+            if task is None or not task["project_path"]:
+                return None
+            project = Path(task["project_path"])
+        else:
+            project = Path(цель).expanduser()
         if not project.is_dir():
             return None
         path, error = create_worktree(project, f"aside/{spec.name}")
@@ -341,6 +427,7 @@ class AsideMixin:
                     self.db.event(
                         run["task_id"], "aside_lost", {"aside": run["name"], "session": sid}
                     )
+                self.retry_aside(run)
                 continue
             if session.status in (STARTING, WAITING) or not session.turn_ended(
                 run["prompt_sent_at"]
@@ -354,7 +441,43 @@ class AsideMixin:
                     "aside_ended",
                     {"aside": run["name"], "run": int(run["id"]), "cost_usd": cost},
                 )
-            self.aoe.archive(sid)
+
+    def retry_aside(self, run) -> None:
+        """Сессия роли исчезла, не сдав ход, — поднять её ещё раз.
+
+        Повод уже прошёл курсор и сам не вернётся, поэтому без повтора запись
+        роли о задаче пропала бы молча. Повтор ровно один: если сессия гибнет
+        дважды, дело не в случайности.
+        """
+        spec = self.spec_of(run["name"])
+        if spec is None:
+            return
+        повторы = [
+            r for r in self.db.aside_runs_of(int(run["aside_id"]), run["task_id"])
+            if r["wake"] == run["wake"]
+        ]
+        if len(повторы) >= 2 or not run["cause_seq"]:
+            return
+        event = self.db.conn.execute(
+            "SELECT * FROM event WHERE seq = ?", (run["cause_seq"],)
+        ).fetchone()
+        if event is None:
+            return
+        wake = spec.wake_for(event["kind"])
+        if wake is None or not self.capacity(run["task_id"], f"роль {spec.name} (повтор)"):
+            return
+        token = uuid.uuid4().hex[:12]
+        with self.db.tx():
+            # `cause_seq` пустой: повод тот же, но ключ уникальности занят
+            # первым ходом, а второй заводится сознательно.
+            run_id = self.db.aside_run_start(
+                int(run["aside_id"]), run["wake"], None, token, run["task_id"]
+            )
+            self.db.event(
+                run["task_id"], "aside_retry",
+                {"aside": spec.name, "wake": run["wake"], "run": run_id},
+            )
+        self.aside_send(spec, wake, int(run["aside_id"]), run_id, event)
 
     # ── заявки роли (`orch aside …` через inbox) ─────────────────────────
     def aside_note(
@@ -363,11 +486,17 @@ class AsideMixin:
         run, aside, spec, refuse = self.aside_caller(run_id, token)
         if refuse:
             return refuse
+        # Три веса, и по умолчанию самый тихий: агент, которого попросили
+        # искать, всегда что-нибудь найдёт, и без порога мессенджер владельца
+        # превратится в поток мелочи.
+        #   hold — задача встаёт: владелец увидит это в панели;
+        #   log  — копится и входит в сводку конца прогона.
+        if severity not in ("hold", "log"):
+            severity = "log"
         if severity == "hold" and not self.may_hold(spec):
-            # Роль без права останавливать — и роль, которой некуда сказать
-            # об остановке, — всё равно скажет, но прогон не застопорит
-            # (`ASIDE-PLAN.md` §12).
-            severity = "fyi"
+            # Роль без права останавливать всё равно скажет, но прогон не
+            # застопорит.
+            severity = "log"
         with self.db.tx():
             note_id = self.db.note_add(
                 int(run["aside_id"]), run_id, aside["task_id"], severity, title, body, options
@@ -447,8 +576,9 @@ class AsideMixin:
             if task is not None:
                 answer = self.button(task_id, task["revision"], "back", target, note["title"])
         elif verb == "say":
-            if task is not None:
-                answer = self.button(task_id, task["revision"], "again", comment=target or note["title"])
+            # Слова владельца не двигают задачу: их дело — дойти до роли,
+            # которая находку написала. Она проснётся событием ниже.
+            answer = "передал роли ваши слова"
         elif verb == "patch":
             answer = "роль применит правку следующим ходом"
         else:

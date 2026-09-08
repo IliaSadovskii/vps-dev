@@ -214,7 +214,6 @@ class Worker:
         "cheap_model": "haiku",
         "max_sessions": 6,
         "min_free_mb": 1500,
-        "overtime_min": 45,
     }
 
     def read_settings(self) -> None:
@@ -242,7 +241,6 @@ class Worker:
             cheap_model=str(self.settings.get("cheap_model") or "haiku"),
             max_sessions=int(self.settings.get("max_sessions", 6)),
             min_free_mb=int(self.settings.get("min_free_mb", 1500)),
-            overtime_min=int(self.settings.get("overtime_min", 45)),
         )
 
     @property

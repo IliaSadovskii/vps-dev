@@ -1436,30 +1436,6 @@ def test_нехватка_памяти_придерживает_заход(engin
     assert "memory_low" in kinds(engine)
 
 
-def test_сторож_отмечает_слишком_долгий_ход(engine, fake, repo, clock):
-    task_id = start(engine, repo)
-    clock.tick(60 * 60)                     # час на ходу при пороге в 45 минут
-    engine.reconcile()
-    engine.reconcile()                      # второй проход не должен дублировать
-    marks = [k for k in kinds(engine, task_id) if k == "watch_overtime"]
-    assert marks == ["watch_overtime"]
-
-
-def test_сторож_отмечает_дорогой_ход(engine, fake, repo, clock):
-    engine.settings.cost_warn_usd = 1.0
-    fake.cost = 7.5
-    task_id = start(engine, repo)
-    clock.tick(20 * 60)
-    engine.reconcile()
-    payload = [
-        json.loads(r["payload"])
-        for r in engine.db.conn.execute(
-            "SELECT payload FROM event WHERE kind = 'watch_cost' AND task_id = ?", (task_id,)
-        )
-    ]
-    assert payload and payload[0]["cost_usd"] == 7.5
-
-
 def test_сторож_замечает_две_задачи_в_одном_файле(engine, fake, repo):
     """Соседей не видит ни один шаг: это факт, и его считает git, а не модель."""
     import json as _json
@@ -1482,28 +1458,19 @@ def test_сторож_замечает_две_задачи_в_одном_фай�
     assert {clash[0]["with"], clash[0]["pair"].split("+")[0]} == {первая, вторая}
 
 
-def test_сторож_замечает_выход_за_границы_шага(engine, fake, repo, monkeypatch):
-    """Зона задана в цепочке — движок сам видит, что тронули чужое."""
+def test_автономию_живой_задачи_переставляют_целиком(engine, fake, repo):
+    """«Не трогай меня до конца» — это восемь щелчков в панели, а нужен один."""
     import json as _json
 
-    import orch.engine as mod
-    from orch.chain import parse as parse_chain
+    task_id = start(engine, repo)
+    sheet = _json.loads(engine.db.task(task_id)["human_sheet"])
+    assert sheet["two"]["after"] == ["ok"]
 
-    текст = CHAIN.replace("  - id: one\n", "  - id: one\n    zone: [src/]\n")
-    monkeypatch.setattr(mod, "load_chain", lambda path: parse_chain(текст, source="тест"))
-    task_id = engine.create_task(chain_name="t", project_path=str(repo), text="Границы.")
-    engine.reconcile()
+    assert "переставлена" in engine.set_autonomy(task_id, None, {"*.after": False, "*.ask": False})
+    sheet = _json.loads(engine.db.task(task_id)["human_sheet"])
+    assert all(v["after"] is False and v["ask"] is False for v in sheet.values())
 
-    root = Path(engine.db.task(task_id)["worktree_path"])
-    (root / "src").mkdir(exist_ok=True)
-    (root / "src" / "своё.py").write_text("ok\n", encoding="utf-8")
-    (root / "чужое.py").write_text("нет\n", encoding="utf-8")
-    engine.reconcile()
-
-    out = [
-        _json.loads(r["payload"])
-        for r in engine.db.conn.execute(
-            "SELECT payload FROM event WHERE kind = 'watch_out_of_bounds'"
-        )
-    ]
-    assert out and out[0]["files"] == ["чужое.py"]
+    # Пресет цепочки берётся целиком, поверх него — точечные правки.
+    assert "переставлена" in engine.set_autonomy(task_id, None, {"two.after": True})
+    sheet = _json.loads(engine.db.task(task_id)["human_sheet"])
+    assert sheet["two"]["after"] is True and sheet["one"]["after"] is False

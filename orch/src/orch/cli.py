@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -145,6 +146,24 @@ def cmd_push(args: argparse.Namespace) -> int:
 
 
 # ── команды владельца и ролей: заявка на задачу ──────────────────────────
+# Папка задачи не в git и живёт ровно столько, сколько её рабочая копия:
+# ссылка на неё из ТЗ другой задачи протухает молча, и роль идёт искать
+# файл, которого нет (прогон T24).
+ORCH_LINK = re.compile(r"\.orch/(T\d+)/")
+
+
+def check_text(text: str, task_id: str | None = None) -> None:
+    чужие = {m for m in ORCH_LINK.findall(text or "") if m != task_id}
+    if not чужие:
+        return
+    raise Refused(
+        "текст задачи ссылается на папку другой задачи: "
+        + ", ".join(f".orch/{t}/" for t in sorted(чужие))
+        + ". Эта папка не в git и исчезает вместе с рабочей копией — "
+        "перенесите нужное в текст задачи целиком."
+    )
+
+
 def cmd_task_new(args: argparse.Namespace) -> int:
     """Заявка в `inbox/`; движок превращает её в задачу на следующем проходе."""
     project = Path(args.project).resolve() if args.project else _project_here()
@@ -153,6 +172,7 @@ def cmd_task_new(args: argparse.Namespace) -> int:
     text = args.text.strip()
     if not text:
         raise Refused("текст задачи пуст")
+    check_text(text)
     sheet_edits = {}
     for item in args.after or []:
         key, _, value = item.partition("=")
@@ -497,6 +517,37 @@ def cmd_branches(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_task_autonomy(args: argparse.Namespace) -> int:
+    """Переставить автономию уже заведённой задачи: пресет или отдельные ручки.
+
+    Лист автономии правится и переключателями в панели, но по одному шагу;
+    когда владелец говорит «не трогай меня до PR», это восемь щелчков.
+    """
+    edits = {}
+    for item in args.after or []:
+        key, _, value = item.partition("=")
+        edits[f"{key}.after"] = _flag(value)
+    for item in args.ask or []:
+        key, _, value = item.partition("=")
+        edits[f"{key}.ask"] = _flag(value)
+    if not args.preset and not edits:
+        raise Refused("нечего менять: назовите --preset или --after/--ask")
+    request = {
+        "id": uuid.uuid4().hex[:12],
+        "kind": "autonomy",
+        "task": args.task,
+        "preset": args.preset,
+        "sheet_edits": edits,
+        "at": signals.now(),
+    }
+    INBOX.mkdir(parents=True, exist_ok=True)
+    (INBOX / f"{request['id']}.json").write_text(
+        json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(f"автономия {args.task} переставлена: движок применит ближайшим проходом")
+    return 0
+
+
 def cmd_task_edit(args: argparse.Namespace) -> int:
     """Переписать ТЗ заявки. Текст из аргумента или со стандартного ввода."""
     text = args.text
@@ -505,6 +556,7 @@ def cmd_task_edit(args: argparse.Namespace) -> int:
     text = (text or "").strip()
     if not text:
         raise Refused("текст пуст")
+    check_text(text, args.task)
     request = {
         "id": uuid.uuid4().hex[:12],
         "kind": "edit_text",
@@ -581,12 +633,12 @@ def cmd_aside(args: argparse.Namespace) -> int:
                 raise Refused(f"вариант {verb!r} движок исполнить не сможет; можно: {', '.join(sorted(VERBS))}")
             options.append({"verb": verb, "target": target, "label": label.strip() or verb})
         request.update(
-            severity="hold" if args.hold else "fyi",
+            severity="hold" if args.hold else "log",
             title=args.title,
             body=args.body or "",
             options=options,
         )
-        message = "находка уйдёт владельцу" if args.hold else "находка ляжет в сводку"
+        message = "задача встанет на владельце" if args.hold else "находка ляжет в сводку"
     elif args.action == "memory":
         if not args.text:
             raise Refused('нужен текст: --text "…"')
@@ -818,18 +870,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="владелец придёт смотреть работу: поднять стенд задачи к первым воротам",
     )
+    p.add_argument("--branch", help="ветка задачи; по умолчанию новая от базовой")
+    p.add_argument("--base", help="от какой ветки ответвляться")
     p.add_argument(
         "--notify",
         action="store_true",
         help="звать владельца в Telegram, когда задача встанет на воротах",
-    )
-    p.add_argument(
-        "--branch",
-        help="работать в этой ветке вместо новой: так задача садится на уже открытый PR",
-    )
-    p.add_argument(
-        "--base",
-        help="от чего ответвляться, если ветки ещё нет (по умолчанию origin/HEAD)",
     )
     p.add_argument(
         "--from-backlog",
@@ -886,7 +932,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--title", help="находка одной строкой")
     p.add_argument("--body", help="подробности, до двадцати строк")
-    p.add_argument("--hold", action="store_true", help="остановить задачу до ответа владельца")
+    p.add_argument("--hold", action="store_true", help="остановить задачу и позвать владельца")
     p.add_argument(
         "--option",
         action="append",
@@ -896,6 +942,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--outcome", help="чем кончился ход (для «done»)")
     p.add_argument("--text", help="текст записи в копилку")
     p.set_defaults(func=cmd_aside)
+
+    p = sub.add_parser(
+        "autonomy", help="переставить ворота и вопросы у заведённой задачи"
+    )
+    p.add_argument("task")
+    p.add_argument("--preset", help="имя пресета цепочки, например auto")
+    p.add_argument("--after", action="append", metavar="ШАГ=on|off", help="ворота шага")
+    p.add_argument("--ask", action="append", metavar="ШАГ=on|off", help="вопросы шага")
+    p.set_defaults(func=cmd_task_autonomy)
 
     p = sub.add_parser("gc", help="рабочие копии, которым не соответствует живая задача")
     p.add_argument("--yes", action="store_true", help="убрать найденное, а не только показать")

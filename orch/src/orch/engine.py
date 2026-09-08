@@ -95,8 +95,6 @@ class Settings:
     max_sessions: int = 6
     # Сколько памяти должно остаться свободным, чтобы поднимать ещё сессию.
     min_free_mb: int = 1500
-    # Ход дольше этого — повод сторожу сказать «идёт слишком долго».
-    overtime_min: int = 45
 
 
 class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, PromptContextMixin):
@@ -105,8 +103,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
         self.aoe = aoe or Aoe()
         self.settings = settings or Settings()
         self.live_sessions = 0
-        # Канал наружу заводится лениво: без токена он молчит, а движок
-        # работает как работал.
+        # Канал наружу заводится лениво: без токена он молчит.
         self.notifier = None
 
     # ── проход ───────────────────────────────────────────────────────────
@@ -536,84 +533,6 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
                     3600.0,
                 )
 
-    def watch_bounds(self, task, run) -> None:
-        """Роль вышла за границы шага: отправила ветку или тронула чужое.
-
-        Считается git-ом по ходу захода, без модели. Дальше это повод для
-        Наладчика — но заметить обязан движок, роль о себе не расскажет.
-        """
-        path = task["worktree_path"]
-        if not path or not Path(path).is_dir():
-            return
-        if not self.db.run_events(task["id"], "watch_pushed", run["id"]):
-            code, out = git_try(path, "rev-parse", "--abbrev-ref", "@{upstream}")
-            if code == 0 and out.strip():
-                # Ветка задачи ушла на сервер: пуш делает шаг PR и только он.
-                if run["step"] != "pr":
-                    self.db.event(
-                        task["id"], "watch_pushed",
-                        {"run": run["id"], "step": run["step"], "upstream": out.strip()[:80]},
-                    )
-        zone = self.step_zone(task, run)
-        if zone is None or self.db.run_events(task["id"], "watch_out_of_bounds", run["id"]):
-            return
-        touched = touched_files(path, task["base_branch"] or "")
-        чужое = sorted(f for f in touched if not any(f.startswith(p) for p in zone))
-        if чужое:
-            self.db.event(
-                task["id"], "watch_out_of_bounds",
-                {"run": run["id"], "step": run["step"], "files": чужое[:10]},
-            )
-
-    def step_zone(self, task, run) -> list[str] | None:
-        """Пути, которые шагу можно трогать, или None — если ограничений нет.
-
-        Зона задаётся в цепочке (`zone:` у шага). Без неё сторож молчит:
-        выдумывать границы за владельца движок не станет.
-        """
-        chain = self.chain_of(task)
-        if chain is None:
-            return None
-        try:
-            step = chain.step(run["step"])
-        except ChainError:
-            return None
-        return list(step.zone) or None
-
-    def watch_alarms(self, task, run, session: Session) -> None:
-        """Сторожа идущего хода: дёшево, без модели, только событие.
-
-        Думать о находке будет побочная роль (`ASIDE-PLAN.md` §2); дело
-        сторожа — заметить и сказать один раз за заход.
-        """
-        sent = parse_time(run["prompt_sent_at"])
-        if sent is None:
-            return
-        age = _epoch_now() - sent
-        self.watch_bounds(task, run)
-        if age > self.settings.overtime_min * 60 and not self.db.run_events(
-            task["id"], "watch_overtime", run["id"]
-        ):
-            self.db.event(
-                task["id"],
-                "watch_overtime",
-                {"run": run["id"], "step": run["step"], "minutes": round(age / 60)},
-            )
-        # Стоимость спрашиваем у AoE не каждый проход: это лишний запрос на
-        # каждую идущую задачу. Через десять минут хода и не чаще пяти минут.
-        if age < 600 or self.db.run_events(task["id"], "watch_cost", run["id"]):
-            return
-        if self.recently(task, "cost_checked", run, 300.0):
-            return
-        self.db.event(task["id"], "cost_checked", {"run": run["id"]})
-        cost, _ = self.aoe.usage(session.id)
-        if cost is not None and cost > self.settings.cost_warn_usd:
-            self.db.event(
-                task["id"],
-                "watch_cost",
-                {"run": run["id"], "step": run["step"], "cost_usd": cost},
-            )
-
     def task_on_branch(self, branch: str, skip: str | None = None):
         """Задача, которая уже работает в этой ветке, или None.
 
@@ -804,7 +723,6 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
             return
 
         if session.status in (RUNNING, STARTING):
-            self.watch_alarms(task, run, session)
             return
 
         if session.status == WAITING:

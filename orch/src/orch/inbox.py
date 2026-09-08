@@ -52,7 +52,7 @@ class InboxMixin:
                     if request["action"] == "note":
                         answer = self.aside_note(
                             int(request["run"]),
-                            request.get("severity") or "fyi",
+                            request.get("severity") or "log",
                             request.get("title") or "",
                             request.get("body") or "",
                             request.get("options") or [],
@@ -69,6 +69,11 @@ class InboxMixin:
                             request.get("token") or "",
                         )
                     self.db.event(None, "aside_request", {"answer": answer})
+                elif kind == "autonomy":
+                    answer = self.set_autonomy(
+                        request["task"], request.get("preset"), request.get("sheet_edits") or {}
+                    )
+                    self.db.event(request["task"], "autonomy_set", {"answer": answer})
                 elif kind == "edit_text":
                     self.edit_text(request["task"], request["text"])
                 elif kind == "wizard":
@@ -101,6 +106,28 @@ class InboxMixin:
                     None, "inbox_rejected", {"file": path.name, "error": repr(exc)[:400]}
                 )
             path.unlink(missing_ok=True)
+
+    def set_autonomy(self, task_id: str, preset: str | None, edits: dict) -> str:
+        """Переставить лист автономии живой задачи целиком.
+
+        Идущий заход не трогаем: он уже получил свой промпт. Новые настройки
+        действуют со следующего шага — как и правка переключателем в панели.
+        """
+        from .chain import apply_preset
+
+        task = self.db.task(task_id)
+        if task is None:
+            return "нет такой задачи"
+        chain = self.chain_of(task)
+        if chain is None:
+            return "цепочка задачи не читается"
+        sheet = chain.sheet_with_preset(preset) if preset else self.sheet(task)
+        if edits:
+            sheet = apply_preset(sheet, edits)
+        with self.db.tx():
+            self.db.bump(task_id, human_sheet=json.dumps(sheet, ensure_ascii=False))
+            self.db.event(task_id, "sheet_replaced", {"preset": preset, "edits": edits})
+        return f"{task_id}: автономия переставлена"
 
     def edit_text(self, task_id: str, text: str) -> str:
         """Переписать ТЗ заявки. Только пока она в бэклоге: у поехавшей задачи

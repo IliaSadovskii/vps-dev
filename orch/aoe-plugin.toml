@@ -109,16 +109,6 @@ max = 64000
 advanced = true
 
 [[settings]]
-key = "overtime_min"
-label = "Ход считается долгим после, мин"
-description = "Сторож отмечает такой ход в журнале. Кому это разбирать — дело побочных ролей."
-type = "integer"
-default = 45
-min = 5
-max = 600
-advanced = true
-
-[[settings]]
 key = "default_chain"
 label = "Цепочка по умолчанию"
 type = "string"

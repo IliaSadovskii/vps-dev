@@ -318,3 +318,18 @@ def _current(task: Path, **kw):
     data = json.loads((task / "current.json").read_text(encoding="utf-8"))
     data.update(kw)
     (task / "current.json").write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_тз_со_ссылкой_в_папку_чужой_задачи_отвергается(tmp_path, monkeypatch):
+    """Папка задачи не в git: ссылка на неё протухает молча, и роль ищет
+    файл, которого нет (прогон T24)."""
+    import pytest
+
+    from orch.cli import Refused, check_text
+
+    check_text("обычный текст без ссылок")
+    check_text("свои файлы можно: .orch/T7/artifacts/plan.md", "T7")
+
+    with pytest.raises(Refused) as exc:
+        check_text("подробности — .orch/T19/artifacts/remarks.md", "T23")
+    assert ".orch/T19/" in str(exc.value)

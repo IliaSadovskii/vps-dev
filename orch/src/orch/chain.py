@@ -51,10 +51,6 @@ class Step:
     human_after: bool | list[str] = False
     human_ask: bool = True
     human_moves: list[str] = field(default_factory=list)
-    # Пути, которые шагу можно трогать. Пусто — ограничений нет и сторож
-    # молчит: выдумывать границы за владельца движок не станет
-    # (`ASIDE-PLAN.md` §2, сторожа).
-    zone: list[str] = field(default_factory=list)
     max_runs: int = DEFAULT_MAX_RUNS
 
     @property
@@ -84,6 +80,9 @@ class Chain:
     name: str
     includes: list[str] = field(default_factory=list)
     presets: dict[str, dict] = field(default_factory=dict)
+    # Зачем этот пресет: одна строка на каждый. Мастер выбирает по смыслу, а
+    # не по созвучию имени (`hands-off` — не автономия, прогон T24).
+    preset_notes: dict[str, str] = field(default_factory=dict)
     steps: list[Step] = field(default_factory=list)
     source: str = ""
 
@@ -120,6 +119,13 @@ class Chain:
         return apply_preset(sheet, self.presets[preset])
 
 
+def _preset_body(value) -> dict:
+    """Тело пресета: плоский словарь ручек или `{when: …, set: {…}}`."""
+    if isinstance(value, dict) and "set" in value:
+        return dict(value.get("set") or {})
+    return dict(value or {})
+
+
 def apply_preset(sheet: dict[str, dict], preset: dict) -> dict[str, dict]:
     """Наложить пресет на лист. Ключ `шаг.after`, `шаг.ask`, `*` — все шаги."""
     out = {k: dict(v) for k, v in sheet.items()}
@@ -149,7 +155,12 @@ def parse(text: str, source: str = "") -> Chain:
     chain = Chain(
         name=str(name),
         includes=list(raw.get("includes") or []),
-        presets=dict(raw.get("presets") or {}),
+        presets={k: _preset_body(v) for k, v in (raw.get("presets") or {}).items()},
+        preset_notes={
+            k: str(v.get("when") or "")
+            for k, v in (raw.get("presets") or {}).items()
+            if isinstance(v, dict) and "set" in v
+        },
         steps=steps,
         source=text,
     )
@@ -202,7 +213,6 @@ def _step(raw: dict, chain_name: str) -> Step:
         human_after=human.get("after", False),
         human_ask=bool(human.get("ask", True)),
         human_moves=list(human.get("moves") or []),
-        zone=[str(z) for z in (raw.get("zone") or [])],
         max_runs=int(limits.get("max_runs", DEFAULT_MAX_RUNS)),
     )
 
@@ -332,6 +342,7 @@ def catalog() -> list[dict]:
                     for s in chain.steps
                 ],
                 "presets": sorted(chain.presets),
+                "preset_notes": dict(chain.preset_notes),
                 "gates": [s.id for s in chain.steps if s.human_after],
             }
         )

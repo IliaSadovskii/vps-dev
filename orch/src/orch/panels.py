@@ -733,8 +733,20 @@ def _note_blocks(db: Db, task) -> list[dict]:
     остановила бы задачу, а сказать было бы негде.
     """
     out: list[dict] = []
+    мелочь: list[dict] = []
     for note in db.notes(task_id=task["id"]):
         if note["state"] not in ("open", "sent"):
+            continue
+        if note["severity"] == "log":
+            # Мелочь не занимает пол-экрана: строкой, без кнопок. Владельцу
+            # она придёт сводкой в конце прогона.
+            мелочь.append({
+                "kind": "row",
+                "label": note["title"],
+                "sublabel": (note["body"] or "")[:200],
+                "value": "к сведению",
+                "value_tone": "muted",
+            })
             continue
         options = json.loads(note["options"] or "[]")
         buttons = [{"label": "Ничего не делать", "method": "orch.note",
@@ -761,6 +773,12 @@ def _note_blocks(db: Db, task) -> list[dict]:
                 "actions": buttons,
             }
         )
+    if мелочь:
+        out.append({
+            "kind": "section",
+            "title": f"Замечания наладчика ({len(мелочь)})",
+            "children": мелочь,
+        })
     return out
 
 

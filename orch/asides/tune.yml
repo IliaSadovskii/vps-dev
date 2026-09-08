@@ -22,37 +22,36 @@ memory: machine
 
 # `hold` — остановить ход и позвать владельца. Двигать задачу, принимать за
 # владельца и откатывать файлы Наладчик не может: это необратимо.
-rights: [read, hold, patch, pr]
-requires: [notify]
+rights: [read, hold, patch, pr, memory]
 chains: [deep, blueprint]
+# Восемь шагов Deep по два пробуждения плюс запас. Предел не ради экономии:
+# роль, разбуженная собственным событием, иначе крутится по кругу.
 budget: { runs_per_task: 24, max_live: 1 }
 
 wakes:
   # Проверка входа почти бесплатна и ловит кривой промпт до того, как роль
   # потратила час. Разбирать тут нечего — сверка, значит Sonnet.
   - on: [run_started]
+    title: Шаг начал ход
     prompt: role-tune-start
     run: { agent: claude, model: sonnet, effort: low }
 
   # Разбор хода: скелет транскрипта, выбранный исход, годится ли выход для
   # следующего шага. Здесь нужно суждение — Opus.
   - on: [run_ended]
+    title: Шаг закончил ход
     prompt: role-tune-review
-    run: { agent: claude, model: "opus[1m]", effort: medium }
-
-  # Сторожа движка: ход идёт слишком долго, стоит слишком дорого, сессия в
-  # ошибке. Повод посмотреть немедленно, а не после хода.
-  - on: [watch_overtime, watch_cost, aside_lost, watch_out_of_bounds, watch_pushed, watch_file_clash]
-    prompt: role-tune-alarm
     run: { agent: claude, model: "opus[1m]", effort: medium }
 
   # Владелец ответил на находку: исполнить то, что он выбрал.
   - on: [note_decided]
+    title: Вы ответили на находку
     prompt: role-tune-apply
     run: { agent: claude, model: "opus[1m]", effort: medium }
 
   # Прогон кончился: сводка владельцу и напоминание про PR с правками.
   # Заодно признак жизни — иначе «чисто» не отличить от «сломался и молчит».
   - on: [done, closed]
+    title: Прогон кончился — сводка
     prompt: role-tune-summary
     run: { agent: claude, model: sonnet, effort: medium }
