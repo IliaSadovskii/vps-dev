@@ -88,6 +88,10 @@ def down(task, name: str) -> str:
     навсегда. Блок отдаём после остановки — `ports free` иначе откажет, и
     это правильно: отданный блок достался бы соседу вместе с контейнерами.
     """
+    if not name:
+        # Имени блока нет — гасить нечего, а `ports free` без имени только
+        # напечатает свою справку в журнал.
+        return ""
     root = Path(task["worktree_path"] or "")
     errors = []
     if root.is_dir() and compose_file(root):
