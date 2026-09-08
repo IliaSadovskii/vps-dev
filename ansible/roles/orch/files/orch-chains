@@ -719,8 +719,7 @@ function roleCard(a, data) {
   card.append(el('p', { class: 'hint' },
     el('b', { text: 'Что умеет: ' }),
     document.createTextNode(a.rights.map((r) => RIGHTS[r] || r).join(', ')
-      + ' · следит за: ' + (SCOPE[a.scope] || a.scope)
-      ));
+      + ' · следит за: ' + (SCOPE[a.scope] || a.scope))));
 
   // Поводы: когда роль просыпается и чем разбирает. Ключ события
   // («run_ended») владельцу ничего не говорит — показываем имя из описания.
