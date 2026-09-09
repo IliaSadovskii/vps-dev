@@ -88,6 +88,11 @@ def пропуск(engine, run_id):
     return engine.db.aside_run(run_id)["token"] or ""
 
 
+def повод_текст(fake):
+    """Промпт последнего повода: следом за ним могла уехать заводка переписки."""
+    return next(t for _, t in reversed(fake.prompts) if "Твой ход" in t)
+
+
 def асайды(engine):
     return [dict(r) for r in engine.db.conn.execute(
         "SELECT a.name, r.wake, r.session_id, r.ended_at FROM aside_run r "
@@ -146,6 +151,219 @@ def test_ход_роли_закрывается_когда_сессия_осво
     assert sid not in fake.archived, "сессия живёт до владельца"
 
 
+def test_сессия_разбора_уезжает_в_архив_после_хода(engine, fake, repo, tune):
+    """Повод со своей сессией: ход сдан — карточка не висит в сайдбаре (T26).
+
+    Иначе за прогон их набегает по две на шаг, и живой работы в сайдбаре не
+    видно. Найденное роль уже сложила в базу, сводку соберёт общая переписка.
+    """
+    (tune / "tune.yml").write_text(
+        SPEC.replace(
+            "  - on: [run_started]\n    prompt: role-tune-start",
+            "  - on: [run_started]\n    prompt: role-tune-start\n    session: fresh",
+        ),
+        encoding="utf-8",
+    )
+    start(engine, repo)
+    engine.reconcile()
+    sid = асайды(engine)[0]["session_id"]
+    engine.reconcile()
+    assert sid not in fake.archived, "сессию убрали, пока ход ещё идёт"
+
+    fake.finish_turn(sid)
+    engine.reconcile()          # ход закрылся
+    engine.reconcile()          # уборка увидела свободную сессию
+    assert sid in fake.archived, "сессия разбора осталась в сайдбаре"
+
+
+def test_роль_с_поводами_в_своих_сессиях_заводит_общую_переписку(engine, fake, repo, tune):
+    """Карточка роли в сайдбаре есть с первого хода, а не с конца прогона.
+
+    Поводы `session: fresh` живут в своих сессиях и уезжают в архив; без
+    общей переписки роль на задаче не видна вовсе, а первое слово владельца
+    прилетело бы агенту, который не знает, кто он.
+    """
+    (tune / "tune.yml").write_text(
+        SPEC.replace(
+            "  - on: [run_started]\n    prompt: role-tune-start",
+            "  - on: [run_started]\n    prompt: role-tune-start\n    session: fresh",
+        ),
+        encoding="utf-8",
+    )
+    task_id = start(engine, repo)
+    engine.reconcile()
+    дом = engine.db.aside_live("tune", task_id)["session_id"]
+    разбор = асайды(engine)[0]["session_id"]
+    assert дом and дом != разбор, "общей переписки роли нет"
+    заводка = [t for target, t in fake.prompts if target == дом]
+    assert заводка and "Ты побочная роль" in заводка[0], "правила в переписку не уехали"
+
+    fake.finish_turn(разбор)
+    engine.reconcile()
+    engine.reconcile()
+    assert разбор in fake.archived and дом not in fake.archived
+
+
+def test_повод_в_общую_переписку_не_шлёт_правила_заново(engine, fake, repo, tune):
+    """Правила уехали при заводке переписки; повторять их каждый повод незачем."""
+    (tune / "tune.yml").write_text(
+        SPEC.replace(
+            "  - on: [run_started]\n    prompt: role-tune-start",
+            "  - on: [run_started]\n    prompt: role-tune-start\n    session: fresh",
+        ),
+        encoding="utf-8",
+    )
+    task_id = start(engine, repo)
+    engine.reconcile()
+    дом = engine.db.aside_live("tune", task_id)["session_id"]
+    разбор = асайды(engine)[0]["session_id"]
+
+    run_id = int(engine.db.aside_runs_open()[0]["id"])
+    engine.aside_note(run_id, "tell", "Находка", "…", [], пропуск(engine, run_id))
+    engine.aside_done(run_id, "done", пропуск(engine, run_id))
+    engine.note_decision(1, "say", "Правь только промпт", who="telegram")
+    fake.finish_turn(разбор)
+    fake.finish_turn(дом)
+    for _ in range(4):
+        engine.reconcile()
+
+    в_дом = [t for target, t in fake.prompts if target == дом]
+    assert len(в_дом) >= 2, "повод не доехал в общую переписку"
+    assert "Ты побочная роль" not in в_дом[1], "правила уехали второй раз"
+    assert "Твоя находка, на которую ответил владелец" in в_дом[1]
+
+
+def test_строка_роли_помечена_знаком_и_бейджем(engine, fake, repo, tune):
+    """Роль стоит в сайдбаре среди шагов задачи — её видно по знаку и бейджу."""
+    from orch import panels
+
+    (tune / "tune.yml").write_text(
+        SPEC.replace("title: Наладчик", 'title: Наладчик\nicon: "🔧"'), encoding="utf-8"
+    )
+    start(engine, repo)
+    engine.reconcile()
+    sid = асайды(engine)[0]["session_id"]
+    assert fake.rows[sid]["title"].startswith("🔧 T"), fake.rows[sid]["title"]
+    assert "· Наладчик" in fake.rows[sid]["title"], "имя роли после номера задачи"
+
+    assert fake.pinned.get(sid) is True, "строка роли не закреплена наверху группы"
+
+    бейдж = panels.aside_row_badge("Наладчик", "Шаг начал ход", идёт=True)
+    assert бейдж["text"] == "шаг начал ход" and бейдж["tone"] == "info"
+    дом = panels.aside_row_badge("Наладчик")
+    assert дом["text"] == "наладчик" and дом["tone"] == "neutral"
+
+
+def test_сводка_зовёт_владельца_а_обычный_ход_молчит(engine, fake, repo, tune):
+    """Пуш по `Idle` — только на сводке конца прогона, иначе он на каждый шаг."""
+    (tune / "tune.yml").write_text(
+        SPEC.replace(
+            "  - on: [done, closed]\n    prompt: role-tune-summary",
+            "  - on: [done, closed]\n    attention: true\n    prompt: role-tune-summary",
+        ),
+        encoding="utf-8",
+    )
+    до_конца(engine, fake, repo)          # задача доезжает до конца
+    engine.reconcile()
+    ходы = асайды(engine)
+    обычный = [x for x in ходы if x["wake"] != "role-tune-summary"]
+    assert обычный and fake.notify.get(обычный[0]["session_id"]) is False, (
+        "обычный ход зовёт владельца пушем"
+    )
+    for _ in range(12):                   # роль ходит по одному поводу за раз
+        сводка = [x for x in асайды(engine) if x["wake"] == "role-tune-summary"]
+        if сводка:
+            break
+        for открытый in engine.db.aside_runs_open():
+            fake.finish_turn(открытый["session_id"])
+        engine.reconcile()
+    assert сводка, "сводка не завелась"
+    assert fake.notify.get(сводка[-1]["session_id"]) is True
+
+
+def test_прошлые_находки_дают_только_сводке(engine, fake, repo, tune):
+    """Памяти между прогонами нет — вместо неё лента находок, и только итогу.
+
+    Разбору одного хода чужие прогоны не нужны: это контекст на каждом шаге.
+    """
+    from tests.test_engine import monkey_chain, turn
+
+    (tune / "tune.yml").write_text(
+        SPEC.replace(
+            "  - on: [done, closed]\n    prompt: role-tune-summary",
+            "  - on: [done, closed]\n    history: 5\n    prompt: role-tune-summary",
+        ),
+        encoding="utf-8",
+    )
+    monkey_chain(engine)
+    task_id = start(engine, repo)
+    engine.reconcile()
+    run_id = int(engine.db.aside_runs_open()[0]["id"])
+    engine.aside_note(run_id, "tell", "Промпт врёт про заход", "…", [], пропуск(engine, run_id))
+    engine.aside_done(run_id, "done", пропуск(engine, run_id))
+    engine.note_decision(1, "continue", "", who="panel")
+
+    # Находка «прошлой задачи»: своя в ленту итога не идёт, а чужая — идёт.
+    прошлая = engine.create_task(
+        chain_name="t", project_path=str(repo), text="прошлая задача", backlog=True
+    )
+    with engine.db.tx():
+        engine.db.conn.execute(
+            "UPDATE aside_note SET task_id = ? WHERE id = 1", (прошлая,)
+        )
+
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "ok")
+    task = engine.db.task(task_id)
+    engine.button(task_id, task["revision"], "accept")
+    engine.reconcile()
+    turn(engine, fake, task_id, "three", 1, None)
+
+    разбор = [t for _, t in fake.prompts if "Твой ход" in t][-1]
+    assert "Твои находки по прошлым задачам" not in разбор
+
+    for _ in range(12):
+        сводка = [x for x in асайды(engine) if x["wake"] == "role-tune-summary"]
+        if сводка:
+            break
+        for sid in list(fake.rows):        # роль ходит по одному поводу за раз
+            fake.finish_turn(sid)
+        engine.reconcile()
+    assert сводка, "сводка не завелась"
+    текст = [t for target, t in fake.prompts if target == сводка[-1]["session_id"]][-1]
+    assert "Твои находки по прошлым задачам" in текст
+    assert прошлая in текст and "Промпт врёт про заход" in текст
+
+
+def test_роль_кончается_вместе_с_задачей(engine, fake, repo, tune, monkeypatch):
+    """Иначе запись роли `live` навсегда, а её переписка — строкой в сайдбаре."""
+    import orch.engine as eng
+
+    task_id = до_конца(engine, fake, repo)
+    engine.reconcile()
+    aside = engine.db.aside_live("tune", task_id)
+    assert aside is not None, "роль не заводилась"
+    сессии = {r["session_id"] for r in engine.db.aside_runs_of(int(aside["id"]))}
+
+    monkeypatch.setattr(eng, "ARCHIVE_AFTER_H", 0)
+    engine.archive_old()
+    assert engine.db.aside_live("tune", task_id) is None, "роль осталась живой"
+    assert engine.db.aside(int(aside["id"]))["status"] == "done"
+    for sid in сессии:
+        assert sid in fake.archived, "переписка роли осталась в сайдбаре"
+
+
+def test_общая_переписка_роли_в_архив_не_уезжает(engine, fake, repo, tune):
+    """Разговор владельца с ролью живёт весь прогон, чем бы ход ни кончился."""
+    start(engine, repo)
+    engine.reconcile()
+    sid = асайды(engine)[0]["session_id"]
+    fake.finish_turn(sid)
+    engine.reconcile()
+    engine.reconcile()
+    assert sid not in fake.archived
+
+
 # ── находки ──────────────────────────────────────────────────────────────
 def test_находка_с_остановкой_ставит_задачу_на_владельца(engine, fake, repo, tune):
     task_id = start(engine, repo)
@@ -201,7 +419,7 @@ def test_промпт_склеен_из_общих_правил_роли_и_ко
     spec = mod.load_by_name("tune")
     объект = mod.Aside(
         name=spec.name, scope=spec.scope, wakes=spec.wakes, workspace="task",
-        memory=spec.memory, rights=spec.rights, includes=spec.includes,
+        rights=spec.rights, includes=spec.includes,
         chains=(), budget={}, enabled=True, title=spec.title,
     )
     monkeypatch.setattr(mod, "enabled", lambda: [объект])
@@ -210,22 +428,21 @@ def test_промпт_склеен_из_общих_правил_роли_и_ко
     with engine.db.tx():                       # роль уже была включена до задачи
         engine.db.cursor_set("tune", "", 0)
     task_id = start(engine, repo)
-    текст = fake.prompts[-1][1]
+    текст = повод_текст(fake)
     assert "Ты побочная роль" in текст, "общие правила не приклеились"
     assert "Наладчик: проверка входа" in текст, "промпт повода не приклеился"
     assert "Твой ход: `A1`" in текст and task_id in текст
-    assert "Права, выданные тебе: hold, memory, patch, pr, read" in текст
+    assert "Права, выданные тебе: hold, patch, pr, read" in текст
 
 
-# ── копилка (Менеджер проекта) ───────────────────────────────────────────
+# ── Менеджер проекта ─────────────────────────────────────────────────────
 MANAGER = """
 name: manager
 title: Менеджер проекта
 scope: project
 enabled: true
 workspace: task
-memory: project
-rights: [read, memory, patch, pr]
+rights: [read, patch, pr]
 mirror: worktree:project
 wakes:
   - on: [done, closed]
@@ -267,34 +484,6 @@ def test_менеджер_просыпается_на_законченной_з�
     assert engine.db.task(task_id)["status"] == "done"
     engine.reconcile()
     assert [x["wake"] for x in асайды(engine)] == ["role-manager"]
-
-
-def test_менеджеру_сказали_где_его_копилка(engine, fake, repo, manager, tmp_path):
-    до_конца(engine, fake, repo)
-    engine.reconcile()
-    текст = fake.prompts[-1][1]
-    assert "Твоя копилка:" in текст and "manager-" in текст
-
-
-def test_копилка_проекта_дописывается(engine, fake, repo, manager, tmp_path):
-    до_конца(engine, fake, repo)
-    engine.reconcile()
-    run_id = int(engine.db.aside_runs_open()[0]["id"])
-    assert "записано" in engine.aside_memory(
-        run_id, "Отвергли вариант с очередью: нет воркера.", пропуск(engine, run_id)
-    )
-    файлы = list((tmp_path / "memory").glob("manager-*.md"))
-    assert файлы and "нет воркера" in файлы[0].read_text(encoding="utf-8")
-
-
-def test_без_права_копилки_роль_не_пишет(engine, fake, repo, manager):
-    (manager / "manager.yml").write_text(
-        MANAGER.replace("[read, memory, patch, pr]", "[read]"), encoding="utf-8"
-    )
-    до_конца(engine, fake, repo)
-    engine.reconcile()
-    run_id = int(engine.db.aside_runs_open()[0]["id"])
-    assert "не выдано право" in engine.aside_memory(run_id, "…", пропуск(engine, run_id))
 
 
 # ── находки ревью: пропуск, курсор, бюджет, канал ────────────────────────
@@ -367,6 +556,7 @@ def test_наладчику_дают_живое_дерево_и_копию_по�
     subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "init"], cwd=живое,
                    check=True, env=env)
 
+    monkeypatch.setattr(mod, "user_dir", lambda: tmp_path / "нет")   # живую машину не читаем
     spec = mod.Aside(
         name="tune", scope="run", wakes=mod.load_by_name("tune").wakes,
         workspace=f"repo:{живое}", mirror=f"worktree:{живое}",
@@ -378,7 +568,7 @@ def test_наладчику_дают_живое_дерево_и_копию_по�
         engine.db.cursor_set("tune", "", 0)
 
     start(engine, repo)
-    текст = fake.prompts[-1][1]
+    текст = повод_текст(fake)
     assert f"Живое дерево, правки в нём действуют сразу: `{живое}`" in текст
     assert "Твоя копия под коммиты и ветку:" in текст
     assert "-orch/aside/tune" in текст, "копия под коммиты не отдельная"

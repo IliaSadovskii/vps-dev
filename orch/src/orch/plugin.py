@@ -35,6 +35,8 @@ class Worker:
         # не гонять 64 КиБ каждые пять секунд.
         self.drawn: dict[tuple[str, str], str] = {}
         self.session_of_task: dict[str, str] = {}
+        self.aside_of_session: dict[str, dict] = {}
+        self.redrawn_at = 0.0
         # Клик приходит в своём потоке (иначе воркер запирает сам себя на
         # ответе хоста), а соединение SQLite привязано к потоку, в котором
         # создано. Поэтому всё, что трогает базу, кладётся в очередь и
@@ -287,6 +289,7 @@ class Worker:
             force,
         )
         self._refresh_session_map(db)
+        self._refresh_aside_map(db)
         for session_id, task_id in self.session_of_task.items():
             task = db.task(task_id)
             if task is None:
@@ -310,6 +313,15 @@ class Worker:
                 session_id,
                 force,
             )
+        for session_id, роль in self.aside_of_session.items():
+            self._push_if_changed(
+                ("row-badge", session_id),
+                panels.aside_row_badge(роль["title"], роль["wake"], роль["live"]),
+                "row-badge",
+                "step",
+                session_id,
+                force,
+            )
 
     def _push_if_changed(self, key, payload, slot, ident, session_id, force) -> None:
         blob = json.dumps(payload, ensure_ascii=False, sort_keys=True)
@@ -317,6 +329,39 @@ class Worker:
             return
         self.drawn[key] = blob
         self.ui_set(slot, ident, payload, session_id=session_id)
+
+    def _refresh_aside_map(self, db: Db) -> None:
+        """Какая сессия какой побочной роли принадлежит.
+
+        Роль в карте задач не числится: её сессии не заходы цепочки. Без
+        отдельной карты её строка в сайдбаре остаётся без бейджа, а рядом со
+        строками шагов это читается как «шаг, о котором движок молчит».
+        """
+        карта: dict[str, dict] = {}
+        for row in db.conn.execute(
+            "SELECT name, session_id FROM aside "
+            "WHERE status = 'live' AND session_id IS NOT NULL AND session_id <> ''"
+        ):
+            карта[row["session_id"]] = {
+                "title": self._aside_title(row["name"]), "wake": "", "live": False,
+            }
+        for row in db.conn.execute(
+            "SELECT a.name AS name, r.session_id AS session_id, r.wake AS wake, "
+            "r.ended_at AS ended_at FROM aside_run r JOIN aside a ON a.id = r.aside_id "
+            "WHERE r.session_id IS NOT NULL AND r.session_id <> '' ORDER BY r.id"
+        ):
+            spec = self.engine.spec_of(row["name"]) if self.engine else None
+            wake = spec.wake_by_prompt(row["wake"]) if spec else None
+            карта[row["session_id"]] = {
+                "title": self._aside_title(row["name"]),
+                "wake": (wake.title if wake else "") or row["wake"],
+                "live": not row["ended_at"],
+            }
+        self.aside_of_session = карта
+
+    def _aside_title(self, name: str) -> str:
+        spec = self.engine.spec_of(name) if self.engine else None
+        return (spec.title if spec else "") or name
 
     def _refresh_session_map(self, db: Db) -> None:
         """Какая сессия какой задаче принадлежит — из заходов, без догадок.
@@ -406,6 +451,12 @@ class Worker:
         settings = self._settings_object()
         return Engine(Db(), Aoe(self.base_url), settings)
 
+    # Как часто перерисовывать панели целиком, даже если ничего не менялось.
+    # Хост иногда теряет состояние плагина (переподключение клиента), и тогда
+    # бейджи и панели исчезают до следующего изменения — а его может не быть
+    # часами. Полная перерисовка дёшева и лечит это сама.
+    REDRAW_EVERY_S = 60.0
+
     def tick(self) -> None:
         if self.settings_dirty.is_set():
             self.settings_dirty.clear()
@@ -425,7 +476,10 @@ class Worker:
             self.engine.reconcile()
         except Exception as exc:  # noqa: BLE001 — воркер не падает от одной задачи
             log(f"orch-plugin: проход движка упал: {exc!r}")
-        self.push_all(force=clicked)
+        пора = time.time() - self.redrawn_at >= self.REDRAW_EVERY_S
+        if пора:
+            self.redrawn_at = time.time()
+        self.push_all(force=clicked or пора)
 
 
 def _next_knobs(after: bool, ask: bool) -> tuple[bool, bool]:

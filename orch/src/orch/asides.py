@@ -20,7 +20,7 @@ from .db import STATE_DIR
 # `answer` (ответить роли вместо владельца) убрано вместе с Тимлидом:
 # ворота стоят там, где владелец боится чужого решения, и подставлять туда
 # ещё одного агента на той же модели незачем.
-RIGHTS = {"read", "hold", "move", "patch", "pr", "memory"}
+RIGHTS = {"read", "hold", "move", "patch", "pr"}
 SCOPES = {"run", "task", "project", "machine"}
 
 
@@ -46,6 +46,14 @@ class Wake:
     # и обрывает то, что там идёт, — движок бил бы по разговору владельца, а
     # реплика владельца по разбору.
     session: str = "shared"
+    # Позвать владельца, когда ход этого повода закончится: AoE пришлёт пуш
+    # по `Idle`. Для сводки конца прогона — единственного хода, который
+    # владелец должен прочитать обязательно.
+    attention: bool = False
+    # Сколько находок роли по прошлым задачам вклеить в задание. Ставится
+    # только там, где роль подводит итог: разбору одного хода чужие прогоны
+    # не нужны, а контекст стоят денег каждый ход.
+    history: int = 0
 
 
 @dataclass(frozen=True)
@@ -62,13 +70,15 @@ class Aside:
     # ветку — в живом дереве лежит незакоммиченная работа владельца, и
     # коммитить там нельзя (`ASIDE-PLAN.md` §7).
     mirror: str = ""
-    memory: str = "machine"
     rights: frozenset[str] = field(default_factory=lambda: frozenset({"read"}))
     includes: tuple[str, ...] = ("common-aside",)   # общие правила побочных ролей
     chains: tuple[str, ...] = ()          # пусто — на всех цепочках
     budget: dict = field(default_factory=dict)
     enabled: bool = False
     title: str = ""
+    # Знак роли в титуле сессии: её строка стоит в сайдбаре вперемешку со
+    # строками шагов задачи, и глазу нужно за что-то зацепиться.
+    icon: str = ""
     source: str = ""
 
     def kinds(self) -> tuple[str, ...]:
@@ -80,6 +90,13 @@ class Aside:
     def wake_for(self, kind: str) -> Wake | None:
         for wake in self.wakes:
             if kind in wake.on:
+                return wake
+        return None
+
+    def wake_by_prompt(self, prompt: str) -> Wake | None:
+        """Повод по имени промпта: именно его движок пишет в `aside_run.wake`."""
+        for wake in self.wakes:
+            if wake.prompt == prompt:
                 return wake
         return None
 
@@ -190,6 +207,8 @@ def parse(text: str, source: str = "?") -> Aside:
                 model=str(run.get("model") or "sonnet"),
                 effort=(str(run["effort"]) if run.get("effort") else None),
                 session=session,
+                attention=bool(item.get("attention")),
+                history=int(item.get("history") or 0),
             )
         )
     if not wakes:
@@ -212,12 +231,12 @@ def parse(text: str, source: str = "?") -> Aside:
         wakes=tuple(wakes),
         workspace=workspace,
         mirror=str(raw.get("mirror") or ""),
-        memory=str(raw.get("memory") or "machine"),
         rights=frozenset(rights),
         includes=tuple(str(c) for c in (raw.get("includes") or ["common-aside"])),
         chains=tuple(str(c) for c in (raw.get("chains") or [])),
         budget=dict(raw.get("budget") or {}),
         enabled=bool(raw.get("enabled", False)),
         title=str(raw.get("title") or ""),
+        icon=str(raw.get("icon") or ""),
         source=source,
     )

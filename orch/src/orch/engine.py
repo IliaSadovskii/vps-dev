@@ -53,7 +53,7 @@ from .db import (
 from .aside_role import AsideMixin
 from .buttons import ButtonsMixin
 from .inbox import InboxMixin
-from .naming import GROUP_ROOT, session_title, slug, title_from
+from .naming import group_of, session_title, slug, title_from
 from .promptctx import PromptContextMixin, artifact_sha
 from .stand_role import StandMixin
 from .wizard import WizardMixin
@@ -68,6 +68,11 @@ from .workspace import (
 )
 
 ARCHIVE_AFTER_H = 168
+
+# Сколько раз роли могут сами отправить работу назад, прежде чем движок
+# позовёт владельца. Возврат назад открывает шагам ниже новый круг, поэтому
+# без этого счёта петля «ревью → реализация → ревью» ничем не ограничена.
+MAX_LOOPS = 3
 
 # Пробуждение уснувшего воркера: сколько раз пробуем и сколько ждём после
 # отправки промпта, прежде чем считать воркер уснувшим.
@@ -248,7 +253,6 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
         branch: str | None = None,
         base: str | None = None,
         author: str | None = None,
-        from_backlog: str | None = None,
         stand: bool = False,
         notify_gates: bool = False,
     ) -> str:
@@ -284,7 +288,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
                     text,
                     str(Path(project_path).resolve()),
                     branch,
-                    f"{GROUP_ROOT}/{task_id} · {title}",
+                    group_of(project_path, task_id, title),
                     None,
                     BACKLOG if backlog else QUEUED,
                     json.dumps(sheet, ensure_ascii=False),
@@ -303,13 +307,76 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
         # Один мастер — одна заявка: заведя её (в очередь или в бэклог),
         # мастер уходит в архив. Следующая идея — новый мастер.
         self.move_wizard_to(task_id, str(Path(project_path).resolve()))
-        if from_backlog:
-            # Заявка, из которой выросла задача, закрывается: работа поехала
-            # под новым номером, держать её ветку за старой незачем.
-            old = self.db.task(from_backlog)
-            if old is not None and old["status"] == BACKLOG:
-                self.button(old["id"], old["revision"], "close")
-                self.db.event(task_id, "from_backlog", {"task": from_backlog})
+        return task_id
+
+    def release_task(
+        self,
+        task_id: str,
+        *,
+        chain_name: str | None = None,
+        preset: str | None = None,
+        sheet_edits: dict | None = None,
+        text: str | None = None,
+        title: str | None = None,
+        branch: str | None = None,
+        base: str | None = None,
+        stand: bool | None = None,
+        notify_gates: bool | None = None,
+    ) -> str:
+        """Отпустить заявку из бэклога в работу — ту же самую, не копию.
+
+        Номер задачи не меняется от бэклога до PR: заявку уже назвали в
+        панели, в ветке и в разговоре, и новый номер на выходе из бэклога рвал
+        эту связь — ветка `t29-…` оказывалась под задачей `T35`.
+
+        Мастер спрашивает владельца о цепочке, ветке и автономии и приносит
+        сюда только то, что владелец назвал: неназванное остаётся тем, что
+        уже записано в заявке.
+        """
+        task = self.db.task(task_id)
+        if task is None:
+            raise ChainError(f"{task_id}: такой задачи нет")
+        if task["status"] != BACKLOG:
+            raise ChainError(f"{task_id}: не в бэклоге ({task['status']})")
+
+        # Цепочка перечитывается с диска: заявка могла пролежать в бэклоге
+        # неделю, и замороженный `chain_yaml` уже не то, что поедет.
+        chain = load_chain(chain_path(chain_name or task["chain"]))
+        if chain_name and chain.name != task["chain"] or preset:
+            sheet = chain.sheet_with_preset(preset)
+        else:
+            sheet = json.loads(task["human_sheet"] or "{}") or chain.sheet_with_preset(None)
+        if sheet_edits:
+            sheet = apply_preset(sheet, sheet_edits)
+
+        text = text if text is not None else (task["text"] or "")
+        title = title or (title_from(text) if text != (task["text"] or "") else task["title"])
+        branch = branch or task["branch"] or f"{task_id.lower()}-{slug(title)}"
+        with self.db.tx():
+            self.db.bump(
+                task_id,
+                chain=chain.name,
+                chain_yaml=chain.source,
+                title=title,
+                text=text,
+                branch=branch,
+                group_path=group_of(task["project_path"], task_id, title),
+                status=QUEUED,
+                human_sheet=json.dumps(sheet, ensure_ascii=False),
+                base_branch=base or task["base_branch"],
+                stand_wanted=int(task["stand_wanted"]) if stand is None else (1 if stand else 0),
+                notify_gates=(
+                    int(task["notify_gates"]) if notify_gates is None
+                    else (1 if notify_gates else 0)
+                ),
+                wait_reason=None,
+            )
+            self.db.event(
+                task_id,
+                "released",
+                {"chain": chain.name, "preset": preset, "branch": branch, "base": base},
+            )
+        self.move_wizard_to(task_id, task["project_path"])
         return task_id
 
     def promote_queue(self) -> None:
@@ -357,6 +424,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
             error = ""
             if task["worktree_path"] and Path(task["worktree_path"]).is_dir():
                 error = remove_worktree(task["project_path"], task["worktree_path"])
+            self.close_task_asides(task["id"])
             with self.db.tx():
                 self.db.bump(task["id"], archived_at=now())
                 self.db.event(
@@ -376,6 +444,9 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
                 continue
             for sid in self.db.sessions_of_task(task["id"]):
                 self.aoe.archive(sid)
+            # Вместе с задачей кончаются и приставленные к ней побочные роли:
+            # их переписки иначе копятся в сайдбаре по одной на задачу.
+            self.close_task_asides(task["id"])
             # Рабочую копию убирает движок: AoE о ней не знает. Ветку не
             # трогаем — в ней вся работа задачи.
             error = ""
@@ -390,7 +461,10 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
     # ── старт захода ─────────────────────────────────────────────────────
     def begin_run(self, task, chain: Chain) -> None:
         step = chain.step(task["step"])
-        done_runs = self.runs_this_cycle(task, step)
+        if self.loops_this_cycle(task, chain) > MAX_LOOPS:
+            self.stop(task["id"], "loops")
+            return
+        done_runs = self.runs_this_cycle(task, step, chain)
         if len(done_runs) >= self.runs_allowed(task, step):
             self.stop(task["id"], "max_runs")
             return
@@ -675,7 +749,9 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
                 title=session_title(
                     task["id"], step.id, run["n"], step.context in ("own", "continue")
                 ),
-                group=task["group_path"] or f"{GROUP_ROOT}/{task['id']}",
+                group=task["group_path"] or group_of(
+                    task["project_path"], task["id"], task["title"]
+                ),
                 idempotency_key=key,
             )
         except AoeError as exc:
@@ -999,7 +1075,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
             self.stand_if_wanted(self.db.task(task["id"]))
         else:
             row = self.db.task(task["id"])
-            self.aoe.set_color(session.id, "green" if row["status"] == ST_DONE else "amber")
+            self.aoe.set_color(session.id, "green" if row["status"] == ST_DONE else None)
             if closed_now:
                 # Задача доведена до конца: стенд больше некому смотреть, а
                 # он держит порты, контейнеры и тома.
@@ -1100,25 +1176,70 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
         entry = self.sheet(task).get(step.id) or {}
         return bool(entry.get("ask", step.human_ask))
 
-    def runs_this_cycle(self, task, step: Step) -> list:
-        """Заходы шага после последнего движения владельца.
+    def runs_this_cycle(self, task, step: Step, chain: Chain | None = None) -> list:
+        """Заходы шага с начала текущего круга.
 
-        Предел держит роли, а не владельца: вернув работу назад, он начинает
-        круг заново, и шаги ниже по цепочке должны идти со своим полным
-        пределом. Иначе задача, отправленная в Реализацию с воротов, тут же
-        встаёт «предел заходов» на Ревью кода, потратившем заходы в прошлом
-        круге (T19, 18:59).
+        Предел держит роль, застрявшую на месте, а не работу, честно
+        отправленную назад. Круг начинается заново от любого движения
+        **назад по цепочке** — и от кнопки владельца, и от исхода роли:
+        шагам ниже возвращается их полный предел.
+
+        Без этого задача, которую Ревью кода вернуло в Реализацию исходом
+        `tests`, тут же вставала «предел заходов» на самом Ревью, потратившем
+        заходы в прошлом круге (T26 и T35, 2026-09-09). То же самое было с
+        возвратом кнопкой владельца (T19).
         """
         runs = [r for r in self.db.runs_of_step(task["id"], step.id) if not r["void_at"]]
-        row = self.db.conn.execute(
-            "SELECT at FROM move WHERE task_id = ? AND actor = 'human' ORDER BY id DESC LIMIT 1",
-            (task["id"],),
-        ).fetchone()
-        if row is None:
+        начало = self.cycle_start(task, step, chain)
+        if not начало:
             return runs
         # Строго позже: заход, начатый в ту же секунду, что и движение
-        # владельца, — это и есть заход нового круга.
-        return [r for r in runs if (r["started_at"] or "") > row["at"]]
+        # назад, — это и есть заход нового круга.
+        return [r for r in runs if (r["started_at"] or "") > начало]
+
+    def cycle_start(self, task, step: Step, chain: Chain | None = None) -> str:
+        """С какого момента считать заходы этого шага.
+
+        Круг шага начинается, когда работа ушла **выше него** по цепочке —
+        неважно, кнопкой владельца или исходом роли. Возврат на сам шаг
+        (Правки просят Ревью кода перечитать) круг не открывает: именно от
+        такого хождения на месте предел и поставлен.
+        """
+        chain = chain or self.chain_of(task)
+        порядок = {s.id: i for i, s in enumerate(chain.steps)} if chain else {}
+        мой = порядок.get(step.id)
+        for row in self.db.conn.execute(
+            "SELECT actor, to_step, at FROM move WHERE task_id = ? ORDER BY id DESC",
+            (task["id"],),
+        ):
+            if row["actor"] == "human":
+                return row["at"]
+            куда = порядок.get(row["to_step"])
+            if мой is not None and куда is not None and куда < мой:
+                return row["at"]
+        return ""
+
+    def loops_this_cycle(self, task, chain: Chain | None = None) -> int:
+        """Сколько раз роли сами отправляли работу назад после хода владельца.
+
+        Круг, открытый ролью, снимает предел с шагов ниже — значит петля
+        «ревью → реализация → ревью» больше ничем не ограничена. Ограничение
+        здесь: несколько кругов подряд без владельца — уже не работа, а
+        хождение по кругу, и решать это ему.
+        """
+        chain = chain or self.chain_of(task)
+        порядок = {s.id: i for i, s in enumerate(chain.steps)} if chain else {}
+        счёт = 0
+        for row in self.db.conn.execute(
+            "SELECT actor, from_step, to_step FROM move WHERE task_id = ? ORDER BY id DESC",
+            (task["id"],),
+        ):
+            if row["actor"] == "human":
+                break
+            откуда, куда = порядок.get(row["from_step"]), порядок.get(row["to_step"])
+            if откуда is not None and куда is not None and куда < откуда:
+                счёт += 1
+        return счёт
 
     def runs_allowed(self, task, step: Step) -> int:
         """Предел заходов плюс те, что владелец добавил кнопкой «Ещё заход».
@@ -1155,10 +1276,20 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
                 self.mark_stopped(self.db.task(task_id), run["session_id"])
             self.stand_if_wanted(self.db.task(task_id))
 
+    # Красный — «сломалось»: роль не сдала ход, файла нет, сессия в ошибке.
+    # Ворота, вопрос и предел заходов — не поломка, там всё сработало как
+    # написано, и красная строка на последней сессии вводила в заблуждение:
+    # виноватым выглядел шаг, который отработал чисто (T35, Реализация 2).
+    ПОЛОМКА = {
+        "no_signal", "artifact", "bad_outcome", "error", "no_worker",
+        "path_mismatch", "chain_broken", "no_worktree", "branch_busy", "abandoned",
+    }
+
     def mark_stopped(self, task, session_id: str | None) -> None:
         if not session_id:
             return
-        self.aoe.set_color(session_id, "red")
+        сломано = (task["wait_reason"] or "") in self.ПОЛОМКА
+        self.aoe.set_color(session_id, "red" if сломано else "amber")
         self.aoe.set_urgent(session_id, True)
 
     def quiet_others(self, task, keep: str | None) -> None:
@@ -1177,7 +1308,10 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
                 continue
             self.aoe.set_urgent(sid, False)
             self.aoe.set_notify(sid, False)
-            self.aoe.set_color(sid, "green")
+            # Цвет снимаем, а не красим зелёным: рядом с синей точкой
+            # «не прочитано» два кружка на строке читались как рябь, а зелёный
+            # у прошедшего шага ничего не говорил — он и так закончен.
+            self.aoe.set_color(sid, None)
 
     def dress(self, task, chain: Chain, step: Step, session_id: str, run_n: int = 1) -> None:
         """Титул, группа, цвет, пуш — ставятся каждый раз, они безвредны."""
@@ -1186,7 +1320,10 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
             session_id,
             session_title(task["id"], step.id, run_n, step.context in ("own", "continue")),
         )
-        self.aoe.set_group(session_id, task["group_path"] or f"{GROUP_ROOT}/{task['id']}")
+        self.aoe.set_group(
+            session_id,
+            task["group_path"] or group_of(task["project_path"], task["id"], task["title"]),
+        )
         self.aoe.set_color(session_id, "amber")
         self.aoe.set_urgent(session_id, False)
         # Уведомление ставим щедро: шаг, который может встать хоть на каком-то

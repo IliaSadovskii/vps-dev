@@ -173,6 +173,22 @@ def test_task_new_start_ставит_в_очередь(task, capsys, tmp_path, m
     assert request["backlog"] is False
 
 
+def test_task_start_кладёт_заявку_на_ту_же_задачу(task, capsys, tmp_path, monkeypatch):
+    """Мастер отпускает заявку, а не заводит вторую: номер в заявке — её."""
+    import orch.cli as mod
+
+    inbox = tmp_path / "inbox"
+    monkeypatch.setattr(mod, "INBOX", inbox)
+    code, text = run(["task", "start", "T29", "--chain", "deep", "--preset", "auto"], capsys)
+    assert code == 0 and "T29" in text
+    request = json.loads(list(inbox.glob("*.json"))[0].read_text(encoding="utf-8"))
+    assert request["kind"] == "start" and request["task"] == "T29"
+    assert request["chain"] == "deep" and request["preset"] == "auto"
+    # Неназванное приходит пустым: в базе останется то, что записано в заявке.
+    assert request["text"] is None and request["branch"] is None
+    assert request["stand"] is None and request["notify"] is None
+
+
 def _fake_db(tmp_path, monkeypatch, **fields):
     """База только на чтение: одна задача с нужным статусом."""
     import sqlite3

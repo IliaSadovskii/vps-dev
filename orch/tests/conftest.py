@@ -43,6 +43,7 @@ class FakeAoe:
         self.notify: dict[str, bool] = {}
         self.urgent: dict[str, bool] = {}
         self.archived: list[str] = []
+        self.pinned: dict[str, bool] = {}
         self.by_key: dict[str, str] = {}
         self.acp_ids: dict[str, str] = {}
         self.next_id = 1
@@ -131,6 +132,7 @@ class FakeAoe:
     # оформление
     def set_title(self, sid, title): self.titles[sid] = title
     def set_group(self, sid, group): self.rows[sid]["group_path"] = group
+    def set_pinned(self, sid, pinned): self.pinned[sid] = pinned
     def set_color(self, sid, color): self.colors[sid] = color
     def set_notify(self, sid, on_idle): self.notify[sid] = on_idle
     def set_urgent(self, sid, urgent): self.urgent[sid] = urgent

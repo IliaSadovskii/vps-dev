@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from orch.chain import ChainError
 from orch.chain import parse as parse_chain
 from orch.db import ABANDONED, BACKLOG, DONE, QUEUED, RUNNING, WAITING
 
@@ -35,6 +36,42 @@ steps:
     artifact: [three.md]
     next: done
 """
+
+
+# Цепочка, где шаг просит перечитать сам себя: возврат на себя круг не
+# открывает, поэтому предел заходов бьётся именно здесь.
+CHAIN_SELF = """
+name: t
+steps:
+  - id: one
+    run: {agent: claude, model: haiku}
+    artifact: [one.md]
+    next:
+      again: one
+      ok: two
+    limits: {max_runs: 2}
+  - id: two
+    run: {agent: claude, model: haiku}
+    artifact: [two.md]
+    next: done
+"""
+
+
+def monkey_chain_self(engine):
+    import orch.engine as mod
+
+    mod.load_chain = lambda path: parse_chain(CHAIN_SELF, source="тест")
+
+
+def start_self(engine, repo):
+    """Задача на цепочке с возвратом на себя: `start` ставит обычную."""
+    engine.db.conn.execute("DELETE FROM task")
+    monkey_chain_self(engine)
+    task_id = engine.create_task(
+        chain_name="t", project_path=str(repo), text="Проверить предел."
+    )
+    engine.reconcile()
+    return task_id
 
 
 # ── подмостки ────────────────────────────────────────────────────────────
@@ -140,7 +177,8 @@ def test_прямой_путь_до_конца(engine, fake, repo):
     # У шага two ворота на исходе ok: задача встала.
     task = engine.db.task(task_id)
     assert task["status"] == WAITING and task["wait_reason"] == "gate"
-    assert fake.colors[sid] == "red"
+    # Ворота — не поломка: жёлтый. Красный остаётся для «сломалось».
+    assert fake.colors[sid] == "amber"
 
     engine.button(task_id, task["revision"], "accept", comment="Годится.")
     engine.reconcile()
@@ -151,35 +189,53 @@ def test_прямой_путь_до_конца(engine, fake, repo):
     assert task["status"] == DONE and task["closed_at"]
 
 
-def test_возврат_ролью_и_предел_заходов(engine, fake, repo):
+def test_возврат_ролью_открывает_шагу_новый_предел(engine, fake, repo):
+    """Работа, честно отправленная выше по цепочке, начинает круг заново.
+
+    Иначе задача, которую Ревью кода вернуло в Реализацию, тут же встаёт
+    «предел заходов» на самом Ревью, потратившем заходы в прошлом круге
+    (T26 и T35, 2026-09-09).
+    """
     task_id = start(engine, repo)
-    sid = turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "back")     # two вернул работу на one
+    turn(engine, fake, task_id, "one", 2, None)
+    turn(engine, fake, task_id, "two", 2, "back")
+    turn(engine, fake, task_id, "one", 3, None)
 
-    # two возвращает на one
-    sid = turn(engine, fake, task_id, "two", 1, "back")
-    assert engine.db.task(task_id)["step"] == "one"
+    task = engine.db.task(task_id)
+    assert task["status"] == RUNNING and task["step"] == "two"
+    assert len(engine.db.runs_of_step(task_id, "two")) == 3, "третий заход не начался"
 
-    # one сдаёт снова, two идёт вторым заходом
-    sid = turn(engine, fake, task_id, "one", 2, None)
-    assert engine.db.task(task_id)["step"] == "two"
 
-    # второй заход two снова back — предел заходов у two равен 2
-    sid = turn(engine, fake, task_id, "two", 2, "back")
-    assert engine.db.task(task_id)["step"] == "one"
+def test_петля_возвратов_упирается_во_владельца(engine, fake, repo, monkeypatch):
+    """Круг, открытый ролью, снимает предел — значит петлю держит свой счёт."""
+    import orch.engine as mod
 
-    sid = turn(engine, fake, task_id, "one", 3, None)
+    monkeypatch.setattr(mod, "MAX_LOOPS", 2)
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    for заход in (1, 2, 3):
+        turn(engine, fake, task_id, "two", заход, "back")
+        turn(engine, fake, task_id, "one", заход + 1, None)
+    task = engine.db.task(task_id)
+    assert task["status"] == WAITING and task["wait_reason"] == "loops"
+
+
+def test_возврат_на_себя_круг_не_открывает(engine, fake, repo):
+    """Шаг, который просит перечитать сам себя, упирается в свой предел."""
+    task_id = start_self(engine, repo)
+    turn(engine, fake, task_id, "one", 1, "again")
+    turn(engine, fake, task_id, "one", 2, "again")
     task = engine.db.task(task_id)
     assert task["status"] == WAITING and task["wait_reason"] == "max_runs"
 
 
 def test_ещё_заход_на_пределе_поднимает_предел(engine, fake, repo):
     """Кнопка на пределе заходов обязана дать заход, а не остановить снова."""
-    task_id = start(engine, repo)
-    turn(engine, fake, task_id, "one", 1, None)
-    turn(engine, fake, task_id, "two", 1, "back")
-    turn(engine, fake, task_id, "one", 2, None)
-    turn(engine, fake, task_id, "two", 2, "back")
-    turn(engine, fake, task_id, "one", 3, None)
+    task_id = start_self(engine, repo)
+    turn(engine, fake, task_id, "one", 1, "again")
+    turn(engine, fake, task_id, "one", 2, "again")
     task = engine.db.task(task_id)
     assert task["wait_reason"] == "max_runs"
 
@@ -187,8 +243,26 @@ def test_ещё_заход_на_пределе_поднимает_предел(e
     engine.reconcile()
     engine.reconcile()
     task = engine.db.task(task_id)
-    assert task["status"] == RUNNING and task["step"] == "two"
-    assert len(engine.db.runs_of_step(task_id, "two")) == 3
+    assert task["status"] == RUNNING and task["step"] == "one"
+    assert len(engine.db.runs_of_step(task_id, "one")) == 3
+
+
+def test_цена_хода_читается_из_ленты_кадров(engine, fake, repo):
+    """Лента AoE отдаёт `frames`; по выдуманному ключу `events` цена терялась."""
+    from orch.aoe import Aoe
+
+    aoe = Aoe.__new__(Aoe)
+    aoe.call = lambda *a, **kw: {
+        "frames": [
+            {"event": {"UsageUpdated": {"usage": {"used": 1, "cost": None}}}},
+            {"event": {"UsageUpdated": {"usage": {"used": 2, "cost_usd": 1.25}}}},
+        ]
+    }
+    assert Aoe.usage(aoe, "s1")[0] == 1.25
+
+    # Поставщик цены не сообщает (подписка) — честный `None`, а не ноль.
+    aoe.call = lambda *a, **kw: {"frames": [{"event": {"UsageUpdated": {"usage": {"cost": None}}}}]}
+    assert Aoe.usage(aoe, "s1")[0] is None
 
 
 def test_нет_сигнала(engine, fake, repo):
@@ -822,18 +896,80 @@ def test_мастер_из_бэклога_видит_заявку_и_режим(
     assert "orch task edit" in text and "Задачу не запускай" in text
 
 
-def test_задача_из_заявки_закрывает_её(engine, fake, repo):
-    """Мастер заводит задачу с `--from-backlog`: заявка не должна остаться."""
+def test_группа_задачи_начинается_с_имени_проекта(engine, fake, repo):
+    """`vps-dev/T35 · …`: с осью «по группе» задачи проекта встают рядом."""
+    monkey_chain(engine)
+    task_id = start(engine, repo)
+    task = engine.db.task(task_id)
+    assert task["group_path"] == f"{repo.name}/{task_id} · {task['title']}"
+    assert fake.rows[session_of(engine, task_id)]["group_path"] == task["group_path"]
+
+
+def test_заявка_из_бэклога_едет_под_своим_номером(engine, fake, repo):
+    """Номер задачи не меняется от бэклога до PR.
+
+    Заявку уже назвали в панели, в ветке и в разговоре: новый номер на выходе
+    из бэклога рвал эту связь — ветка `t29-…` оказывалась под задачей `T35`.
+    """
     monkey_chain(engine)
     заявка = engine.create_task(
         chain_name="t", project_path=str(repo), text="черновик", backlog=True
     )
-    новая = engine.create_task(
-        chain_name="t", project_path=str(repo), text="настоящая", from_backlog=заявка
+    ветка = engine.db.task(заявка)["branch"]
+    поехала = engine.release_task(заявка, chain_name="t", preset=None, text="настоящая")
+    assert поехала == заявка, "заявка поехала под новым номером"
+    задача = engine.db.task(заявка)
+    assert задача["status"] in ("queued", "running")
+    assert задача["text"] == "настоящая", "мастер не переписал ТЗ"
+    assert задача["branch"] == ветка, "ветку заявки потеряли"
+    assert задача["title"] == "настоящая", "титул остался от черновика"
+    assert len(engine.db.tasks()) == 1, "рядом осталась вторая карточка"
+    assert [e["kind"] for e in engine.db.events(заявка)].count("created") == 1
+
+
+def test_отпущенная_заявка_держит_неназванное(engine, fake, repo):
+    """Мастер приносит только то, что владелец назвал; остальное — из заявки."""
+    monkey_chain(engine)
+    заявка = engine.create_task(
+        chain_name="t", project_path=str(repo), text="черновик", backlog=True,
+        branch="pr-42", base="release", notify_gates=True,
     )
-    assert engine.db.task(заявка)["status"] == "closed"
-    assert engine.db.task(заявка)["status"] == "closed"
-    assert engine.db.task(новая)["status"] in ("queued", "running")
+    лист = engine.db.task(заявка)["human_sheet"]
+    engine.release_task(заявка)
+    задача = engine.db.task(заявка)
+    assert задача["branch"] == "pr-42" and задача["base_branch"] == "release"
+    assert задача["notify_gates"] == 1, "звать в Telegram перестали молча"
+    assert задача["human_sheet"] == лист, "лист автономии переписали без спроса"
+    assert задача["text"] == "черновик"
+
+
+def test_заявка_start_из_inbox_отпускает_задачу(engine, fake, repo):
+    """Путь целиком: `orch task start` → файл в `inbox/` → движок."""
+    import orch.inbox as inbox_mod
+
+    monkey_chain(engine)
+    заявка = engine.create_task(
+        chain_name="t", project_path=str(repo), text="черновик", backlog=True
+    )
+    (inbox_mod.INBOX / "z.json").write_text(
+        json.dumps({"kind": "start", "task": заявка, "chain": "t", "text": "настоящая"}),
+        encoding="utf-8",
+    )
+    engine.take_inbox()
+    assert engine.db.task(заявка)["status"] == QUEUED
+    assert engine.db.task(заявка)["text"] == "настоящая"
+    assert len(engine.db.tasks()) == 1
+
+
+def test_отпустить_можно_только_заявку(engine, fake, repo):
+    """Поехавшую задачу вторым `start` не перезапустить."""
+    monkey_chain(engine)
+    поехала = start(engine, repo)
+    with pytest.raises(ChainError) as exc:
+        engine.release_task(поехала)
+    assert "не в бэклоге" in str(exc.value)
+    with pytest.raises(ChainError):
+        engine.release_task("T404")
 
 
 def test_тз_правится_только_у_заявки(engine, fake, repo):
@@ -878,7 +1014,7 @@ def test_сессия_с_группой_orch_становится_мастеро
         idempotency_key="ручная",
     )
     engine.reconcile()
-    assert fake.rows[session.id]["group_path"] == "orch/мастер"
+    assert fake.rows[session.id]["group_path"] == f"{repo.name}/мастер"
     assert fake.titles[session.id].startswith("Мастер · ")
     text = [t for target, t in fake.prompts if target == session.id][0]
     assert "Мастер задачи" in text and "Цепочки:" in text
@@ -903,7 +1039,7 @@ def test_метка_orch_читается_и_из_титула(engine, fake, rep
         title="orch правки в списке", group="", idempotency_key="титул",
     )
     engine.reconcile()
-    assert fake.rows[session.id]["group_path"] == "orch/мастер"
+    assert fake.rows[session.id]["group_path"] == f"{repo.name}/мастер"
     assert [t for target, t in fake.prompts if target == session.id]
 
 
@@ -1015,7 +1151,7 @@ def test_мастер_уходит_в_архив_заведя_задачу(engin
     """Рядом с ходами его строку не поставить, а вечная строка в стороне — сор."""
     monkey_chain(engine)
     sid = engine.open_wizard(str(repo))
-    assert fake.rows[sid]["group_path"] == "orch/мастер"
+    assert fake.rows[sid]["group_path"] == f"{repo.name}/мастер"
     task_id = engine.create_task(chain_name="t", project_path=str(repo), text="новая")
     assert sid in fake.archived
     assert fake.titles[sid] == f"{task_id} · постановка"
@@ -1108,7 +1244,7 @@ def test_стенд_поднимает_роль_а_движок_даёт_ей_п
     assert engine.button(task_id, task["revision"], "stand") == "роль «Стенд» поднимает окружение"
     task = engine.db.task(task_id)
     sid = engine.stand_session(task_id)
-    assert sid and fake.rows[sid]["title"] == f"{task_id} · стенд"
+    assert sid and fake.rows[sid]["title"] == f"🐳 {task_id} · стенд"
     prompt = [t for target, t in fake.prompts if target == sid][0]
     assert "# Стенд" in prompt and task["stand"] in prompt and "8020" in prompt
 

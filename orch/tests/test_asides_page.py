@@ -61,7 +61,7 @@ def test_права_со_страницы_не_меняются(page):
     edits["enabled"] = True
     page.aside_save("tune", edits)
     assert sorted(aside_mod.load_by_name("tune").rights) == [
-        "hold", "memory", "patch", "pr", "read",
+        "hold", "patch", "pr", "read",
     ]
 
 

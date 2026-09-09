@@ -169,8 +169,8 @@ def test_общий_файл_шага_не_едет_ко_всем(engine, fake, 
         )
         return promptbuild.build(ctx)
 
-    assert "Кто трогал тесты" in text_of("one")
-    assert "Кто трогал тесты" not in text_of("two")
+    assert "Тест приходит своим коммитом" in text_of("one")
+    assert "Тест приходит своим коммитом" not in text_of("two")
 
 
 def test_правило_ворот_только_шагу_с_воротами(engine, fake, repo):
@@ -232,22 +232,14 @@ def test_где_ты_называет_ветку_и_стартовый_комм�
     assert "начинается с коммита `f270e9f2cb4a`" in text
 
 
-def test_копилка_проекта_попадает_в_блок_задачи(engine, fake, repo, tmp_path, monkeypatch):
-    """Копилка, которую никто не читает, — работа в стол."""
-    import orch.promptctx as mod
-    from orch.naming import slug
+def test_памяти_между_задачами_в_промпте_нет(engine, fake, repo):
+    """Копилки сняты (2026-09-09): шаг не возит в промпте заметки прошлых задач.
 
-    memory = tmp_path / "memory"
-    memory.mkdir()
-    (memory / f"manager-{slug(str(repo))}.md").write_text(
-        "\n## 2026-09-01\n\nОтвергли очередь: некому держать воркер.\n", encoding="utf-8"
-    )
-    monkeypatch.setattr(mod, "STATE_DIR", memory.parent, raising=False)
-    monkeypatch.setattr("orch.db.STATE_DIR", memory.parent)
-
+    Что должно пережить задачу — уезжает в документацию проекта через PR
+    Менеджера, а не копится в файле, который вклеивается в каждый ход.
+    """
     from tests.test_engine import start
 
     start(engine, repo)
     текст = fake.prompts[-1][1]
-    assert "## Память проекта" in текст
-    assert "Отвергли очередь" in текст
+    assert "Память проекта" not in текст

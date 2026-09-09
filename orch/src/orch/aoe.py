@@ -147,13 +147,19 @@ class Aoe:
     def usage(self, sid: str) -> tuple[float | None, float | None]:
         """Стоимость и длительность последнего хода из событий `UsageUpdated`.
 
-        Цену сообщает только Claude; чего нет — `None`, движок не выдумывает.
+        Ответ ленты — `{"frames": [...]}`; ключ `events` был выдумкой, и из-за
+        него цена не читалась никогда: ни у одного захода в базе её не было
+        (2026-09-09). Цену сообщает не всякий поставщик: на подписке Claude
+        `cost` приходит пустым, и тогда здесь честный `None`, а не ноль.
         """
         try:
-            data = self.call("GET", f"/api/sessions/{sid}/acp/replay?view=raw&limit=200")
+            data = self.call("GET", f"/api/sessions/{sid}/acp/replay?view=raw&limit=400")
         except AoeError:
             return None, None
-        events = data if isinstance(data, list) else data.get("events", [])
+        if isinstance(data, list):
+            events = data
+        else:
+            events = data.get("frames") or data.get("events") or []
         cost = duration = None
         for ev in events:
             blob = json.dumps(ev, ensure_ascii=False)
@@ -354,6 +360,10 @@ class Aoe:
     # ── оформление (всегда безвредно, ставится каждый проход) ────────────
     def set_title(self, sid: str, title: str) -> None:
         self._quiet("PATCH", f"/api/sessions/{sid}", {"title": title})
+
+    def set_pinned(self, sid: str, pinned: bool) -> None:
+        """Закрепить строку сессии наверху её группы в сайдбаре."""
+        self._quiet("PATCH", f"/api/sessions/{sid}/pin", {"pinned": pinned})
 
     def set_group(self, sid: str, group: str) -> None:
         self._quiet("PATCH", f"/api/sessions/{sid}/group", {"group": group})

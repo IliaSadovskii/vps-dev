@@ -3,9 +3,31 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
-# Корень групп оркестратора в сайдбаре: `orch/T12 · титул`, `orch/мастер`.
+# Корень групп без задачи (роль на всю машину): `orch/побочные`. Группа
+# задачи и мастера строится от имени проекта — см. `group_of`.
 GROUP_ROOT = "orch"
+
+
+def project_name(project_path: str) -> str:
+    """Имя проекта для группы — имя каталога репозитория, не ветки.
+
+    Сайдбар с осью «по группе» сортирует группы по имени, поэтому проект
+    стоит первым: задачи одного проекта встают рядом, а не перемешиваются с
+    чужими по номеру.
+    """
+    return Path(project_path).name or "проект"
+
+
+def group_of(project_path: str, task_id: str, title: str) -> str:
+    """Группа сессий задачи: `vps-dev/T35 · Завести рядом с deep…`."""
+    return f"{project_name(project_path)}/{task_id} · {title}"
+
+
+def wizard_group(project_path: str) -> str:
+    """Группа мастера: рядом с задачами своего проекта, а не в общей куче."""
+    return f"{project_name(project_path)}/мастер"
 
 
 def title_from(text: str) -> str:

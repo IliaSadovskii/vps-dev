@@ -59,18 +59,37 @@ def test_бейдж_строки_сессии_говорит_зачем_смот
     assert "нет сигнала" in badge["text"] and "one" in badge["text"]
 
 
-def test_бейдж_прошлого_шага_не_врёт_про_ворота(engine, fake, repo):
-    """У задачи много сессий: пометка «ворота» на строке прошлого шага — ложь."""
+def test_строка_прошлого_шага_молчит(engine, fake, repo):
+    """У задачи много сессий: бейдж есть только у текущей.
+
+    Пометка «ворота» на строке прошлого шага была бы ложью, а его исход стоил
+    второй строки высоты в сайдбаре на каждой из восьми строк задачи.
+    """
     task_id = start(engine, repo)
     первая = session_of(engine, task_id)
     turn(engine, fake, task_id, "one", 1, None)     # шаг сдан, задача на шаге two
     task = engine.db.task(task_id)
     chain = engine.chain_of(task)
-    прошлая = panels.row_badge(engine.db, task, первая, chain)
-    assert прошлая["text"].startswith("one →")
-    assert прошлая["tone"] == "neutral"
+    assert panels.row_badge(engine.db, task, первая, chain) == {}
     текущая = panels.row_badge(engine.db, task, session_of(engine, task_id), chain)
     assert текущая["text"].startswith("two")
+
+
+def test_предел_заходов_объясняет_что_случилось(engine, fake, repo):
+    """На воротах владельцу нужен контекст, а не только кнопки.
+
+    «Предел заходов» — самая непонятная остановка: шаг отработал чисто, а
+    задача встала. Без «как сюда пришли» решать не из чего.
+    """
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    with engine.db.tx():
+        engine.db.bump(task_id, status="waiting", wait_reason="max_runs", step="one")
+    task = engine.db.task(task_id)
+    текст = panels._what_to_decide(engine.db, task)
+    assert "Как сюда пришли: one 1 →" in текст
+    assert "уже сходил" in текст
+    assert "Ещё заход" in текст and "Принять как есть" in текст
 
 
 def test_ждущая_задача_первой_и_с_кнопками(engine, fake, repo):
@@ -237,12 +256,11 @@ def test_ворота_не_называют_владельцу_исход(engine
 
 def test_на_пределе_заходов_владелец_выбирает_исход(engine, fake, repo):
     """«Принять как есть» не повторяет прошлый исход: он и ведёт по кругу."""
-    task_id = start(engine, repo)
-    turn(engine, fake, task_id, "one", 1, None)
-    turn(engine, fake, task_id, "two", 1, "back")
-    turn(engine, fake, task_id, "one", 2, None)
-    turn(engine, fake, task_id, "two", 2, "back")
-    turn(engine, fake, task_id, "one", 3, None)
+    from tests.test_engine import start_self
+
+    task_id = start_self(engine, repo)
+    turn(engine, fake, task_id, "one", 1, "again")
+    turn(engine, fake, task_id, "one", 2, "again")
     assert engine.db.task(task_id)["wait_reason"] == "max_runs"
 
     labels = [a["label"] for a in _actions(panels.home_pane(engine.db))]
@@ -251,7 +269,7 @@ def test_на_пределе_заходов_владелец_выбирает_и
 
     task = engine.db.task(task_id)
     engine.button(task_id, task["revision"], "accept_as_is", target="ok")
-    assert engine.db.task(task_id)["step"] == "three"
+    assert engine.db.task(task_id)["step"] == "two"
 
 
 def test_путь_задачи_ведёт_в_сессии_заходов(engine, fake, repo):

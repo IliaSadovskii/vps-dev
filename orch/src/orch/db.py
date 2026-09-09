@@ -35,6 +35,7 @@ WAIT_REASONS = {
     "gate": "ворота: ждёт вашего решения",
     "no_signal": "роль закончила ход, не подав сигнал",
     "max_runs": "предел заходов на шаг",
+    "loops": "роли гоняют задачу по кругу",
     "error": "сессия в ошибке",
     "ask": "роль спрашивает вас",
     "bad_outcome": "роль назвала исход не из списка",
@@ -352,6 +353,23 @@ class Db:
         return list(self.conn.execute(
             "SELECT r.*, a.name, a.scope, a.scope_key, a.task_id FROM aside_run r "
             "JOIN aside a ON a.id = r.aside_id WHERE r.ended_at IS NULL ORDER BY r.id"
+        ))
+
+    def aside_runs_in_sessions(self, sids: list[str]) -> list[sqlite3.Row]:
+        """Закрытые ходы, чьи сессии ещё живы в сайдбаре.
+
+        Нужно уборке: сессия повода живёт один ход, и после сдачи её карточка
+        уходит в архив. Список живых сессий даёт AoE, поэтому убранные сюда
+        уже не попадают и второй раз не архивируются.
+        """
+        if not sids:
+            return []
+        места = ", ".join("?" * len(sids))
+        return list(self.conn.execute(
+            "SELECT r.*, a.name, a.session_id AS aside_session FROM aside_run r "
+            "JOIN aside a ON a.id = r.aside_id "
+            f"WHERE r.ended_at IS NOT NULL AND r.session_id IN ({места}) ORDER BY r.id",
+            sids,
         ))
 
     def aside_run_sent(self, run_id: int, session_id: str | None = None) -> None:
