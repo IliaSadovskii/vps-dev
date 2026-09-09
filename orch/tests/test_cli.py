@@ -222,6 +222,19 @@ def test_gate_передаёт_решение_владельца_сказанн�
     assert request["revision"] == 3
 
 
+def test_gate_back_clean_доезжает_до_движка(task, capsys, tmp_path, monkeypatch):
+    """`--clean` — это другая кнопка, а не пометка в комментарии."""
+    import orch.cli as mod
+
+    inbox = tmp_path / "inbox"
+    monkeypatch.setattr(mod, "INBOX", inbox)
+    _fake_db(tmp_path, monkeypatch)
+    code, _ = run(["gate", "back", "one", "--clean"], capsys)
+    assert code == 0
+    request = json.loads(next(inbox.glob("*.json")).read_text(encoding="utf-8"))
+    assert request["action"] == "back_clean" and request["target"] == "one"
+
+
 def test_gate_не_двигает_задачу_которая_не_ждёт(task, capsys, tmp_path, monkeypatch):
     """Иначе роль сдвинет себя сама, решив, что владелец доволен."""
     import orch.cli as mod

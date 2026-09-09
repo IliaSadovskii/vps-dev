@@ -687,3 +687,30 @@ def test_снятая_из_бэклога_задача_никого_не_буд�
     engine.reconcile()
     assert engine.db.task(task_id)["status"] == "closed"
     assert not [x for x in асайды(engine) if x["wake"] == "role-tune-summary"]
+
+
+def test_вариант_вернуть_начисто_исполняется_движком(engine, fake, repo, tune):
+    """Словарь вариантов и кнопки владельца — одно и то же действие.
+
+    Вариант, который движок не умеет исполнить, — это находка, повисшая в
+    воздухе: владелец нажал, а ничего не случилось.
+    """
+    from tests.test_engine import ws_of
+
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "ok")
+    assert engine.db.task(task_id)["wait_reason"] == "gate"
+
+    aside_id = engine.db.aside_open("tune", "run", task_id, task_id)
+    with engine.db.tx():
+        engine.db.note_add(
+            aside_id, None, task_id, "hold", "План опирался на старое ревью", "…",
+            [{"verb": "back_clean", "target": "one", "label": "вернуть на one начисто"}],
+        )
+    ответ = engine.note_decision(1, "back_clean", "one", who="panel")
+
+    assert "начисто" in ответ
+    assert engine.db.task(task_id)["step"] == "one"
+    assert not (ws_of(engine, task_id).artifacts / "two.md").exists()
+    assert all(r["void_at"] for r in engine.db.runs_of_step(task_id, "two"))

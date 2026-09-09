@@ -138,3 +138,34 @@ def test_нет_транскриптов_обзор_пустой(transcripts, tm
     wt = tmp_path / "нет"
     d = dg.digest(wt)
     assert d["turns"] == 0 and d["tools"] == [] and d["final"] == ""
+
+
+def test_названная_сессия_читается_одна(transcripts, tmp_path):
+    """В одной копии живут сессия шага и разговор владельца с прошлой ролью.
+
+    Пока `session` не сужал выборку, чужие вызовы приезжали в скелет хода и
+    роль выглядела нарушителем чужих правил (T26, прогон 125).
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    папка = transcripts / dg.project_slug(wt)
+    write(папка, "своя", [
+        assistant("2026-09-07T10:00:00Z",
+                  [{"type": "tool_use", "id": "a", "name": "Read", "input": {"file_path": "/своё"}}]),
+    ])
+    write(папка, "чужая", [
+        assistant("2026-09-07T10:00:30Z",
+                  [{"type": "tool_use", "id": "b", "name": "Edit", "input": {"file_path": "/чужое"}}]),
+    ])
+
+    свой = dg.digest(wt, session="своя")
+    цели = [t.get("target") for t in свой["tools"]]
+    assert "/своё" in цели and "/чужое" not in цели
+
+    # Без имени сессии берётся всё, что попало в окно, — как раньше.
+    оба = dg.digest(wt)
+    assert len(оба["tools"]) == 2
+
+    # Файла с таким именем нет — обзор пустой, а не «всё, что нашлось».
+    пусто = dg.digest(wt, session="потерялась")
+    assert not пусто["tools"] and not пусто["turns"]
