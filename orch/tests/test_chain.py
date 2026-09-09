@@ -136,38 +136,6 @@ def test_ревью_возвращает_автору_и_автор_прыгае
     assert deep.step("plan-review").single_next == "plan"
 
 
-def test_пресеты_deep_покрывают_обе_стороны_автономии():
-    """Пресет меняет и ворота, и вопросы: «не трогай меня» — это и то, и другое."""
-    from orch.chain import load_by_name
-
-    chain = load_by_name("deep")
-    # Пресеты различаются одним: сколько раз останавливают владельца.
-    # Частные наборы («план со мной», «тихо») собираются руками — держать
-    # под них имена значит заставлять выбирать из похожего.
-    assert set(chain.presets) == {"default", "auto", "step-by-step"}
-    # `default` — именованное «как записано в шагах»: пустой набор ручек,
-    # чтобы он не мог разойтись с самой цепочкой.
-    assert chain.sheet_with_preset("default") == chain.default_sheet()
-    assert all(chain.preset_notes.get(name) for name in chain.presets), "пресет без пояснения"
-
-    # Ворота и вопросы ходят парой: шаг либо с обоими, либо без обоих. У
-    # самих шагов причины свои (вопрос на Реализации — признак плохого
-    # плана), поэтому правило проверяется на пресетах, а не на цепочке.
-    for name in set(chain.presets) - {"default"}:
-        sheet = chain.sheet_with_preset(name)
-        for step, knobs in sheet.items():
-            assert bool(knobs["after"]) == bool(knobs["ask"]), f"{name}: {step} врозь"
-
-    до_pr = chain.sheet_with_preset("auto")
-    assert [s for s, v in до_pr.items() if v["after"]] == ["pr"]
-
-    под_присмотром = chain.sheet_with_preset("step-by-step")
-    assert all(v["after"] and v["ask"] for v in под_присмотром.values())
-
-    под_присмотром = chain.sheet_with_preset("step-by-step")
-    assert all(v["after"] and v["ask"] for v in под_присмотром.values())
-
-
 def test_пресет_можно_писать_плоско_и_с_пояснением():
     """Старый формат (плоский словарь) читается как прежде."""
     from orch.chain import parse
@@ -185,8 +153,6 @@ def test_пресет_можно_писать_плоско_и_с_пояснен�
     assert chain.preset_notes["новый"] == "«зачем»"
 
 
-КОРОТКИЕ = ("quick", "standard")
-
 ШАГИ_КОРОТКИХ = {
     "quick": ["implementation", "code-review", "review-fixes", "pr"],
     "standard": [
@@ -199,6 +165,10 @@ def test_пресет_можно_писать_плоско_и_с_пояснен�
         "pr",
     ],
 }
+
+КОРОТКИЕ = tuple(ШАГИ_КОРОТКИХ)
+# Пресеты — общий инвариант всех дорожек разработки, а не свойство коротких.
+ДОРОЖКИ_РАЗРАБОТКИ = ("deep", *КОРОТКИЕ)
 
 
 @pytest.mark.parametrize("имя, шаги", sorted(ШАГИ_КОРОТКИХ.items()))
@@ -244,18 +214,27 @@ def test_ворота_коротких_цепочек_стоят_где_обещ
     ]
 
 
-@pytest.mark.parametrize("имя", КОРОТКИЕ)
-def test_пресеты_коротких_цепочек(имя):
-    """Те же три ответа на «где владелец участвует», что и в deep."""
-    from orch.chain import load_by_name
+@pytest.mark.parametrize("имя", ДОРОЖКИ_РАЗРАБОТКИ)
+def test_пресеты_покрывают_обе_стороны_автономии(имя):
+    """Пресет меняет и ворота, и вопросы: «не трогай меня» — это и то, и другое.
 
-    chain = load_by_name(имя)
+    Инвариант один на все дорожки разработки, поэтому и тест один: короткие
+    цепочки отвечают на «где владелец участвует» теми же тремя ответами, что
+    и deep.
+    """
+    chain = load(chains_dir() / f"{имя}.yml")
+    # Пресеты различаются одним: сколько раз останавливают владельца.
+    # Частные наборы («план со мной», «тихо») собираются руками — держать
+    # под них имена значит заставлять выбирать из похожего.
     assert set(chain.presets) == {"default", "auto", "step-by-step"}
-    # `default` — именованное «как записано в шагах»: пустой набор ручек.
+    # `default` — именованное «как записано в шагах»: пустой набор ручек,
+    # чтобы он не мог разойтись с самой цепочкой.
     assert chain.sheet_with_preset("default") == chain.default_sheet()
     assert all(chain.preset_notes.get(name) for name in chain.presets), "пресет без пояснения"
 
-    # Ворота и вопросы ходят парой: внимание владельца внутри одного шага.
+    # Ворота и вопросы ходят парой: шаг либо с обоими, либо без обоих. У
+    # самих шагов причины свои (вопрос на Реализации — признак плохого
+    # плана), поэтому правило проверяется на пресетах, а не на цепочке.
     for name in set(chain.presets) - {"default"}:
         sheet = chain.sheet_with_preset(name)
         for step, knobs in sheet.items():
@@ -302,9 +281,13 @@ def test_владение_тестами_подключено_тем_же_шаг
     Скрипт владения тестами — единственное, что ловит правку теста чужим
     шагом, и в `quick` до ворот PR владелец не смотрит ничего.
     """
-    свои = {
-        s.id
-        for s in load(chains_dir() / f"{имя}.yml").steps
-        if "common-test-ownership" in s.includes
-    }
-    assert свои == {"implementation", "code-review", "review-fixes"}
+    def с_владением(имя_цепочки):
+        return {
+            s.id
+            for s in load(chains_dir() / f"{имя_цепочки}.yml").steps
+            if "common-test-ownership" in s.includes
+        }
+
+    эталон = с_владением("deep")
+    assert эталон, "в deep владение тестами не подключено ни одному шагу"
+    assert с_владением(имя) == эталон
