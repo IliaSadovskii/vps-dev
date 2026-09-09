@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from .chain import DONE, Chain
+from .chain import DONE, Chain, ChainError
 from .db import BACKLOG, CLOSED, DONE as ST_DONE, QUEUED, RUNNING as ST_RUNNING, now
 
 
@@ -34,6 +34,7 @@ class ButtonsMixin:
             "stand": self._btn_stand,
             "accept": self._btn_accept,
             "back": self._btn_back,
+            "back_clean": self._btn_back_clean,
             "again": self._btn_again,
             "continue": self._btn_again,
             "start": self._btn_start,
@@ -126,19 +127,35 @@ class ButtonsMixin:
             self.drop_stand(self.db.task(task["id"]))
         return "принято"
 
-    def _btn_back(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
+    def _btn_back_clean(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
+        return self._btn_back(task, chain, target, comment, clean=True)
+
+    def _btn_back(
+        self, task, chain: Chain, target: str | None, comment: str | None, clean: bool = False
+    ) -> str:
         """Владелец отправляет задачу на другой шаг.
 
         Предел заходов держит роли, а не владельца: если у шага, куда он
         посылает, заходы кончились, кнопка сама добавляет один. Иначе
         «Отправить на ревью ещё раз» приводила бы задачу на шаг, который
         движок тут же остановит по пределу.
+
+        `clean` — вернуть начисто: всё, что задача сделала с тех пор, как
+        последний раз была на этом шаге, забывается (`forget_after`). Без
+        него возврат сохраняет память: шаг с `context: own` продолжит свою
+        прошлую сессию, а артефакты нижних шагов останутся на месте и уедут
+        в промпты следующих заходов.
         """
         step = chain.step(task["step"])
         if not target or target not in step.human_moves:
             return f"вернуть можно на: {', '.join(step.human_moves) or '—'}"
         target_step = chain.step(target)
-        done_runs = len(self.db.runs_of_step(task["id"], target))
+        forgotten: dict = {}
+        if clean:
+            forgotten = self.forget_after(task, chain, target)
+        done_runs = len(
+            [r for r in self.db.runs_of_step(task["id"], target) if not r["void_at"]]
+        )
         grant = done_runs >= self.runs_allowed(task, target_step)
         with self.db.tx():
             revision = self.db.bump(task["id"], status=ST_RUNNING, step=target, wait_reason=None)
@@ -147,9 +164,64 @@ class ButtonsMixin:
                 "grant_run" if grant else "button", revision, comment=comment,
             )
             self.db.event(
-                task["id"], "button", {"action": "back", "to": target, "grant": grant}
+                task["id"],
+                "button",
+                {"action": "back_clean" if clean else "back", "to": target, "grant": grant},
             )
-        return f"вернул на {target}" + (" (заход добавлен)" if grant else "")
+        answer = f"вернул на {target}" + (" (заход добавлен)" if grant else "")
+        if clean:
+            файлы = ", ".join(forgotten.get("artifacts") or []) or "нечего"
+            answer += (
+                f"; начисто: забыто заходов {len(forgotten.get('runs') or [])}, "
+                f"убрано в историю: {файлы}"
+            )
+        return answer
+
+    def forget_after(self, task, chain: Chain, target: str) -> dict:
+        """Забыть всё, что задача сделала с последнего захода в шаг `target`.
+
+        Забываются заходы (их сессии больше не подхватит `context: own` и
+        `continue`, а предел заходов считается заново) и артефакты шагов
+        ниже по цепочке — они уезжают в `history/cleared-<время>`. Артефакт
+        самого шага-цели остаётся: роль перепишет свой файл сама, а
+        соседям он нужен как основание (T26: `solution.md` уцелел,
+        `plan.md` и `plan-review.md` ушли).
+        """
+        runs = [r for r in self.db.runs_of_step(task["id"], target) if not r["void_at"]]
+        if not runs:
+            return {"runs": [], "artifacts": []}
+        first = int(runs[-1]["id"])
+        doomed = [
+            r
+            for r in self.db.conn.execute(
+                "SELECT * FROM run WHERE task_id = ? AND id >= ? AND void_at IS NULL ORDER BY id",
+                (task["id"], first),
+            )
+        ]
+        names: list[str] = []
+        for step_id in {r["step"] for r in doomed} - {target}:
+            try:
+                names += chain.step(step_id).artifact
+            except ChainError:
+                continue
+        свои = set(chain.step(target).artifact) if target else set()
+        names = sorted({n for n in names if n not in свои})
+        moved: list[str] = []
+        if task["worktree_path"]:
+            moved = self.workspace(task).clear_artifacts(names, now().replace(":", "-"))
+        with self.db.tx():
+            for run in doomed:
+                self.db.void_run(int(run["id"]))
+            self.db.event(
+                task["id"],
+                "cleared",
+                {
+                    "to": target,
+                    "runs": [int(r["id"]) for r in doomed],
+                    "artifacts": moved,
+                },
+            )
+        return {"runs": [int(r["id"]) for r in doomed], "artifacts": moved}
 
     def _btn_again(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
         """«Ещё заход» / «Продолжай».

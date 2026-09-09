@@ -20,15 +20,9 @@ def до_остановки_без_сигнала(engine, fake, sid):
     после каждого прохода состариваем отметку толчка: иначе тест ждал бы
     реального времени.
     """
-    from orch.engine import NUDGES_BEFORE_STOP
+    from tests.test_engine import до_остановки_без_сигнала as довести
 
-    for _ in range(NUDGES_BEFORE_STOP + 1):
-        fake.finish_turn(sid)
-        engine.reconcile()
-        engine.db.conn.execute(
-            "UPDATE event SET at = '2000-01-01T00:00:00Z' WHERE kind = 'auto_continue'"
-        )
-        engine.db.conn.commit()
+    довести(engine, fake, sid)
 
 def blocks_text(payload: dict) -> str:
     return json.dumps(payload, ensure_ascii=False)

@@ -17,7 +17,7 @@ from pathlib import Path
 
 from . import asides as spec_mod
 from . import digest as dg
-from .aoe import STARTING, WAITING, Aoe, AoeError, Session
+from .aoe import RUNNING, STARTING, WAITING, Aoe, AoeError, Session
 from .asides import Aside, Wake
 from .chain import prompts_dir
 from .db import LIVE, STATE_DIR, now
@@ -111,6 +111,8 @@ class AsideMixin:
             return "defer"
         if aside_id is not None and not self.aside_budget_ok(spec, aside_id, event["task_id"]):
             return "skip"
+        if aside_id is not None and not self.aside_session_free(spec, wake, aside_id, event):
+            return "defer"
         if not self.capacity(event["task_id"], f"роль {spec.name}"):
             return "defer"
 
@@ -127,6 +129,31 @@ class AsideMixin:
             )
         self.aside_send(spec, wake, aside_id, run_id, event)
         return "done"
+
+    def aside_session_free(self, spec: Aside, wake: Wake, aside_id: int, event) -> bool:
+        """Можно ли слать повод в общую переписку роли прямо сейчас.
+
+        Промпт в занятую сессию AoE доставляется как `steer` и обрывает то,
+        что в ней идёт. В общей переписке роли сидит владелец, поэтому повод
+        ждёт, пока переписка освободится, а не влезает в разговор. Повод не
+        теряется: курсор через него не переступает.
+        """
+        if wake.session != "shared":
+            return True
+        aside = self.db.aside(aside_id)
+        sid = aside["session_id"] if aside is not None else None
+        if not sid:
+            return True
+        session = self.aoe.session(sid)
+        # Занята = идёт ход. `Waiting` (роль ждёт ответа или разрешения) сюда
+        # не входит: такой промпт мост кладёт в очередь, а не рвёт им ход.
+        if session is None or session.status not in (STARTING, RUNNING):
+            return True
+        self.note_once(
+            event["task_id"], "aside_session_busy",
+            {"aside": spec.name, "kind": event["kind"], "status": session.status}, 300.0,
+        )
+        return False
 
     def aside_key(self, spec: Aside, task, event) -> str | None:
         """Область роли: задача, проект или машина целиком."""
@@ -180,25 +207,37 @@ class AsideMixin:
             return
         run = self.db.aside_run(run_id)
         aside = self.db.aside(aside_id)
+        свежая = wake.session == "fresh"
         session = None
-        if aside is not None and aside["session_id"]:
+        if not свежая and aside is not None and aside["session_id"]:
             # Одна сессия на задачу: роль просыпается новым промптом в свою
             # же переписку. Так у неё есть память о прошлых ходах, а у
             # владельца — одна карточка в сайдбаре вместо десятка.
             session = self.aoe.session(aside["session_id"])
+        # Повод с `session: fresh` идёт в свою сессию: разбор хода длинный, а
+        # общая переписка — место, где с ролью разговаривает владелец. Промпт
+        # в занятую сессию AoE обрывает то, что в ней идёт, поэтому разбор и
+        # разговор разведены по разным сессиям, а не по вежливости промпта.
+        повод = self.wake_title(spec, event["kind"])
+        титул = f"{spec.title or spec.name} · {event['task_id'] or 'машина'}"
+        if свежая:
+            титул = f"{титул} · {повод.lower()}"
         try:
             session = session or self.aoe.create(
                 path=str(path),
                 agent=wake.agent,
                 model=wake.model,
                 effort=wake.effort,
-                title=f"{spec.title or spec.name} · {event['task_id'] or 'машина'}",
+                title=титул,
                 group=(task["group_path"] if task is not None else None) or f"{GROUP_ROOT}/побочные",
                 # Номер хода в ключе: повтор после умершей сессии должен
                 # завести новую, а не получить обратно мёртвую по старому
                 # ключу. Внутри одного хода ключ постоянен — за это
                 # идемпотентность и держат.
-                idempotency_key=f"aside/{spec.name}/{aside_id}",
+                idempotency_key=(
+                    f"aside/{spec.name}/run/{run_id}" if свежая
+                    else f"aside/{spec.name}/{aside_id}"
+                ),
             )
         except AoeError as exc:
             self.db.event(
@@ -222,7 +261,10 @@ class AsideMixin:
             return
         with self.db.tx():
             self.db.aside_run_sent(run_id, session.id)
-            if aside is None or aside["session_id"] != session.id:
+            # Сессия разбора живёт один повод и общей перепиской роли не
+            # становится: иначе следующий повод и владелец снова оказались бы
+            # в одной сессии, а разводили их как раз ради этого.
+            if not свежая and (aside is None or aside["session_id"] != session.id):
                 self.db.conn.execute(
                     "UPDATE aside SET session_id = ? WHERE id = ?", (session.id, aside_id)
                 )
@@ -262,7 +304,7 @@ class AsideMixin:
         было = [
             r["wake"] for r in self.db.aside_runs_of(int(run["aside_id"]))
             if int(r["id"]) != int(run["id"])
-        ]
+        ] if wake.session != "fresh" else []
         parts = []
         if not было:
             for name in spec.includes:
@@ -419,6 +461,7 @@ class AsideMixin:
             "continue": "оставить как есть",
             "restart": "перезапустить шаг",
             "back": f"вернуть на «{target}»",
+            "back_clean": f"вернуть на «{target}» начисто",
             "stop": "остановить задачу",
             "patch": "править",
             "say": "сказал словами",
@@ -472,6 +515,7 @@ class AsideMixin:
         if row is None or not task["worktree_path"]:
             return ""
         папка = dg.TRANSCRIPTS / dg.project_slug(task["worktree_path"])
+        файл = f"{row['acp_session_id']}.jsonl" if row["acp_session_id"] else "<сессия>.jsonl"
         return "\n".join([
             "## Разбираемый ход",
             "",
@@ -485,8 +529,9 @@ class AsideMixin:
             f"orch digest {task['id']} {row['step']} {row['n']}",
             "```",
             "",
-            f"Не хватит — весь транскрипт лежит в `{папка}/{row['session_id'] or '<сессия>'}.jsonl`; "
-            "читай его выборочно, подряд он весит сотни тысяч знаков.",
+            f"Не хватит — весь транскрипт этого хода лежит в `{папка}/{файл}`; "
+            "читай его выборочно, подряд он весит сотни тысяч знаков. Соседние "
+            "файлы в той же папке — чужие сессии, в них ход не разбирают.",
         ])
 
     # ── конец хода ───────────────────────────────────────────────────────
@@ -655,9 +700,9 @@ class AsideMixin:
         elif verb in ("restart", "again"):
             if task is not None:
                 answer = self.button(task_id, task["revision"], "again", comment=note["title"])
-        elif verb == "back":
+        elif verb in ("back", "back_clean"):
             if task is not None:
-                answer = self.button(task_id, task["revision"], "back", target, note["title"])
+                answer = self.button(task_id, task["revision"], verb, target, note["title"])
         elif verb == "say":
             # Слова владельца не двигают задачу: их дело — дойти до роли,
             # которая находку написала. Она проснётся событием ниже.

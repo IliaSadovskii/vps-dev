@@ -40,6 +40,12 @@ class Wake:
     agent: str = "claude"
     model: str = "sonnet"
     effort: str | None = None
+    # Где идёт ход: `shared` — общая переписка роли (там же владелец с ней
+    # разговаривает), `fresh` — своя сессия на один повод. Разбор хода стоит
+    # держать отдельно: промпт в занятую сессию AoE отдаёт мосту как `steer`
+    # и обрывает то, что там идёт, — движок бил бы по разговору владельца, а
+    # реплика владельца по разбору.
+    session: str = "shared"
 
 
 @dataclass(frozen=True)
@@ -172,6 +178,9 @@ def parse(text: str, source: str = "?") -> Aside:
         if not prompt:
             raise AsideError(f"{source}: у повода {on} нет промпта")
         run = item.get("run") or {}
+        session = str(item.get("session") or run.get("session") or "shared")
+        if session not in ("shared", "fresh"):
+            raise AsideError(f"{source}: повод {on}: непонятная сессия {session!r}")
         wakes.append(
             Wake(
                 on=tuple(str(k) for k in on),
@@ -180,6 +189,7 @@ def parse(text: str, source: str = "?") -> Aside:
                 agent=str(run.get("agent") or "claude"),
                 model=str(run.get("model") or "sonnet"),
                 effort=(str(run["effort"]) if run.get("effort") else None),
+                session=session,
             )
         )
     if not wakes:

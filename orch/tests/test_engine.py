@@ -48,13 +48,21 @@ def до_остановки_без_сигнала(engine, fake, sid):
     """
     from orch.engine import NUDGES_BEFORE_STOP
 
-    for _ in range(NUDGES_BEFORE_STOP + 1):
-        fake.finish_turn(sid)
-        engine.reconcile()
+    def состарить():
         engine.db.conn.execute(
-            "UPDATE event SET at = '2000-01-01T00:00:00Z' WHERE kind = 'auto_continue'"
+            "UPDATE event SET at = '2000-01-01T00:00:00Z' "
+            "WHERE kind IN ('auto_continue', 'idle_seen')"
         )
         engine.db.conn.commit()
+
+    for _ in range(NUDGES_BEFORE_STOP + 1):
+        fake.finish_turn(sid)
+        # Первый проход только отмечает простой: толчок идёт, когда простой
+        # устоялся (`IDLE_SETTLE_S`) — промпт в живую сессию обрывает ей ход.
+        engine.reconcile()
+        состарить()
+        engine.reconcile()
+        состарить()
 
 def start(engine, repo, **kw):
     """Создать задачу, поставить в очередь и довести до первого промпта."""
@@ -188,7 +196,14 @@ def test_нет_сигнала(engine, fake, repo):
     sid = session_of(engine, task_id)
     fake.finish_turn(sid)          # ход кончился, сигнала нет
     engine.reconcile()
-    # Первый раз движок сам просит закончить и подать сигнал.
+    # Сразу движок не толкает: промпт в живую сессию обрывает ей ход, а
+    # `Idle` от AoE бывает преждевременным. Первый проход только отмечает
+    # простой (`IDLE_SETTLE_S`).
+    assert "подай сигнал" not in fake.prompts[-1][1]
+    engine.db.conn.execute("UPDATE event SET at = '2000-01-01T00:00:00Z' WHERE kind = 'idle_seen'")
+    engine.db.conn.commit()
+    engine.reconcile()
+    # Простой устоялся — движок просит закончить и подать сигнал.
     assert "подай сигнал" in fake.prompts[-1][1]
     assert engine.db.task(task_id)["status"] == RUNNING
 
@@ -384,7 +399,11 @@ def test_подталкивание_не_закрывает_ход_на_след
     clock.tick(50)
     fake.rows[sid]["status"] = "Idle"
     fake.rows[sid]["idle_entered_at"] = clock.stamp()
+    from orch.engine import IDLE_SETTLE_S
+
     clock.tick(10)
+    engine.reconcile()                                   # отметили простой
+    clock.tick(IDLE_SETTLE_S)
     engine.reconcile()                                   # подтолкнули
     assert "подай сигнал" in fake.prompts[-1][1]
     assert engine.db.open_run(task_id) is not None
@@ -1522,3 +1541,93 @@ def test_стенд_не_считается_убранным_пока_живы_�
 
     живые = False
     assert stands.gone("проект-t1")
+
+
+def _вернуть(engine, fake, repo, действие):
+    """Довести задачу до ворот на шаге `two` и нажать возврат на `one`."""
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "ok")
+    task = engine.db.task(task_id)
+    assert task["wait_reason"] == "gate"
+    ответ = engine.button(task_id, task["revision"], действие, target="one")
+    return task_id, ответ
+
+
+def test_возврат_с_памятью_ничего_не_забывает(engine, fake, repo):
+    """Обычный возврат — это доводка: файлы и заходы нижних шагов на месте."""
+    task_id, ответ = _вернуть(engine, fake, repo, "back")
+    ws = ws_of(engine, task_id)
+    assert "вернул на one" in ответ
+    assert (ws.artifacts / "two.md").exists()
+    assert all(not r["void_at"] for r in engine.db.runs_of_step(task_id, "two"))
+
+
+def test_возврат_начисто_забывает_заходы_и_убирает_артефакты(engine, fake, repo):
+    """Переиграли решение: нижние шаги идут заново и не читают своё прошлое.
+
+    Так план после переигранного Решения видел старое `plan-review.md`,
+    считал ревью пройденным и уходил на ворота (T26).
+    """
+    task_id, ответ = _вернуть(engine, fake, repo, "back_clean")
+    ws = ws_of(engine, task_id)
+    assert "начисто" in ответ
+    # Файл нижнего шага уехал в историю, а свой файл шага-цели остался: роль
+    # перепишет его сама, а соседям он нужен как основание.
+    assert not (ws.artifacts / "two.md").exists()
+    assert (ws.artifacts / "one.md").exists()
+    убранные = list(ws.history.glob("cleared-*/two.md"))
+    assert убранные, "артефакт нижнего шага не сохранён в истории"
+    # Забыты и заход нижнего шага, и последний заход самого шага-цели: его
+    # сессию шаг с памятью больше не подхватит.
+    assert all(r["void_at"] for r in engine.db.runs_of_step(task_id, "two"))
+    assert engine.db.runs_of_step(task_id, "one")[-1]["void_at"]
+    # Забытый заход не съедает предел: круг начинается заново.
+    engine.reconcile()
+    свежие = [r for r in engine.db.runs_of_step(task_id, "one") if not r["void_at"]]
+    assert len(свежие) == 1 and engine.db.task(task_id)["status"] == RUNNING
+
+
+def test_живую_роль_не_толкают_даже_когда_aoe_говорит_idle(engine, fake, repo, monkeypatch, tmp_path):
+    """`Idle` от моста бывает преждевременным: роль ещё пишет.
+
+    Толчок в такой момент обрывает ей генерацию (T26: восемь обрывов за
+    прогон устроил сам движок). Признак жизни берём мимо AoE — по файлу
+    транскрипта, который агент пишет сам.
+    """
+    from orch import digest as dg
+
+    task_id = start(engine, repo)
+    sid = session_of(engine, task_id)
+    fake.acp_ids[sid] = "cec73527-жив"
+
+    # Транскрипт этой сессии только что писался.
+    root = engine.db.task(task_id)["worktree_path"] or str(repo)
+    monkeypatch.setattr(dg, "TRANSCRIPTS", tmp_path / "projects")
+    папка = dg.TRANSCRIPTS / dg.project_slug(root)
+    папка.mkdir(parents=True)
+    (папка / "cec73527-жив.jsonl").write_text("{}\n", encoding="utf-8")
+
+    fake.finish_turn(sid)
+    engine.db.conn.execute("UPDATE event SET at = '2000-01-01T00:00:00Z' WHERE kind = 'idle_seen'")
+    engine.db.conn.commit()
+    engine.reconcile()
+    engine.reconcile()
+    assert "подай сигнал" not in fake.prompts[-1][1], "движок оборвал живую роль"
+    assert engine.db.task(task_id)["status"] == RUNNING
+    # Связь «сессия AoE → файл транскрипта» запомнена: скелет хода больше не
+    # склеивается из чужих сессий той же рабочей копии.
+    run = engine.db.conn.execute(
+        "SELECT acp_session_id FROM run WHERE task_id = ? ORDER BY id DESC LIMIT 1", (task_id,)
+    ).fetchone()
+    assert run["acp_session_id"] == "cec73527-жив"
+
+    # Роль замолчала — файл больше не растёт, и толчок доходит как обычно.
+    import os
+    старое = 0
+    os.utime(папка / "cec73527-жив.jsonl", (старое, старое))
+    engine.reconcile()                                   # отметили простой
+    engine.db.conn.execute("UPDATE event SET at = '2000-01-01T00:00:00Z' WHERE kind = 'idle_seen'")
+    engine.db.conn.commit()
+    engine.reconcile()                                   # выдержка вышла — толчок
+    assert "подай сигнал" in fake.prompts[-1][1]

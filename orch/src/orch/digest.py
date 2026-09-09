@@ -64,17 +64,19 @@ def digest(
 ) -> dict:
     """Обзор хода в рабочей копии за окно `since … until`.
 
-    `session` сужает до одного файла, когда id сессии известен; без него
-    берутся все транскрипты копии, попавшие в окно, — сессия AoE и сессия
-    Claude Code это разные идентификаторы, и связь между ними есть не всегда.
+    `session` — uuid сессии агента, он же имя файла (`run.acp_session_id`,
+    движок берёт его у AoE событием `AcpSessionAssigned`). Названа сессия —
+    читается только её файл: в одной рабочей копии одновременно живут
+    сессия шага и разговор владельца с прошлой ролью, и склейка выдавала
+    чужие вызовы за вызовы разбираемого хода (T26, прогон 125). Файла нет —
+    обзор пустой, а не «всё, что нашлось».
     """
     lo = since if isinstance(since, datetime) else parse_time(since)
     hi = until if isinstance(until, datetime) else parse_time(until)
 
     files = transcripts_of(worktree)
     if session:
-        named = [p for p in files if p.stem == session]
-        files = named or files
+        files = [p for p in files if p.stem == session]
 
     rows: list[dict] = []
     for path in files:

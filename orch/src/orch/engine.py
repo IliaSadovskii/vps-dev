@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import artifacts as art
+from . import digest as dg
 from . import signals
 from .aoe import ERROR, RUNNING, STARTING, STOPPED, WAITING, Aoe, AoeError, Session, parse_time
 from .chain import (
@@ -75,6 +76,17 @@ NUDGES_BEFORE_STOP = 4
 # Пауза между толчками: роль, ждущая подагентов, отвечает мгновенно.
 NUDGE_GRACE_S = 120.0
 WAKE_GRACE_S = 30.0
+# Сколько сессия должна простоять в `Idle`, прежде чем толкать её промптом.
+# Промпт в занятую сессию AoE отдаёт мосту как `steer`, а тот доставляет его
+# с приоритетом «сейчас» — то есть **обрывает** текущую генерацию. Мост при
+# этом умеет объявить ход законченным раньше, чем роль на самом деле
+# закончила (T26, 17:57: `Stopped{prompt_complete}`, а роль работала), и
+# толчок рвал живую работу. Выдержка стоит минуту на забытый `orch done` и
+# спасает час работы там, где `Idle` соврал.
+IDLE_SETTLE_S = 90.0
+# Признак жизни мимо AoE: транскрипт, который агент пишет сам. Если файл
+# рос только что, роль работает, что бы ни говорил статус сессии.
+ALIVE_S = 60.0
 
 
 @dataclass
@@ -632,7 +644,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
         if step.context == "own":
             prev = self.db.conn.execute(
                 "SELECT session_id FROM run WHERE task_id = ? AND step = ? AND id <> ? "
-                "AND session_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+                "AND session_id IS NOT NULL AND void_at IS NULL ORDER BY id DESC LIMIT 1",
                 (task["id"], step.id, run["id"]),
             ).fetchone()
             if prev:
@@ -679,6 +691,44 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
             self.stop(task["id"], "path_mismatch")
             return None
         return session
+
+    def acp_uuid(self, run, session: Session) -> str | None:
+        """uuid сессии агента для захода: имя файла транскрипта.
+
+        Спрашиваем AoE один раз и запоминаем: id сессии AoE и id сессии
+        Claude Code — разные, а связь нужна и признаку жизни, и скелету хода
+        (без неё он склеивался из транскриптов чужих сессий).
+        """
+        if run["acp_session_id"]:
+            return str(run["acp_session_id"])
+        found = self.aoe.acp_session_id(session.id)
+        if not found:
+            return None
+        with self.db.tx():
+            self.db.conn.execute(
+                "UPDATE run SET acp_session_id = ? WHERE id = ?", (found, run["id"])
+            )
+        return found
+
+    def role_alive(self, task, run, session: Session) -> bool:
+        """Пишет ли роль прямо сейчас — по времени записи её транскрипта.
+
+        `Idle` от AoE бывает преждевременным: мост объявляет ход
+        законченным, пока роль работает (T26). Толкать её в этот момент
+        значит оборвать ей генерацию, поэтому перед толчком смотрим не на
+        статус, а на файл, который пишет сам агент. Не нашли файл — ведём
+        себя как раньше: решает выдержка простоя.
+        """
+        root = task["worktree_path"] or task["project_path"]
+        uuid = self.acp_uuid(run, session)
+        if not uuid or not root:
+            return False
+        path = dg.TRANSCRIPTS / dg.project_slug(root) / f"{uuid}.jsonl"
+        try:
+            touched = path.stat().st_mtime
+        except OSError:
+            return False
+        return _epoch_now() - touched < ALIVE_S
 
     def apply_model(self, task, step: Step, session: Session) -> None:
         """Поставить модель шага и убедиться, что адаптер её принял.
@@ -843,10 +893,21 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
         работала (T16, 22:50:38 → 22:50:43).
         """
         try:
-            self.aoe.prompt(session.id, text)
+            answer = self.aoe.prompt(session.id, text)
         except AoeError as exc:
             self.db.event(run["task_id"], "prompt_failed", {"run": run["id"], "error": str(exc)})
             return False
+        # AoE отвечает, что сделала с промптом: `sent` — начала ход, `queued` —
+        # положила в очередь, `steered` — доставила в идущий ход, оборвав его
+        # генерацию. Последнее означает, что мы толкнули работающую роль, и
+        # это надо видеть в журнале, а не искать потом в транскрипте.
+        disposition = (answer or {}).get("disposition") if isinstance(answer, dict) else None
+        if disposition == "steered":
+            self.db.event(
+                run["task_id"],
+                "prompt_steered",
+                {"run": run["id"], "session": session.id, "text": text[:120]},
+            )
         with self.db.tx():
             self.db.prompt_sent(run["id"])
         return True
@@ -861,6 +922,12 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
 
     def on_idle(self, task, chain: Chain, step: Step, run, session: Session) -> None:
         """Ход кончился. Сигнал читается только здесь (`RISKS.md` п. 1)."""
+        # Связь «сессия AoE → файл транскрипта» запоминается здесь: к концу
+        # хода событие `AcpSessionAssigned` уже точно есть, а нужна она и
+        # скелету хода, и признаку жизни роли.
+        if not run["acp_session_id"]:
+            self.acp_uuid(run, session)
+            run = self.db.conn.execute("SELECT * FROM run WHERE id = ?", (run["id"],)).fetchone()
         ws = self.workspace(task)
         signal = signals.read(signals.done_path(ws.signals, step.id, run["n"]))
         end_sha = ws.head()
@@ -956,6 +1023,35 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
         # число реплик.
         if self.recently(task, "auto_continue", run, NUDGE_GRACE_S):
             return
+        # Толчок — это промпт в чужую сессию, а промпт в занятую сессию рвёт
+        # её работу (см. `IDLE_SETTLE_S`). Пока простой свежий, верить ему
+        # нельзя: ждём, пока `Idle` устоится. Время считаем по своей отметке,
+        # а не по часам AoE: врёт как раз она.
+        # Роль пишет транскрипт прямо сейчас — значит `Idle` соврал, и
+        # толкать нечего: промпт оборвал бы ей ход.
+        if self.role_alive(task, run, session):
+            self.note_once(
+                task["id"], "idle_lied",
+                {"run": run["id"], "step": step.id, "session": session.id}, 300.0,
+            )
+            return
+        # Отметка своя на каждый простой: после толчка роль отвечает и
+        # засыпает заново, и новый простой надо выдержать так же, как первый.
+        метка = session.idle_entered_at or ""
+        свои = [
+            e for e in self.db.run_events(task["id"], "idle_seen", run["id"])
+            if (json.loads(e["payload"] or "{}").get("idle_at") or "") == метка
+        ]
+        if not свои:
+            self.db.event(
+                task["id"],
+                "idle_seen",
+                {"run": run["id"], "step": step.id, "idle_at": метка},
+            )
+            return
+        first = epoch(свои[0]["at"])
+        if first is not None and _epoch_now() - first < IDLE_SETTLE_S:
+            return
         nudges = len(self.db.run_events(task["id"], "auto_continue", run["id"]))
         if nudges < NUDGES_BEFORE_STOP:
             self.db.event(task["id"], "auto_continue", {"run": run["id"], "step": step.id})
@@ -1013,7 +1109,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
         встаёт «предел заходов» на Ревью кода, потратившем заходы в прошлом
         круге (T19, 18:59).
         """
-        runs = self.db.runs_of_step(task["id"], step.id)
+        runs = [r for r in self.db.runs_of_step(task["id"], step.id) if not r["void_at"]]
         row = self.db.conn.execute(
             "SELECT at FROM move WHERE task_id = ? AND actor = 'human' ORDER BY id DESC LIMIT 1",
             (task["id"],),

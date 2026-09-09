@@ -44,6 +44,7 @@ class FakeAoe:
         self.urgent: dict[str, bool] = {}
         self.archived: list[str] = []
         self.by_key: dict[str, str] = {}
+        self.acp_ids: dict[str, str] = {}
         self.next_id = 1
         self.worktree_root = "/tmp/fake-worktree"
         self.fail_create = False
@@ -61,6 +62,10 @@ class FakeAoe:
             for sid, raw in self.rows.items()
             if sid not in self.archived
         }
+
+    def acp_session_id(self, sid: str) -> str | None:
+        """uuid сессии агента: имя файла транскрипта. Тест ставит его сам."""
+        return self.acp_ids.get(sid)
 
     def session(self, sid: str) -> Session | None:
         """Одна сессия, включая заархивированную."""

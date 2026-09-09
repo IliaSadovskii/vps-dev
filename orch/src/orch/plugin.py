@@ -121,6 +121,7 @@ class Worker:
     def btn_accept_as_is(self, session_id, params): self._move(params, "accept")
     def btn_again(self, session_id, params): self._move(params, "again")
     def btn_back(self, session_id, params): self._move(params, "back")
+    def btn_back_clean(self, session_id, params): self._move(params, "back_clean")
     def btn_start(self, session_id, params): self._move(params, "start")
     def btn_close(self, session_id, params): self._move(params, "close")
     def btn_stand(self, session_id, params): self._move(params, "stand")

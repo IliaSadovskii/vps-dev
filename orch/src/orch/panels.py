@@ -921,18 +921,28 @@ def _buttons(db: Db, task) -> list[dict]:
             except ChainError:
                 moves = []
             for target in moves:
-                actions.append(
-                    {
-                        "kind": "action",
-                        "label": f"Вернуть на «{step_title(target)}»",
-                        "method": "orch.back",
-                        "params": {
-                            "task": task["id"],
-                            "revision": task["revision"],
-                            "target": target,
-                        },
-                    }
-                )
+                # Две кнопки на шаг: «с памятью» — шаг продолжит свою прошлую
+                # сессию, а файлы нижних шагов останутся на месте; «начисто» —
+                # всё, что задача сделала после этого шага, забывается
+                # (`forget_after`). Выбор владельца, а не движка: он один
+                # знает, правка это или переигранное решение.
+                for clean in (False, True):
+                    actions.append(
+                        {
+                            "kind": "action",
+                            "label": (
+                                f"Вернуть на «{step_title(target)}» начисто"
+                                if clean
+                                else f"Вернуть на «{step_title(target)}»"
+                            ),
+                            "method": "orch.back_clean" if clean else "orch.back",
+                            "params": {
+                                "task": task["id"],
+                                "revision": task["revision"],
+                                "target": target,
+                            },
+                        }
+                    )
             continue
         actions.append(
             {

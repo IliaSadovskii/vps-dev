@@ -217,6 +217,38 @@ class Aoe:
                 time.sleep(2 * (attempt + 1))
         raise last  # type: ignore[misc]
 
+    def acp_session_id(self, sid: str) -> str | None:
+        """uuid сессии агента = имя файла транскрипта Claude Code.
+
+        AoE объявляет его событием `AcpSessionAssigned` при старте воркера;
+        при пересоздании воркера появляется новое. Читаем начало журнала, а
+        если журнал длинный — ещё и конец: нужен последний.
+        """
+        def найти(data) -> str | None:
+            найдено = None
+            for frame in (data or {}).get("frames", []):
+                event = frame.get("event") or {}
+                if "AcpSessionAssigned" in event:
+                    найдено = event["AcpSessionAssigned"].get("acp_session_id") or найдено
+            return найдено
+
+        try:
+            head = self.call("GET", f"/api/sessions/{sid}/acp/replay?view=raw&limit=200")
+        except AoeError:
+            return None
+        found = найти(head)
+        high = int(head.get("highest_seq") or 0)
+        if high > 200:
+            try:
+                tail = self.call(
+                    "GET",
+                    f"/api/sessions/{sid}/acp/replay?view=raw&limit=200&before={high + 1}",
+                )
+            except AoeError:
+                tail = None
+            found = найти(tail) or found
+        return found
+
     def cancel(self, sid: str) -> None:
         try:
             self.call("POST", f"/api/sessions/{sid}/acp/cancel", {})

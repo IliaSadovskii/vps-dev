@@ -167,7 +167,10 @@ class Notifier:
             return ""
         try:
             data = dg.digest(
-                task["worktree_path"], since=run["started_at"], until=run["ended_at"]
+                task["worktree_path"],
+                since=run["started_at"],
+                until=run["ended_at"],
+                session=run["acp_session_id"],
             )
         except OSError:
             return ""
@@ -231,7 +234,10 @@ class Notifier:
             return ""
         try:
             data = dg.digest(
-                task["worktree_path"], since=run["started_at"], until=run["ended_at"]
+                task["worktree_path"],
+                since=run["started_at"],
+                until=run["ended_at"],
+                session=run["acp_session_id"],
             )
         except OSError:
             return ""

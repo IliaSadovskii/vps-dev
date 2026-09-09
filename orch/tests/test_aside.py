@@ -467,6 +467,8 @@ def test_сессия_роли_одна_на_задачу_и_живёт_до_в�
     assert sid not in fake.archived, "сессию с отчётом убрали без владельца"
 
     # Следующий повод приходит в ту же переписку, а не заводит вторую.
+    # Ждём, пока переписка освободится: промпт в идущий ход оборвал бы его.
+    fake.finish_turn(sid)
     turn(engine, fake, task_id, "one", 1, None)
     engine.reconcile()
     ходы = асайды(engine)
@@ -483,6 +485,7 @@ def test_роль_помнит_разговор_лентой_находок(engi
     engine.note_decision(1, "say", "Правь только промпт", who="telegram")
     engine.aside_done(run_id, "done", пропуск(engine, run_id))
 
+    fake.finish_turn(engine.db.aside_run(run_id)["session_id"])
     engine.reconcile()   # владелец ответил — роль поднимают заново
     engine.reconcile()
     текст = fake.prompts[-1][1]
@@ -510,7 +513,9 @@ def test_ответ_доходит_и_после_конца_задачи(engine,
     assert engine.db.task(task_id)["status"] == "done"
     engine.note_decision(note_id, "say", "Всё равно поправь", who="telegram")
     for _ in range(3):
-        for ход in engine.db.aside_runs_open():
+        # Повод в общую переписку ждёт, пока та свободна: освобождаем все
+        # сессии роли, а не только те, чей ход ещё открыт.
+        for ход in engine.db.aside_runs_of(1):
             if ход["session_id"]:
                 fake.finish_turn(ход["session_id"])
         engine.reconcile()
@@ -603,3 +608,63 @@ def test_на_шаг_идёт_короткое_сообщение(engine, fake, 
     assert "Коротко, чтобы не сбиться" in последний, "свод правил нужен каждый раз"
     assert len(последний) < 1200, f"сообщение на повод раздуто: {len(последний)}"
 
+
+
+СВОЯ_СЕССИЯ = SPEC.replace(
+    """  - on: [run_ended]
+    prompt: role-tune-review""",
+    """  - on: [run_ended]
+    prompt: role-tune-review
+    session: fresh""",
+)
+
+
+def test_разбор_идёт_в_своей_сессии_и_не_трогает_переписку(
+    engine, fake, repo, tune, monkeypatch
+):
+    """`session: fresh` разводит разбор и разговор.
+
+    Промпт в занятую сессию AoE доставляется как `steer` и обрывает то, что в
+    ней идёт: движок бил бы по разговору владельца с ролью, а реплика
+    владельца — по разбору (T26).
+    """
+    (tune / "tune.yml").write_text(СВОЯ_СЕССИЯ, encoding="utf-8")
+    task_id = start(engine, repo)
+    engine.reconcile()
+    общая = engine.db.aside_runs_open()[0]["session_id"]
+    engine.aside_done(
+        int(engine.db.aside_runs_open()[0]["id"]),
+        "clean",
+        пропуск(engine, int(engine.db.aside_runs_open()[0]["id"])),
+    )
+    engine.reconcile()
+
+    # Разговор владельца с ролью идёт прямо сейчас — сессия занята.
+    fake.rows[общая]["status"] = "Running"
+    turn(engine, fake, task_id, "one", 1, None)
+    engine.reconcile()
+
+    разбор = [x for x in асайды(engine) if x["wake"] == "role-tune-review"]
+    assert разбор, "повод разбора не завёл ход"
+    assert разбор[0]["session_id"] != общая, "разбор влез в переписку владельца"
+    # Общая переписка роли осталась той же: сессия разбора живёт один повод.
+    aside = engine.db.conn.execute("SELECT session_id FROM aside").fetchone()
+    assert aside["session_id"] == общая
+
+
+def test_повод_в_переписку_ждёт_пока_она_освободится(engine, fake, repo, tune):
+    """Пока в общей сессии идёт ход, повод не отправляется, но и не теряется."""
+    task_id = start(engine, repo)
+    engine.reconcile()
+    первый = engine.db.aside_runs_open()[0]
+    engine.aside_done(int(первый["id"]), "clean", пропуск(engine, int(первый["id"])))
+    engine.reconcile()
+
+    fake.rows[первый["session_id"]]["status"] = "Running"
+    turn(engine, fake, task_id, "one", 1, None)
+    engine.reconcile()
+    assert len(асайды(engine)) == 1, "повод влез в занятую переписку"
+
+    fake.finish_turn(первый["session_id"])
+    engine.reconcile()
+    assert len(асайды(engine)) == 2, "повод потерялся вместе с занятой сессией"

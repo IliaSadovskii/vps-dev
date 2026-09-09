@@ -44,7 +44,7 @@ class Refused(Exception):
 # ── команды ролей ────────────────────────────────────────────────────────
 # Глаголы, которыми побочная роль может предложить владельцу решение:
 # движок обязан уметь исполнить каждый (`ASIDE-PLAN.md` §4).
-VERBS = {"continue", "restart", "back", "say", "stop", "patch"}
+VERBS = {"continue", "restart", "back", "back_clean", "say", "stop", "patch"}
 
 
 def cmd_whoami(args: argparse.Namespace) -> int:
@@ -371,12 +371,15 @@ def cmd_task_move(args: argparse.Namespace) -> int:
     row = conn.execute("SELECT revision FROM task WHERE id = ?", (args.task,)).fetchone()
     if row is None:
         raise Refused(f"нет задачи {args.task}")
+    action = args.action
+    if action == "back" and getattr(args, "clean", False):
+        action = "back_clean"
     request = {
         "id": uuid.uuid4().hex[:12],
         "kind": "button",
         "task": args.task,
         "revision": row["revision"],
-        "action": args.action,
+        "action": action,
         "target": args.target,
         "comment": args.comment,
         "at": signals.now(),
@@ -384,7 +387,7 @@ def cmd_task_move(args: argparse.Namespace) -> int:
     INBOX.mkdir(parents=True, exist_ok=True)
     path = INBOX / f"{request['id']}.json"
     path.write_text(json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"кнопка «{args.action}» поставлена в очередь движку: {path}")
+    print(f"кнопка «{action}» поставлена в очередь движку: {path}")
     return 0
 
 
@@ -430,6 +433,8 @@ def cmd_gate(args: argparse.Namespace) -> int:
     action = args.action
     if action == "back" and not args.target:
         raise Refused("для «back» назовите шаг: orch gate back <шаг>")
+    if action == "back" and getattr(args, "clean", False):
+        action = "back_clean"
     request = {
         "id": uuid.uuid4().hex[:12],
         "kind": "button",
@@ -665,8 +670,9 @@ def cmd_digest(args: argparse.Namespace) -> int:
     """
     from . import digest as dg
 
-    db = _ro_db()
-    row = db.conn.execute(
+    # `_ro_db` отдаёт голое соединение sqlite3, а не `Db`: `.conn` у него нет.
+    conn = _ro_db()
+    row = conn.execute(
         "SELECT r.*, t.worktree_path, t.project_path FROM run r JOIN task t ON t.id = r.task_id "
         "WHERE r.task_id = ? AND r.step = ? ORDER BY r.n DESC LIMIT 1"
         if args.run is None else
@@ -677,7 +683,13 @@ def cmd_digest(args: argparse.Namespace) -> int:
     if row is None:
         raise Refused(f"у {args.task} нет захода {args.step}" + (f"/{args.run}" if args.run else ""))
     root = row["worktree_path"] or row["project_path"]
-    data = dg.digest(root, since=row["started_at"], until=row["ended_at"], max_tools=args.tools)
+    data = dg.digest(
+        root,
+        since=row["started_at"],
+        until=row["ended_at"],
+        session=(row["acp_session_id"] if "acp_session_id" in row.keys() else None),
+        max_tools=args.tools,
+    )
     if not data["turns"]:
         print("транскрипта за это окно нет")
         return 0
@@ -857,6 +869,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("action", choices=["accept", "back", "again"])
     p.add_argument("target", nargs="?", help="шаг для «back»")
+    p.add_argument(
+        "--clean",
+        action="store_true",
+        help="вернуть начисто: забыть заходы и артефакты всего, что было после этого шага",
+    )
     p.add_argument("--comment", help="что владелец просил передать адресату")
     p.set_defaults(func=cmd_gate)
 
@@ -877,6 +894,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("task")
     p.add_argument("action", choices=["accept", "back", "again", "start", "close"])
     p.add_argument("--target", help="шаг для accept/back")
+    p.add_argument(
+        "--clean",
+        action="store_true",
+        help="вернуть начисто: забыть заходы и артефакты всего, что было после этого шага",
+    )
     p.add_argument("--comment", help="комментарий владельца адресату")
     p.set_defaults(func=cmd_task_move)
 

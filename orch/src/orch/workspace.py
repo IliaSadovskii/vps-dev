@@ -116,6 +116,26 @@ class Workspace:
             (dest / "diff.patch").write_text(diff, encoding="utf-8")
         return dest
 
+    def clear_artifacts(self, names: list[str], tag: str) -> list[str]:
+        """Убрать артефакты из `artifacts/` в историю: возврат «начисто».
+
+        Файл не удаляется, а переезжает: владелец переиграл решение, но
+        прочитать, что писала прошлая роль, он вправе. Пока файл лежит в
+        `artifacts/`, следующий заход вклеивает его в промпт и роль считает
+        работу сделанной — так план после переигранного Решения счёл ревью
+        пройденным и ушёл в `ready` (T26).
+        """
+        dest = self.history / f"cleared-{tag}"
+        moved: list[str] = []
+        for name in names:
+            src = self.artifacts / name
+            if not src.exists():
+                continue
+            dest.mkdir(parents=True, exist_ok=True)
+            src.replace(dest / name)
+            moved.append(name)
+        return moved
+
     # ── git ──────────────────────────────────────────────────────────────
     def head(self) -> str | None:
         sha = git(self.root, "rev-parse", "HEAD")

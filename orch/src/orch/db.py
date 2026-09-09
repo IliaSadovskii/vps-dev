@@ -181,9 +181,26 @@ class Db:
         marks = ",".join("?" * len(agent_steps))
         return self.conn.execute(
             f"SELECT * FROM run WHERE task_id = ? AND step IN ({marks}) "
-            "AND session_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+            "AND session_id IS NOT NULL AND void_at IS NULL ORDER BY id DESC LIMIT 1",
             (task_id, *agent_steps),
         ).fetchone()
+
+    def runs_after(self, task_id: str, at: str) -> list[sqlite3.Row]:
+        """Заходы задачи, начатые строго позже момента `at`."""
+        return list(
+            self.conn.execute(
+                "SELECT * FROM run WHERE task_id = ? AND started_at > ? ORDER BY id",
+                (task_id, at),
+            )
+        )
+
+    def void_run(self, run_id: int) -> None:
+        """Забыть заход: его сессию не подхватит шаг с памятью, а его заходы
+        не считаются пределом. Строка остаётся — путь задачи по шагам
+        переписывать задним числом нельзя."""
+        self.conn.execute(
+            "UPDATE run SET void_at = ? WHERE id = ? AND void_at IS NULL", (now(), run_id)
+        )
 
     def start_run(
         self, task_id: str, step: str, context: str, start_sha: str | None
