@@ -674,6 +674,42 @@ def _reason_text(reason: str | None) -> str:
     return WAIT_REASONS.get(reason or "", reason or "ждёт")
 
 
+def _cycle_runs(db: Db, task, step: str) -> list:
+    """Заходы шага на этом круге — так же, как их считает движок.
+
+    Круг начинается с последнего движения владельца: вернув работу назад, он
+    начинает заново, и предел считается от этого места.
+    """
+    runs = [r for r in db.runs_of_step(task["id"], step) if not r["void_at"]]
+    row = db.conn.execute(
+        "SELECT at FROM move WHERE task_id = ? AND actor = 'human' ORDER BY id DESC LIMIT 1",
+        (task["id"],),
+    ).fetchone()
+    if row is None:
+        return runs
+    return [r for r in runs if (r["started_at"] or "") > row["at"]]
+
+
+def _recent_runs(db: Db, task, сколько: int = 4) -> str:
+    """«Как сюда пришли»: последние ходы с исходами, старые слева.
+
+    Без этого владелец видит только «предел заходов» и не знает, что было
+    до: какой шаг чем кончился и почему задача оказалась там, где стоит.
+    """
+    rows = list(db.conn.execute(
+        "SELECT step, n, outcome, signalled FROM run WHERE task_id = ? AND void_at IS NULL "
+        "ORDER BY id DESC LIMIT ?",
+        (task["id"], сколько),
+    ))
+    if not rows:
+        return ""
+    куски = [
+        f"{r['step']} {r['n']} → {r['outcome'] or ('сдан' if r['signalled'] else 'без сигнала')}"
+        for r in reversed(rows)
+    ]
+    return "Как сюда пришли: " + " · ".join(куски) + "."
+
+
 def _what_to_decide(db: Db, task) -> str:
     """Строка «что решить» — то, ради чего владелец открыл панель."""
     reason = task["wait_reason"]
@@ -682,6 +718,7 @@ def _what_to_decide(db: Db, task) -> str:
         # Имя исхода («choice», «ok») — словарь движка, владельцу оно ничего
         # не говорит: что решать, он читает в сообщении роли.
         return (
+            f"{_recent_runs(db, task)} ".lstrip() +
             f"Шаг {step} закончил ход и ждёт вас. Что решать — в последнем "
             f"сообщении роли в чате. Там же можно спорить и просить правку: "
             f"роль перепишет свой файл на месте, задача никуда не уедет. "
@@ -693,7 +730,15 @@ def _what_to_decide(db: Db, task) -> str:
         tail = f" Последнее, что сказала команда: {answer[:200]}" if answer else ""
         return f"Шаг {step} закончил ход, не сдав его.{tail}"
     if reason == "max_runs":
-        return f"Шаг {step} израсходовал все заходы. Дать ещё, принять как есть или вернуть."
+        сколько = len(_cycle_runs(db, task, step))
+        разы = {1: "один раз", 2: "дважды", 3: "трижды"}.get(сколько, f"{сколько} раз")
+        return (
+            f"Цепочка ведёт на шаг {step}, но на этом круге он уже сходил "
+            f"{разы} — больше предел не даёт. {_recent_runs(db, task)} "
+            "«Ещё заход» — дать ему заход сверх предела и ехать дальше; "
+            "«Принять как есть» — считать сделанное готовым и уйти по цепочке "
+            "вперёд; «Вернуть на …» — переиграть с названного шага."
+        )
     if reason == "ask":
         return f"Роль на шаге {step} задала вопрос — ответьте ей в чате этой сессии."
     if reason == "artifact":

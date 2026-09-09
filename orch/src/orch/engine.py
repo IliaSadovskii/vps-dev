@@ -1223,10 +1223,20 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
                 self.mark_stopped(self.db.task(task_id), run["session_id"])
             self.stand_if_wanted(self.db.task(task_id))
 
+    # Красный — «сломалось»: роль не сдала ход, файла нет, сессия в ошибке.
+    # Ворота, вопрос и предел заходов — не поломка, там всё сработало как
+    # написано, и красная строка на последней сессии вводила в заблуждение:
+    # виноватым выглядел шаг, который отработал чисто (T35, Реализация 2).
+    ПОЛОМКА = {
+        "no_signal", "artifact", "bad_outcome", "error", "no_worker",
+        "path_mismatch", "chain_broken", "no_worktree", "branch_busy", "abandoned",
+    }
+
     def mark_stopped(self, task, session_id: str | None) -> None:
         if not session_id:
             return
-        self.aoe.set_color(session_id, "red")
+        сломано = (task["wait_reason"] or "") in self.ПОЛОМКА
+        self.aoe.set_color(session_id, "red" if сломано else "amber")
         self.aoe.set_urgent(session_id, True)
 
     def quiet_others(self, task, keep: str | None) -> None:

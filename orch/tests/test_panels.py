@@ -73,6 +73,23 @@ def test_бейдж_прошлого_шага_не_врёт_про_ворота(
     assert текущая["text"].startswith("two")
 
 
+def test_предел_заходов_объясняет_что_случилось(engine, fake, repo):
+    """На воротах владельцу нужен контекст, а не только кнопки.
+
+    «Предел заходов» — самая непонятная остановка: шаг отработал чисто, а
+    задача встала. Без «как сюда пришли» решать не из чего.
+    """
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    with engine.db.tx():
+        engine.db.bump(task_id, status="waiting", wait_reason="max_runs", step="one")
+    task = engine.db.task(task_id)
+    текст = panels._what_to_decide(engine.db, task)
+    assert "Как сюда пришли: one 1 →" in текст
+    assert "уже сходил" in текст
+    assert "Ещё заход" in текст and "Принять как есть" in текст
+
+
 def test_ждущая_задача_первой_и_с_кнопками(engine, fake, repo):
     task_id = start(engine, repo)
     turn(engine, fake, task_id, "one", 1, None)

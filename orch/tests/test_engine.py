@@ -141,7 +141,8 @@ def test_прямой_путь_до_конца(engine, fake, repo):
     # У шага two ворота на исходе ok: задача встала.
     task = engine.db.task(task_id)
     assert task["status"] == WAITING and task["wait_reason"] == "gate"
-    assert fake.colors[sid] == "red"
+    # Ворота — не поломка: жёлтый. Красный остаётся для «сломалось».
+    assert fake.colors[sid] == "amber"
 
     engine.button(task_id, task["revision"], "accept", comment="Годится.")
     engine.reconcile()
