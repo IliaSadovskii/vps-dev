@@ -361,6 +361,10 @@ class Aoe:
     def set_title(self, sid: str, title: str) -> None:
         self._quiet("PATCH", f"/api/sessions/{sid}", {"title": title})
 
+    def set_unread(self, sid: str, unread: bool) -> None:
+        """Снять или поставить точку «не прочитано» на строке сессии."""
+        self._quiet("PATCH", f"/api/sessions/{sid}/unread", {"unread": unread})
+
     def set_pinned(self, sid: str, pinned: bool) -> None:
         """Закрепить строку сессии наверху её группы в сайдбаре."""
         self._quiet("PATCH", f"/api/sessions/{sid}/pin", {"pinned": pinned})

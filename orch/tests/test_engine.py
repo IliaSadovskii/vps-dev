@@ -179,6 +179,7 @@ def test_прямой_путь_до_конца(engine, fake, repo):
     assert task["status"] == WAITING and task["wait_reason"] == "gate"
     # Ворота — не поломка: жёлтый. Красный остаётся для «сломалось».
     assert fake.colors[sid] == "amber"
+    assert fake.unread.get(sid) is not False, "строка, которая ждёт вас, прочитанной не считается"
 
     engine.button(task_id, task["revision"], "accept", comment="Годится.")
     engine.reconcile()
@@ -245,6 +246,16 @@ def test_ещё_заход_на_пределе_поднимает_предел(e
     task = engine.db.task(task_id)
     assert task["status"] == RUNNING and task["step"] == "one"
     assert len(engine.db.runs_of_step(task_id, "one")) == 3
+
+
+def test_сданный_шаг_перестаёт_быть_непрочитанным(engine, fake, repo):
+    """Синяя точка на каждой сданной строке — рябь рядом с цветом состояния."""
+    task_id = start(engine, repo)
+    первая = session_of(engine, task_id)
+    turn(engine, fake, task_id, "one", 1, None)     # шаг сдан, задача уехала на two
+    assert fake.unread.get(первая) is False
+    assert fake.colors[первая] == "green", "цвет состояния остаётся"
+    assert fake.unread.get(session_of(engine, task_id)) is not False, "текущий шаг зовёт"
 
 
 def test_цена_хода_читается_из_ленты_кадров(engine, fake, repo):

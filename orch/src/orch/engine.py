@@ -1075,7 +1075,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
             self.stand_if_wanted(self.db.task(task["id"]))
         else:
             row = self.db.task(task["id"])
-            self.aoe.set_color(session.id, "green" if row["status"] == ST_DONE else None)
+            self.aoe.set_color(session.id, "green" if row["status"] == ST_DONE else "amber")
             if closed_now:
                 # Задача доведена до конца: стенд больше некому смотреть, а
                 # он держит порты, контейнеры и тома.
@@ -1308,10 +1308,12 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
                 continue
             self.aoe.set_urgent(sid, False)
             self.aoe.set_notify(sid, False)
-            # Цвет снимаем, а не красим зелёным: рядом с синей точкой
-            # «не прочитано» два кружка на строке читались как рябь, а зелёный
-            # у прошедшего шага ничего не говорил — он и так закончен.
-            self.aoe.set_color(sid, None)
+            self.aoe.set_color(sid, "green")
+            # Синяя точка «не прочитано» на каждой сданной строке — рябь рядом
+            # с цветом состояния: шаг закончен, ждать там нечего. Снимаем её
+            # только у тех, кто уже отработал; текущая сессия, ворота и сводка
+            # роли остаются непрочитанными — они и должны звать.
+            self.aoe.set_unread(sid, False)
 
     def dress(self, task, chain: Chain, step: Step, session_id: str, run_n: int = 1) -> None:
         """Титул, группа, цвет, пуш — ставятся каждый раз, они безвредны."""
