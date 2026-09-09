@@ -247,6 +247,24 @@ def test_ещё_заход_на_пределе_поднимает_предел(e
     assert len(engine.db.runs_of_step(task_id, "one")) == 3
 
 
+def test_цена_хода_читается_из_ленты_кадров(engine, fake, repo):
+    """Лента AoE отдаёт `frames`; по выдуманному ключу `events` цена терялась."""
+    from orch.aoe import Aoe
+
+    aoe = Aoe.__new__(Aoe)
+    aoe.call = lambda *a, **kw: {
+        "frames": [
+            {"event": {"UsageUpdated": {"usage": {"used": 1, "cost": None}}}},
+            {"event": {"UsageUpdated": {"usage": {"used": 2, "cost_usd": 1.25}}}},
+        ]
+    }
+    assert Aoe.usage(aoe, "s1")[0] == 1.25
+
+    # Поставщик цены не сообщает (подписка) — честный `None`, а не ноль.
+    aoe.call = lambda *a, **kw: {"frames": [{"event": {"UsageUpdated": {"usage": {"cost": None}}}}]}
+    assert Aoe.usage(aoe, "s1")[0] is None
+
+
 def test_нет_сигнала(engine, fake, repo):
     task_id = start(engine, repo)
     sid = session_of(engine, task_id)
