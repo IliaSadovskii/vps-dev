@@ -136,11 +136,94 @@ def test_ревью_возвращает_автору_и_автор_прыгае
     assert deep.step("plan-review").single_next == "plan"
 
 
-def test_пресеты_deep_покрывают_обе_стороны_автономии():
-    """Пресет меняет и ворота, и вопросы: «не трогай меня» — это и то, и другое."""
-    from orch.chain import load_by_name
+def test_пресет_можно_писать_плоско_и_с_пояснением():
+    """Старый формат (плоский словарь) читается как прежде."""
+    from orch.chain import parse
 
-    chain = load_by_name("deep")
+    chain = parse(
+        "name: t\n"
+        "presets:\n"
+        "  старый: { '*.ask': false }\n"
+        "  новый: { when: «зачем», set: { '*.after': false } }\n"
+        "steps:\n"
+        "  - id: one\n    run: {agent: claude, model: haiku}\n    next: done\n"
+    )
+    assert chain.sheet_with_preset("старый")["one"]["ask"] is False
+    assert chain.sheet_with_preset("новый")["one"]["after"] is False
+    assert chain.preset_notes["новый"] == "«зачем»"
+
+
+ШАГИ_КОРОТКИХ = {
+    "quick": ["implementation", "code-review", "review-fixes", "pr"],
+    "standard": [
+        "scoping",
+        "plan",
+        "plan-review",
+        "implementation",
+        "code-review",
+        "review-fixes",
+        "pr",
+    ],
+}
+
+КОРОТКИЕ = tuple(ШАГИ_КОРОТКИХ)
+# Пресеты — общий инвариант всех дорожек разработки, а не свойство коротких.
+ДОРОЖКИ_РАЗРАБОТКИ = ("deep", *КОРОТКИЕ)
+
+
+@pytest.mark.parametrize("имя, шаги", sorted(ШАГИ_КОРОТКИХ.items()))
+def test_короткие_цепочки_состоят_из_обещанных_шагов(имя, шаги):
+    """Дорожка короче deep, но развилка ревью кода в ней та же самая.
+
+    Достижимость `done` из каждого шага здесь не проверяется руками: её
+    проверяет сам линтер при `load` (`orch/src/orch/chain.py:264-268`), и
+    написанная второй раз, эта проверка была бы зелёной ещё до появления
+    цепочек.
+    """
+    c = load(chains_dir() / f"{имя}.yml")
+    assert [s.id for s in c.steps] == шаги
+    # Эталон развилки читаем из deep, а не пишем литералом: иначе короткая
+    # дорожка тихо сохранит маршрут, который у deep уже снят (так и вышло с
+    # исходом `tests`, снятым коммитом `ba7a919`).
+    assert c.step("code-review").next == load(
+        chains_dir() / "deep.yml"
+    ).step("code-review").next
+    assert c.step("review-fixes").next == {"review": "code-review", "ready": "pr"}
+    if имя == "standard":
+        assert c.step("plan").next == {"review": "plan-review", "ready": "implementation"}
+        # Назад из плана — только в разведку: шага `solution` в этой цепочке нет.
+        assert c.step("plan").human_moves == ["plan-review", "scoping"]
+
+
+def test_ворота_коротких_цепочек_стоят_где_обещано():
+    """Quick останавливает владельца один раз, standard — три."""
+    quick = load(chains_dir() / "quick.yml").default_sheet()
+    assert [s for s, v in quick.items() if v["after"]] == ["pr"]
+    assert quick["pr"]["after"] is True
+
+    standard = load(chains_dir() / "standard.yml").default_sheet()
+    assert standard["plan"]["after"] == ["ready"]
+    assert standard["review-fixes"]["after"] == ["ready"]
+    # У `pr` один безымянный переход, и `after: [ready]` линтер отвергнет
+    # (`orch/src/orch/chain.py:256-262`); на таком шаге `true` — то же самое.
+    assert standard["pr"]["after"] is True
+    assert [s for s, v in standard.items() if not v["after"]] == [
+        "scoping",
+        "plan-review",
+        "implementation",
+        "code-review",
+    ]
+
+
+@pytest.mark.parametrize("имя", ДОРОЖКИ_РАЗРАБОТКИ)
+def test_пресеты_покрывают_обе_стороны_автономии(имя):
+    """Пресет меняет и ворота, и вопросы: «не трогай меня» — это и то, и другое.
+
+    Инвариант один на все дорожки разработки, поэтому и тест один: короткие
+    цепочки отвечают на «где владелец участвует» теми же тремя ответами, что
+    и deep.
+    """
+    chain = load(chains_dir() / f"{имя}.yml")
     # Пресеты различаются одним: сколько раз останавливают владельца.
     # Частные наборы («план со мной», «тихо») собираются руками — держать
     # под них имена значит заставлять выбирать из похожего.
@@ -164,22 +247,48 @@ def test_пресеты_deep_покрывают_обе_стороны_автон
     под_присмотром = chain.sheet_with_preset("step-by-step")
     assert all(v["after"] and v["ask"] for v in под_присмотром.values())
 
-    под_присмотром = chain.sheet_with_preset("step-by-step")
-    assert all(v["after"] and v["ask"] for v in под_присмотром.values())
+
+def test_цепочки_читают_только_то_что_сами_производят():
+    """`reads` без имени, которого цепочка не пишет: обещание файла, которого не будет.
+
+    Исключение одно — `remarks.md`: заметки владельца с ворот пишутся после
+    `orch done`, и в `artifact` его нет намеренно (`orch/chains/deep.yml:167-169`).
+    """
+    for path in sorted(chains_dir().glob("*.yml")):
+        c = load(path)
+        производит = {a for s in c.steps for a in s.artifact} | {"remarks.md"}
+        лишние = sorted(
+            f"{s.id}: {name}" for s in c.steps for name in s.reads if name not in производит
+        )
+        assert not лишние, f"{c.name} читает то, чего не производит: {лишние}"
 
 
-def test_пресет_можно_писать_плоско_и_с_пояснением():
-    """Старый формат (плоский словарь) читается как прежде."""
-    from orch.chain import parse
+@pytest.mark.parametrize("имя", КОРОТКИЕ)
+def test_у_коротких_цепочек_есть_описание_для_мастера(имя):
+    """Мастер различает цепочки только по шапке файла — пустая шапка его слепит."""
+    from orch.chain import catalog
 
-    chain = parse(
-        "name: t\n"
-        "presets:\n"
-        "  старый: { '*.ask': false }\n"
-        "  новый: { when: «зачем», set: { '*.after': false } }\n"
-        "steps:\n"
-        "  - id: one\n    run: {agent: claude, model: haiku}\n    next: done\n"
-    )
-    assert chain.sheet_with_preset("старый")["one"]["ask"] is False
-    assert chain.sheet_with_preset("новый")["one"]["after"] is False
-    assert chain.preset_notes["новый"] == "«зачем»"
+    записи = {c["name"]: c for c in catalog()}
+    assert имя in записи, f"цепочки {имя} нет в каталоге: {sorted(записи)}"
+    запись = записи[имя]
+    assert "error" not in запись, запись.get("error")
+    assert запись["description"].strip()
+
+
+@pytest.mark.parametrize("имя", КОРОТКИЕ)
+def test_владение_тестами_подключено_тем_же_шагам_что_в_deep(имя):
+    """Короткая цепочка экономит на замысле, а не на проверке.
+
+    Скрипт владения тестами — единственное, что ловит правку теста чужим
+    шагом, и в `quick` до ворот PR владелец не смотрит ничего.
+    """
+    def с_владением(имя_цепочки):
+        return {
+            s.id
+            for s in load(chains_dir() / f"{имя_цепочки}.yml").steps
+            if "common-test-ownership" in s.includes
+        }
+
+    эталон = с_владением("deep")
+    assert эталон, "в deep владение тестами не подключено ни одному шагу"
+    assert с_владением(имя) == эталон
