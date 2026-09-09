@@ -169,8 +169,8 @@ def test_общий_файл_шага_не_едет_ко_всем(engine, fake, 
         )
         return promptbuild.build(ctx)
 
-    assert "Кто трогал тесты" in text_of("one")
-    assert "Кто трогал тесты" not in text_of("two")
+    assert "Тест приходит своим коммитом" in text_of("one")
+    assert "Тест приходит своим коммитом" not in text_of("two")
 
 
 def test_правило_ворот_только_шагу_с_воротами(engine, fake, repo):
