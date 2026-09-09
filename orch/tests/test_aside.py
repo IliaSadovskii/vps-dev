@@ -279,6 +279,60 @@ def test_сводка_зовёт_владельца_а_обычный_ход_м�
     assert fake.notify.get(сводка[-1]["session_id"]) is True
 
 
+def test_прошлые_находки_дают_только_сводке(engine, fake, repo, tune):
+    """Памяти между прогонами нет — вместо неё лента находок, и только итогу.
+
+    Разбору одного хода чужие прогоны не нужны: это контекст на каждом шаге.
+    """
+    from tests.test_engine import monkey_chain, turn
+
+    (tune / "tune.yml").write_text(
+        SPEC.replace(
+            "  - on: [done, closed]\n    prompt: role-tune-summary",
+            "  - on: [done, closed]\n    history: 5\n    prompt: role-tune-summary",
+        ),
+        encoding="utf-8",
+    )
+    monkey_chain(engine)
+    task_id = start(engine, repo)
+    engine.reconcile()
+    run_id = int(engine.db.aside_runs_open()[0]["id"])
+    engine.aside_note(run_id, "tell", "Промпт врёт про заход", "…", [], пропуск(engine, run_id))
+    engine.aside_done(run_id, "done", пропуск(engine, run_id))
+    engine.note_decision(1, "continue", "", who="panel")
+
+    # Находка «прошлой задачи»: своя в ленту итога не идёт, а чужая — идёт.
+    прошлая = engine.create_task(
+        chain_name="t", project_path=str(repo), text="прошлая задача", backlog=True
+    )
+    with engine.db.tx():
+        engine.db.conn.execute(
+            "UPDATE aside_note SET task_id = ? WHERE id = 1", (прошлая,)
+        )
+
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "ok")
+    task = engine.db.task(task_id)
+    engine.button(task_id, task["revision"], "accept")
+    engine.reconcile()
+    turn(engine, fake, task_id, "three", 1, None)
+
+    разбор = [t for _, t in fake.prompts if "Твой ход" in t][-1]
+    assert "Твои находки по прошлым задачам" not in разбор
+
+    for _ in range(12):
+        сводка = [x for x in асайды(engine) if x["wake"] == "role-tune-summary"]
+        if сводка:
+            break
+        for sid in list(fake.rows):        # роль ходит по одному поводу за раз
+            fake.finish_turn(sid)
+        engine.reconcile()
+    assert сводка, "сводка не завелась"
+    текст = [t for target, t in fake.prompts if target == сводка[-1]["session_id"]][-1]
+    assert "Твои находки по прошлым задачам" in текст
+    assert прошлая in текст and "Промпт врёт про заход" in текст
+
+
 def test_роль_кончается_вместе_с_задачей(engine, fake, repo, tune, monkeypatch):
     """Иначе запись роли `live` навсегда, а её переписка — строкой в сайдбаре."""
     import orch.engine as eng
@@ -363,7 +417,7 @@ def test_промпт_склеен_из_общих_правил_роли_и_ко
     spec = mod.load_by_name("tune")
     объект = mod.Aside(
         name=spec.name, scope=spec.scope, wakes=spec.wakes, workspace="task",
-        memory=spec.memory, rights=spec.rights, includes=spec.includes,
+        rights=spec.rights, includes=spec.includes,
         chains=(), budget={}, enabled=True, title=spec.title,
     )
     monkeypatch.setattr(mod, "enabled", lambda: [объект])
@@ -376,18 +430,17 @@ def test_промпт_склеен_из_общих_правил_роли_и_ко
     assert "Ты побочная роль" in текст, "общие правила не приклеились"
     assert "Наладчик: проверка входа" in текст, "промпт повода не приклеился"
     assert "Твой ход: `A1`" in текст and task_id in текст
-    assert "Права, выданные тебе: hold, memory, patch, pr, read" in текст
+    assert "Права, выданные тебе: hold, patch, pr, read" in текст
 
 
-# ── копилка (Менеджер проекта) ───────────────────────────────────────────
+# ── Менеджер проекта ─────────────────────────────────────────────────────
 MANAGER = """
 name: manager
 title: Менеджер проекта
 scope: project
 enabled: true
 workspace: task
-memory: project
-rights: [read, memory, patch, pr]
+rights: [read, patch, pr]
 mirror: worktree:project
 wakes:
   - on: [done, closed]
@@ -429,34 +482,6 @@ def test_менеджер_просыпается_на_законченной_з�
     assert engine.db.task(task_id)["status"] == "done"
     engine.reconcile()
     assert [x["wake"] for x in асайды(engine)] == ["role-manager"]
-
-
-def test_менеджеру_сказали_где_его_копилка(engine, fake, repo, manager, tmp_path):
-    до_конца(engine, fake, repo)
-    engine.reconcile()
-    текст = fake.prompts[-1][1]
-    assert "Твоя копилка:" in текст and "manager-" in текст
-
-
-def test_копилка_проекта_дописывается(engine, fake, repo, manager, tmp_path):
-    до_конца(engine, fake, repo)
-    engine.reconcile()
-    run_id = int(engine.db.aside_runs_open()[0]["id"])
-    assert "записано" in engine.aside_memory(
-        run_id, "Отвергли вариант с очередью: нет воркера.", пропуск(engine, run_id)
-    )
-    файлы = list((tmp_path / "memory").glob("manager-*.md"))
-    assert файлы and "нет воркера" in файлы[0].read_text(encoding="utf-8")
-
-
-def test_без_права_копилки_роль_не_пишет(engine, fake, repo, manager):
-    (manager / "manager.yml").write_text(
-        MANAGER.replace("[read, memory, patch, pr]", "[read]"), encoding="utf-8"
-    )
-    до_конца(engine, fake, repo)
-    engine.reconcile()
-    run_id = int(engine.db.aside_runs_open()[0]["id"])
-    assert "не выдано право" in engine.aside_memory(run_id, "…", пропуск(engine, run_id))
 
 
 # ── находки ревью: пропуск, курсор, бюджет, канал ────────────────────────
@@ -529,6 +554,7 @@ def test_наладчику_дают_живое_дерево_и_копию_по�
     subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "init"], cwd=живое,
                    check=True, env=env)
 
+    monkeypatch.setattr(mod, "user_dir", lambda: tmp_path / "нет")   # живую машину не читаем
     spec = mod.Aside(
         name="tune", scope="run", wakes=mod.load_by_name("tune").wakes,
         workspace=f"repo:{живое}", mirror=f"worktree:{живое}",

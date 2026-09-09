@@ -680,11 +680,6 @@ def cmd_aside(args: argparse.Namespace) -> int:
             options=options,
         )
         message = "задача встанет на владельце" if args.hold else "находка ляжет в сводку"
-    elif args.action == "memory":
-        if not args.text:
-            raise Refused('нужен текст: --text "…"')
-        request["text"] = args.text
-        message = "запись ляжет в копилку"
     else:
         request["outcome"] = args.outcome
         message = "ход закрыт"
@@ -1024,7 +1019,7 @@ def build_parser() -> argparse.ArgumentParser:
         "aside",
         help="побочная роль: записать находку владельцу или закончить ход",
     )
-    p.add_argument("action", choices=["note", "done", "memory"])
+    p.add_argument("action", choices=["note", "done"])
     p.add_argument("--id", required=True, help="номер вашего хода из промпта, например A17")
     p.add_argument(
         "--pass", dest="pass_token", required=True,
@@ -1040,7 +1035,6 @@ def build_parser() -> argparse.ArgumentParser:
         help='вариант ответа, например back=plan:"вернуть на план"',
     )
     p.add_argument("--outcome", help="чем кончился ход (для «done»)")
-    p.add_argument("--text", help="текст записи в копилку")
     p.set_defaults(func=cmd_aside)
 
     p = sub.add_parser(

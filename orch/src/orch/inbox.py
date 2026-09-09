@@ -58,11 +58,6 @@ class InboxMixin:
                             request.get("options") or [],
                             request.get("token") or "",
                         )
-                    elif request["action"] == "memory":
-                        answer = self.aside_memory(
-                            int(request["run"]), request.get("text") or "",
-                            request.get("token") or "",
-                        )
                     else:
                         answer = self.aside_done(
                             int(request["run"]), request.get("outcome"),

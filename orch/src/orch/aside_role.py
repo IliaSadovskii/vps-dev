@@ -440,12 +440,11 @@ class AsideMixin:
         if wake.session == "fresh":
             # Сессия повода уедет в архив, как только ход сдан: то, что роль
             # сказала только в чат, там и останется. Значит найденное надо
-            # класть находкой или в копилку — оттуда его возьмёт сводка.
+            # класть находкой — только оттуда его возьмёт сводка.
             parts.append(
                 "Эта переписка заведена под один повод и уйдёт в архив, как только "
                 "ты сдашь ход. Всё, что должно дожить до конца прогона, клади "
-                "находкой (`orch aside note`) или в копилку — сказанное только в "
-                "чат потеряется."
+                "находкой (`orch aside note`) — сказанное только в чат потеряется."
             )
         return "\n\n".join(parts)
 
@@ -480,6 +479,11 @@ class AsideMixin:
             хвост = self.short_tail(spec, task, payload, шаг, заход)
             if хвост:
                 строки += ["", хвост]
+            # Итог собирают и в переписке, где роль уже ходила: лента прошлых
+            # задач нужна ему и там.
+            прошлое = self.notes_history(spec, task, self.wake_history(spec, run))
+            if прошлое:
+                строки += ["", прошлое]
             return "\n".join(строки)
 
         lines = [
@@ -502,10 +506,6 @@ class AsideMixin:
                 "`artifacts/` (файлы ролей), `logs/`, `chain.yml` (замороженная цепочка).",
             ]
         lines += ["", "Права, выданные тебе: " + ", ".join(sorted(spec.rights)) + "."]
-        if spec.may("memory"):
-            lines.append(
-                f"Твоя копилка: `{self.memory_path(spec, {'task_id': task['id'] if task is not None else None, 'scope_key': self.aside_key(spec, task, event) or ''})}`"
-            )
         mirror = self.aside_mirror(spec, task)
         if mirror:
             lines += [
@@ -535,7 +535,50 @@ class AsideMixin:
         лента = self.notes_ledger(spec, task, payload)
         if лента:
             lines += ["", лента]
+        прошлое = self.notes_history(spec, task, self.wake_history(spec, run))
+        if прошлое:
+            lines += ["", прошлое]
         return "\n".join(lines)
+
+    def wake_history(self, spec: Aside, run) -> int:
+        """Сколько прошлых находок просит повод этого хода."""
+        wake = spec.wake_by_prompt(run["wake"]) if run["wake"] else None
+        return wake.history if wake else 0
+
+    def notes_history(self, spec: Aside, task, сколько: int) -> str:
+        """Находки роли по прошлым задачам — с ответами владельца.
+
+        Памяти между прогонами у ролей нет: копилки сняты (2026-09-09), и
+        всё, что роль помнит, лежит в её же находках. Здесь их отдают
+        обратно, чтобы на итоге было видно повторяющееся: тот же дефект в
+        третий раз — это уже не наблюдение, а причина править.
+
+        Даётся только поводу с `history` — то есть итогу. Разбор одного хода
+        обходится без чужих прогонов: там нужен этот шаг, а не история.
+        """
+        if сколько < 1:
+            return ""
+        свои = task["id"] if task is not None else None
+        строки = []
+        for note in reversed(self.db.notes()):
+            if свои and note["task_id"] == свои:
+                continue
+            aside = self.db.aside(int(note["aside_id"]))
+            if aside is None or aside["name"] != spec.name:
+                continue
+            ответ = note["decision"] or ("без ответа" if note["state"] in ("open", "sent") else "")
+            строки.append(
+                f"- {note['task_id']}: «{note['title']}»" + (f" → {ответ}" if ответ else "")
+            )
+            if len(строки) >= сколько:
+                break
+        if not строки:
+            return ""
+        return (
+            "## Твои находки по прошлым задачам\n\n"
+            "Свежие сверху. Повторившееся — повод сказать об этом отдельно.\n\n"
+            + "\n".join(строки)
+        )
 
     def wake_title(self, spec: Aside, kind: str) -> str:
         wake = spec.wake_for(kind)
@@ -702,7 +745,7 @@ class AsideMixin:
         Поводы с `session: fresh` заводят свою сессию на каждый шаг, и за
         прогон их набегает по две на шаг: сайдбар зарастает так, что живой
         работы в нём не видно (T26). Всё, что роль на таком ходу нашла, уже
-        лежит в базе (находки и лента) и в копилке, а сводку в конце прогона
+        лежит в базе (находки и лента), а сводку в конце прогона
         собирает общая переписка — значит карточка после сдачи хода не нужна.
 
         В архив, а не насовсем: переписка остаётся, а суточная уборка
@@ -908,34 +951,6 @@ class AsideMixin:
                 {"note": note_id, "verb": verb, "target": target, "who": who},
             )
         return answer
-
-    # ── копилка ──────────────────────────────────────────────────────────
-    def aside_memory(self, run_id: int, text: str, token: str = "") -> str:
-        run, aside, spec, refuse = self.aside_caller(run_id, token, need="memory")
-        if refuse:
-            return refuse
-        path = self.memory_path(spec, aside)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(f"\n## {now()}\n\n{text.strip()}\n")
-        with self.db.tx():
-            self.db.event(
-                aside["task_id"], "aside_memory", {"aside": aside["name"], "file": str(path)}
-            )
-        return f"записано в {path}"
-
-    def memory_path(self, spec: Aside, aside) -> Path:
-        """Копилка роли: одна на машину, на проект или на задачу.
-
-        Живёт рядом с базой, а не в репозитории: это память машины о
-        прогонах, ей не место в чужих коммитах.
-        """
-        root = STATE_DIR / "memory"
-        if spec.memory == "task" and aside["task_id"]:
-            return root / f"{spec.name}-{aside['task_id']}.md"
-        if spec.memory == "project":
-            return root / f"{spec.name}-{slug(aside['scope_key'])}.md"
-        return root / f"{spec.name}.md"
 
     def spec_of(self, name: str) -> Aside | None:
         for spec in spec_mod.all_asides():

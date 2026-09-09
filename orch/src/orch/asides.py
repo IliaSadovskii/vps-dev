@@ -20,7 +20,7 @@ from .db import STATE_DIR
 # `answer` (ответить роли вместо владельца) убрано вместе с Тимлидом:
 # ворота стоят там, где владелец боится чужого решения, и подставлять туда
 # ещё одного агента на той же модели незачем.
-RIGHTS = {"read", "hold", "move", "patch", "pr", "memory"}
+RIGHTS = {"read", "hold", "move", "patch", "pr"}
 SCOPES = {"run", "task", "project", "machine"}
 
 
@@ -50,6 +50,10 @@ class Wake:
     # по `Idle`. Для сводки конца прогона — единственного хода, который
     # владелец должен прочитать обязательно.
     attention: bool = False
+    # Сколько находок роли по прошлым задачам вклеить в задание. Ставится
+    # только там, где роль подводит итог: разбору одного хода чужие прогоны
+    # не нужны, а контекст стоят денег каждый ход.
+    history: int = 0
 
 
 @dataclass(frozen=True)
@@ -66,7 +70,6 @@ class Aside:
     # ветку — в живом дереве лежит незакоммиченная работа владельца, и
     # коммитить там нельзя (`ASIDE-PLAN.md` §7).
     mirror: str = ""
-    memory: str = "machine"
     rights: frozenset[str] = field(default_factory=lambda: frozenset({"read"}))
     includes: tuple[str, ...] = ("common-aside",)   # общие правила побочных ролей
     chains: tuple[str, ...] = ()          # пусто — на всех цепочках
@@ -205,6 +208,7 @@ def parse(text: str, source: str = "?") -> Aside:
                 effort=(str(run["effort"]) if run.get("effort") else None),
                 session=session,
                 attention=bool(item.get("attention")),
+                history=int(item.get("history") or 0),
             )
         )
     if not wakes:
@@ -227,7 +231,6 @@ def parse(text: str, source: str = "?") -> Aside:
         wakes=tuple(wakes),
         workspace=workspace,
         mirror=str(raw.get("mirror") or ""),
-        memory=str(raw.get("memory") or "machine"),
         rights=frozenset(rights),
         includes=tuple(str(c) for c in (raw.get("includes") or ["common-aside"])),
         chains=tuple(str(c) for c in (raw.get("chains") or [])),

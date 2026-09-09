@@ -27,22 +27,6 @@ class PromptContextMixin:
         """
         return (self.sheet(task).get(step.id) or {}).get("after", step.human_after)
 
-    # Сколько копилки отдаём шагу: последние записи, а не всё подряд —
-    # промпт не резиновый, а старое обычно уже в коде.
-    MEMORY_TAIL = 6000
-
-    def project_memory(self, task) -> str:
-        """Копилка проекта, которую ведёт Менеджер (`ASIDE-PLAN.md` §11)."""
-        from .db import STATE_DIR
-        from .naming import slug
-
-        path = STATE_DIR / "memory" / f"manager-{slug(task['project_path'])}.md"
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError:
-            return ""
-        return text[-self.MEMORY_TAIL:] if len(text) > self.MEMORY_TAIL else text
-
     def extra_includes(self, task, step: Step) -> list[str]:
         """Общие файлы, которые движок добавляет по состоянию, а не по цепочке.
 
@@ -81,7 +65,6 @@ class PromptContextMixin:
             sub_prompts=self.sub_prompts(step),
             extra_includes=self.extra_includes(task, step),
             gate_after=self.gate_after(task, step),
-            memory_text=self.project_memory(task),
             stand_name=stands.name_of(task) if task["worktree_path"] else "",
             branch=task["branch"] or "",
             base_branch=task["base_branch"] or "",

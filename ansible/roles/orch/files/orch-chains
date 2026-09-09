@@ -714,7 +714,7 @@ function roleCard(a, data) {
     a.custom ? el('span', { class: 'tag', text: 'правлено' }) : null));
   if (a.description) card.append(el('p', { class: 'hint', text: a.description }));
   const RIGHTS = { read: 'читает', hold: 'может остановить ход', move: 'двигает задачу',
-    patch: 'правит файлы', pr: 'коммитит и открывает PR', memory: 'ведёт копилку' };
+    patch: 'правит файлы', pr: 'коммитит и открывает PR' };
   const SCOPE = { run: 'заход', task: 'задача', project: 'проект', machine: 'машина' };
   card.append(el('p', { class: 'hint' },
     el('b', { text: 'Что умеет: ' }),
