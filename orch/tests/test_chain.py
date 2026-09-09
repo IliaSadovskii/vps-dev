@@ -182,11 +182,12 @@ def test_короткие_цепочки_состоят_из_обещанных_
     """
     c = load(chains_dir() / f"{имя}.yml")
     assert [s.id for s in c.steps] == шаги
-    assert c.step("code-review").next == {
-        "findings": "review-fixes",
-        "tests": "implementation",
-        "clean": "pr",
-    }
+    # Эталон развилки читаем из deep, а не пишем литералом: иначе короткая
+    # дорожка тихо сохранит маршрут, который у deep уже снят (так и вышло с
+    # исходом `tests`, снятым коммитом `ba7a919`).
+    assert c.step("code-review").next == load(
+        chains_dir() / "deep.yml"
+    ).step("code-review").next
     assert c.step("review-fixes").next == {"review": "code-review", "ready": "pr"}
     if имя == "standard":
         assert c.step("plan").next == {"review": "plan-review", "ready": "implementation"}
