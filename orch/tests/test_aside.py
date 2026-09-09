@@ -246,6 +246,8 @@ def test_строка_роли_помечена_знаком_и_бейджем(e
     assert fake.rows[sid]["title"].startswith("🔧 T"), fake.rows[sid]["title"]
     assert "· Наладчик" in fake.rows[sid]["title"], "имя роли после номера задачи"
 
+    assert fake.pinned.get(sid) is True, "строка роли не закреплена наверху группы"
+
     бейдж = panels.aside_row_badge("Наладчик", "Шаг начал ход", идёт=True)
     assert бейдж["text"] == "шаг начал ход" and бейдж["tone"] == "info"
     дом = panels.aside_row_badge("Наладчик")

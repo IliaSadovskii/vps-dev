@@ -294,6 +294,9 @@ class AsideMixin:
         # роли молчат — иначе пуш на каждый шаг.
         self.aoe.set_notify(session.id, wake.attention)
         self.aoe.set_color(session.id, "blue")
+        # Роль стоит в группе задачи вперемешку с её шагами; закрепляем наверху,
+        # чтобы наблюдателя было видно, не разглядывая список.
+        self.aoe.set_pinned(session.id, True)
         if свежая:
             self.aside_home(spec, aside_id, task, path)
 
@@ -356,6 +359,7 @@ class AsideMixin:
             )
         self.aoe.set_notify(session.id, False)
         self.aoe.set_color(session.id, "blue")
+        self.aoe.set_pinned(session.id, True)
 
     def aside_home_prompt(self, spec: Aside, task) -> str:
         """Заводка общей переписки: общие правила и чем эта переписка занята."""

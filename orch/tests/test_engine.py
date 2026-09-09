@@ -1244,7 +1244,7 @@ def test_стенд_поднимает_роль_а_движок_даёт_ей_п
     assert engine.button(task_id, task["revision"], "stand") == "роль «Стенд» поднимает окружение"
     task = engine.db.task(task_id)
     sid = engine.stand_session(task_id)
-    assert sid and fake.rows[sid]["title"] == f"🧪 {task_id} · стенд"
+    assert sid and fake.rows[sid]["title"] == f"🐳 {task_id} · стенд"
     prompt = [t for target, t in fake.prompts if target == sid][0]
     assert "# Стенд" in prompt and task["stand"] in prompt and "8020" in prompt
 

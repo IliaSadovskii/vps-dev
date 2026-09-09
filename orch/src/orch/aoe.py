@@ -361,6 +361,10 @@ class Aoe:
     def set_title(self, sid: str, title: str) -> None:
         self._quiet("PATCH", f"/api/sessions/{sid}", {"title": title})
 
+    def set_pinned(self, sid: str, pinned: bool) -> None:
+        """Закрепить строку сессии наверху её группы в сайдбаре."""
+        self._quiet("PATCH", f"/api/sessions/{sid}/pin", {"pinned": pinned})
+
     def set_group(self, sid: str, group: str) -> None:
         self._quiet("PATCH", f"/api/sessions/{sid}/group", {"group": group})
 
