@@ -99,6 +99,14 @@ class AsideMixin:
             if event["kind"] not in ("done", "closed", "note_decided"):
                 return "skip"
 
+        if task is not None and event["kind"] in ("done", "closed") and not self.db.conn.execute(
+            "SELECT 1 FROM run WHERE task_id = ? LIMIT 1", (task["id"],)
+        ).fetchone():
+            # Задачу закрыли, ни разу не запустив (карточка долга из
+            # бэклога). Подводить итог нечему, помнить нечего: сводка и
+            # записка о такой задаче — сожжённые сессии и лишний шум в
+            # сайдбаре (T25).
+            return "skip"
         aside_id = self.db.aside_live(spec.name, key)
         aside_id = int(aside_id["id"]) if aside_id else None
         if aside_id is not None and self.aside_live_runs(aside_id) >= spec.limit("max_live", 1):

@@ -668,3 +668,22 @@ def test_повод_в_переписку_ждёт_пока_она_освобо�
     fake.finish_turn(первый["session_id"])
     engine.reconcile()
     assert len(асайды(engine)) == 2, "повод потерялся вместе с занятой сессией"
+
+
+def test_снятая_из_бэклога_задача_никого_не_будит(engine, fake, repo, tune):
+    """«Удалить» на карточке бэклога — не конец прогона.
+
+    Задача ни разу не запускалась: подводить итог нечему, а сводка и записка
+    стоили бы двух сессий на пустом месте (T25).
+    """
+    monkey_chain(engine)
+    task_id = engine.create_task(
+        chain_name="t", project_path=str(repo), text="Долг по PR", backlog=True
+    )
+    engine.reconcile()
+    task = engine.db.task(task_id)
+    engine.button(task_id, task["revision"], "close")
+    engine.reconcile()
+    engine.reconcile()
+    assert engine.db.task(task_id)["status"] == "closed"
+    assert not [x for x in асайды(engine) if x["wake"] == "role-tune-summary"]
