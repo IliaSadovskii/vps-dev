@@ -110,9 +110,8 @@ steps:
     prompt: { reads: [scoping.md, implementation.md, review-fixes.md] }
     artifact: [review.md, review-defects.md, review-security.md, review-simplicity.md]
     next:
-      findings: review-fixes
-      tests: implementation     # находка про тесты: их правит только Реализация
-      clean: pr                 # чинить нечего — сразу черновик PR
+      findings: review-fixes    # есть блокирующее — чинит Правки, тесты тоже их
+      clean: pr                 # блокирующего нет — черновик PR, мелочь уедет долгом
     human: { ask: false }
     limits: { max_runs: 2 }      # первое чтение и, если Правки попросят, перечитка
 
