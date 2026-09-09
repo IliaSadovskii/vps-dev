@@ -34,6 +34,7 @@ class AsideMixin:
     def pump_asides(self, sessions: dict[str, Session]) -> None:
         """Довести побочные ходы и завести новые по накопившимся поводам."""
         self.watch_aside_runs(sessions)
+        self.sweep_aside_sessions(sessions)
         for spec in self.aside_specs():
             try:
                 self.pump_aside(spec)
@@ -329,6 +330,16 @@ class AsideMixin:
                 f"(«{wake.title or wake.prompt}») — держись их."
             )
         parts.append(self.aside_context(spec, run, task, event, кратко=bool(было)))
+        if wake.session == "fresh":
+            # Сессия повода уедет в архив, как только ход сдан: то, что роль
+            # сказала только в чат, там и останется. Значит найденное надо
+            # класть находкой или в копилку — оттуда его возьмёт сводка.
+            parts.append(
+                "Эта переписка заведена под один повод и уйдёт в архив, как только "
+                "ты сдашь ход. Всё, что должно дожить до конца прогона, клади "
+                "находкой (`orch aside note`) или в копилку — сказанное только в "
+                "чат потеряется."
+            )
         return "\n\n".join(parts)
 
     def aside_context(self, spec: Aside, run, task, event, кратко: bool = False) -> str:
@@ -576,6 +587,39 @@ class AsideMixin:
                     run["task_id"],
                     "aside_ended",
                     {"aside": run["name"], "run": int(run["id"]), "cost_usd": cost},
+                )
+
+    def sweep_aside_sessions(self, sessions: dict[str, Session]) -> None:
+        """Сессия повода живёт один ход: сдала — уезжает в архив.
+
+        Поводы с `session: fresh` заводят свою сессию на каждый шаг, и за
+        прогон их набегает по две на шаг: сайдбар зарастает так, что живой
+        работы в нём не видно (T26). Всё, что роль на таком ходу нашла, уже
+        лежит в базе (находки и лента) и в копилке, а сводку в конце прогона
+        собирает общая переписка — значит карточка после сдачи хода не нужна.
+
+        В архив, а не насовсем: переписка остаётся, а суточная уборка
+        (`orch-sweep`) отправит её в корзину через три дня. Общую переписку
+        роли не трогаем никогда — в ней с ролью разговаривает владелец.
+        """
+        for run in self.db.aside_runs_in_sessions(list(sessions)):
+            spec = self.spec_of(run["name"])
+            wake = spec.wake_by_prompt(run["wake"]) if spec else None
+            if wake is None or wake.session != "fresh":
+                continue
+            sid = run["session_id"]
+            if sid == run["aside_session"]:
+                continue
+            session = sessions.get(sid)
+            if session is None or session.status in (STARTING, RUNNING, WAITING):
+                # Ход сдан командой, но текст ещё дописывается или роль
+                # спросила владельца: архивируем на следующем проходе.
+                continue
+            self.aoe.archive(sid)
+            with self.db.tx():
+                self.db.event(
+                    run["task_id"], "aside_session_archived",
+                    {"aside": run["name"], "run": int(run["id"]), "session": sid},
                 )
 
     def retry_aside(self, run) -> None:

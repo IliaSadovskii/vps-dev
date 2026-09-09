@@ -146,6 +146,42 @@ def test_ход_роли_закрывается_когда_сессия_осво
     assert sid not in fake.archived, "сессия живёт до владельца"
 
 
+def test_сессия_разбора_уезжает_в_архив_после_хода(engine, fake, repo, tune):
+    """Повод со своей сессией: ход сдан — карточка не висит в сайдбаре (T26).
+
+    Иначе за прогон их набегает по две на шаг, и живой работы в сайдбаре не
+    видно. Найденное роль уже сложила в базу, сводку соберёт общая переписка.
+    """
+    (tune / "tune.yml").write_text(
+        SPEC.replace(
+            "  - on: [run_started]\n    prompt: role-tune-start",
+            "  - on: [run_started]\n    prompt: role-tune-start\n    session: fresh",
+        ),
+        encoding="utf-8",
+    )
+    start(engine, repo)
+    engine.reconcile()
+    sid = асайды(engine)[0]["session_id"]
+    engine.reconcile()
+    assert sid not in fake.archived, "сессию убрали, пока ход ещё идёт"
+
+    fake.finish_turn(sid)
+    engine.reconcile()          # ход закрылся
+    engine.reconcile()          # уборка увидела свободную сессию
+    assert sid in fake.archived, "сессия разбора осталась в сайдбаре"
+
+
+def test_общая_переписка_роли_в_архив_не_уезжает(engine, fake, repo, tune):
+    """Разговор владельца с ролью живёт весь прогон, чем бы ход ни кончился."""
+    start(engine, repo)
+    engine.reconcile()
+    sid = асайды(engine)[0]["session_id"]
+    fake.finish_turn(sid)
+    engine.reconcile()
+    engine.reconcile()
+    assert sid not in fake.archived
+
+
 # ── находки ──────────────────────────────────────────────────────────────
 def test_находка_с_остановкой_ставит_задачу_на_владельца(engine, fake, repo, tune):
     task_id = start(engine, repo)

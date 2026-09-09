@@ -83,6 +83,13 @@ class Aside:
                 return wake
         return None
 
+    def wake_by_prompt(self, prompt: str) -> Wake | None:
+        """Повод по имени промпта: именно его движок пишет в `aside_run.wake`."""
+        for wake in self.wakes:
+            if wake.prompt == prompt:
+                return wake
+        return None
+
     def may(self, right: str) -> bool:
         return right in self.rights
 
