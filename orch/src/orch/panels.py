@@ -578,12 +578,10 @@ def row_badge(db: Db, task, session_id: str, chain: Chain | None = None) -> dict
     if run is None:
         return {"text": task["id"], "tone": "neutral"}
     if run["ended_at"] and run["step"] != task["step"]:
-        outcome = run["outcome"] or ("сдан" if run["signalled"] else "без сигнала")
-        return {
-            "text": f"{run['step']} → {outcome}",
-            "tone": "neutral",
-            "tooltip": f"{task['id']} · заход {run['n']} закончен",
-        }
+        # Прошедший шаг молчит: его исход виден в панели задачи и в пути, а в
+        # сайдбаре каждая такая строка стоила второй строки высоты — на задаче
+        # из восьми шагов это половина экрана ни о чём.
+        return {}
     status = task["status"]
     if status == WAITING:
         reason = task["wait_reason"] or ""

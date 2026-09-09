@@ -59,16 +59,18 @@ def test_бейдж_строки_сессии_говорит_зачем_смот
     assert "нет сигнала" in badge["text"] and "one" in badge["text"]
 
 
-def test_бейдж_прошлого_шага_не_врёт_про_ворота(engine, fake, repo):
-    """У задачи много сессий: пометка «ворота» на строке прошлого шага — ложь."""
+def test_строка_прошлого_шага_молчит(engine, fake, repo):
+    """У задачи много сессий: бейдж есть только у текущей.
+
+    Пометка «ворота» на строке прошлого шага была бы ложью, а его исход стоил
+    второй строки высоты в сайдбаре на каждой из восьми строк задачи.
+    """
     task_id = start(engine, repo)
     первая = session_of(engine, task_id)
     turn(engine, fake, task_id, "one", 1, None)     # шаг сдан, задача на шаге two
     task = engine.db.task(task_id)
     chain = engine.chain_of(task)
-    прошлая = panels.row_badge(engine.db, task, первая, chain)
-    assert прошлая["text"].startswith("one →")
-    assert прошлая["tone"] == "neutral"
+    assert panels.row_badge(engine.db, task, первая, chain) == {}
     текущая = panels.row_badge(engine.db, task, session_of(engine, task_id), chain)
     assert текущая["text"].startswith("two")
 

@@ -36,6 +36,7 @@ class Worker:
         self.drawn: dict[tuple[str, str], str] = {}
         self.session_of_task: dict[str, str] = {}
         self.aside_of_session: dict[str, dict] = {}
+        self.redrawn_at = 0.0
         # Клик приходит в своём потоке (иначе воркер запирает сам себя на
         # ответе хоста), а соединение SQLite привязано к потоку, в котором
         # создано. Поэтому всё, что трогает базу, кладётся в очередь и
@@ -450,6 +451,12 @@ class Worker:
         settings = self._settings_object()
         return Engine(Db(), Aoe(self.base_url), settings)
 
+    # Как часто перерисовывать панели целиком, даже если ничего не менялось.
+    # Хост иногда теряет состояние плагина (переподключение клиента), и тогда
+    # бейджи и панели исчезают до следующего изменения — а его может не быть
+    # часами. Полная перерисовка дёшева и лечит это сама.
+    REDRAW_EVERY_S = 60.0
+
     def tick(self) -> None:
         if self.settings_dirty.is_set():
             self.settings_dirty.clear()
@@ -469,7 +476,10 @@ class Worker:
             self.engine.reconcile()
         except Exception as exc:  # noqa: BLE001 — воркер не падает от одной задачи
             log(f"orch-plugin: проход движка упал: {exc!r}")
-        self.push_all(force=clicked)
+        пора = time.time() - self.redrawn_at >= self.REDRAW_EVERY_S
+        if пора:
+            self.redrawn_at = time.time()
+        self.push_all(force=clicked or пора)
 
 
 def _next_knobs(after: bool, ask: bool) -> tuple[bool, bool]:
