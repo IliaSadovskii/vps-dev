@@ -38,6 +38,42 @@ steps:
 """
 
 
+# Цепочка, где шаг просит перечитать сам себя: возврат на себя круг не
+# открывает, поэтому предел заходов бьётся именно здесь.
+CHAIN_SELF = """
+name: t
+steps:
+  - id: one
+    run: {agent: claude, model: haiku}
+    artifact: [one.md]
+    next:
+      again: one
+      ok: two
+    limits: {max_runs: 2}
+  - id: two
+    run: {agent: claude, model: haiku}
+    artifact: [two.md]
+    next: done
+"""
+
+
+def monkey_chain_self(engine):
+    import orch.engine as mod
+
+    mod.load_chain = lambda path: parse_chain(CHAIN_SELF, source="тест")
+
+
+def start_self(engine, repo):
+    """Задача на цепочке с возвратом на себя: `start` ставит обычную."""
+    engine.db.conn.execute("DELETE FROM task")
+    monkey_chain_self(engine)
+    task_id = engine.create_task(
+        chain_name="t", project_path=str(repo), text="Проверить предел."
+    )
+    engine.reconcile()
+    return task_id
+
+
 # ── подмостки ────────────────────────────────────────────────────────────
 
 def до_остановки_без_сигнала(engine, fake, sid):
@@ -153,35 +189,53 @@ def test_прямой_путь_до_конца(engine, fake, repo):
     assert task["status"] == DONE and task["closed_at"]
 
 
-def test_возврат_ролью_и_предел_заходов(engine, fake, repo):
+def test_возврат_ролью_открывает_шагу_новый_предел(engine, fake, repo):
+    """Работа, честно отправленная выше по цепочке, начинает круг заново.
+
+    Иначе задача, которую Ревью кода вернуло в Реализацию, тут же встаёт
+    «предел заходов» на самом Ревью, потратившем заходы в прошлом круге
+    (T26 и T35, 2026-09-09).
+    """
     task_id = start(engine, repo)
-    sid = turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "back")     # two вернул работу на one
+    turn(engine, fake, task_id, "one", 2, None)
+    turn(engine, fake, task_id, "two", 2, "back")
+    turn(engine, fake, task_id, "one", 3, None)
 
-    # two возвращает на one
-    sid = turn(engine, fake, task_id, "two", 1, "back")
-    assert engine.db.task(task_id)["step"] == "one"
+    task = engine.db.task(task_id)
+    assert task["status"] == RUNNING and task["step"] == "two"
+    assert len(engine.db.runs_of_step(task_id, "two")) == 3, "третий заход не начался"
 
-    # one сдаёт снова, two идёт вторым заходом
-    sid = turn(engine, fake, task_id, "one", 2, None)
-    assert engine.db.task(task_id)["step"] == "two"
 
-    # второй заход two снова back — предел заходов у two равен 2
-    sid = turn(engine, fake, task_id, "two", 2, "back")
-    assert engine.db.task(task_id)["step"] == "one"
+def test_петля_возвратов_упирается_во_владельца(engine, fake, repo, monkeypatch):
+    """Круг, открытый ролью, снимает предел — значит петлю держит свой счёт."""
+    import orch.engine as mod
 
-    sid = turn(engine, fake, task_id, "one", 3, None)
+    monkeypatch.setattr(mod, "MAX_LOOPS", 2)
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    for заход in (1, 2, 3):
+        turn(engine, fake, task_id, "two", заход, "back")
+        turn(engine, fake, task_id, "one", заход + 1, None)
+    task = engine.db.task(task_id)
+    assert task["status"] == WAITING and task["wait_reason"] == "loops"
+
+
+def test_возврат_на_себя_круг_не_открывает(engine, fake, repo):
+    """Шаг, который просит перечитать сам себя, упирается в свой предел."""
+    task_id = start_self(engine, repo)
+    turn(engine, fake, task_id, "one", 1, "again")
+    turn(engine, fake, task_id, "one", 2, "again")
     task = engine.db.task(task_id)
     assert task["status"] == WAITING and task["wait_reason"] == "max_runs"
 
 
 def test_ещё_заход_на_пределе_поднимает_предел(engine, fake, repo):
     """Кнопка на пределе заходов обязана дать заход, а не остановить снова."""
-    task_id = start(engine, repo)
-    turn(engine, fake, task_id, "one", 1, None)
-    turn(engine, fake, task_id, "two", 1, "back")
-    turn(engine, fake, task_id, "one", 2, None)
-    turn(engine, fake, task_id, "two", 2, "back")
-    turn(engine, fake, task_id, "one", 3, None)
+    task_id = start_self(engine, repo)
+    turn(engine, fake, task_id, "one", 1, "again")
+    turn(engine, fake, task_id, "one", 2, "again")
     task = engine.db.task(task_id)
     assert task["wait_reason"] == "max_runs"
 
@@ -189,8 +243,8 @@ def test_ещё_заход_на_пределе_поднимает_предел(e
     engine.reconcile()
     engine.reconcile()
     task = engine.db.task(task_id)
-    assert task["status"] == RUNNING and task["step"] == "two"
-    assert len(engine.db.runs_of_step(task_id, "two")) == 3
+    assert task["status"] == RUNNING and task["step"] == "one"
+    assert len(engine.db.runs_of_step(task_id, "one")) == 3
 
 
 def test_нет_сигнала(engine, fake, repo):

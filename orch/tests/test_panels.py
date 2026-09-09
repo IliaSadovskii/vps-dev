@@ -254,12 +254,11 @@ def test_ворота_не_называют_владельцу_исход(engine
 
 def test_на_пределе_заходов_владелец_выбирает_исход(engine, fake, repo):
     """«Принять как есть» не повторяет прошлый исход: он и ведёт по кругу."""
-    task_id = start(engine, repo)
-    turn(engine, fake, task_id, "one", 1, None)
-    turn(engine, fake, task_id, "two", 1, "back")
-    turn(engine, fake, task_id, "one", 2, None)
-    turn(engine, fake, task_id, "two", 2, "back")
-    turn(engine, fake, task_id, "one", 3, None)
+    from tests.test_engine import start_self
+
+    task_id = start_self(engine, repo)
+    turn(engine, fake, task_id, "one", 1, "again")
+    turn(engine, fake, task_id, "one", 2, "again")
     assert engine.db.task(task_id)["wait_reason"] == "max_runs"
 
     labels = [a["label"] for a in _actions(panels.home_pane(engine.db))]
@@ -268,7 +267,7 @@ def test_на_пределе_заходов_владелец_выбирает_и
 
     task = engine.db.task(task_id)
     engine.button(task_id, task["revision"], "accept_as_is", target="ok")
-    assert engine.db.task(task_id)["step"] == "three"
+    assert engine.db.task(task_id)["step"] == "two"
 
 
 def test_путь_задачи_ведёт_в_сессии_заходов(engine, fake, repo):

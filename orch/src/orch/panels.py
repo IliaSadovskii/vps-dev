@@ -107,6 +107,7 @@ BUTTONS_BY_REASON = {
     "gate": ("accept", "back"),
     "no_signal": ("again", "accept_as_is", "back"),
     "max_runs": ("again", "accept_as_is", "back"),
+    "loops": ("again", "accept_as_is", "back"),
     "artifact": ("again", "back"),
     "bad_outcome": ("again", "accept_as_is", "back"),
     "error": ("again", "back"),
@@ -738,6 +739,14 @@ def _what_to_decide(db: Db, task) -> str:
             "«Ещё заход» — дать ему заход сверх предела и ехать дальше; "
             "«Принять как есть» — считать сделанное готовым и уйти по цепочке "
             "вперёд; «Вернуть на …» — переиграть с названного шага."
+        )
+    if reason == "loops":
+        return (
+            f"Задача третий раз возвращается назад без вашего участия и сейчас "
+            f"снова идёт на шаг {step}. {_recent_runs(db, task, 6)} "
+            "«Ещё заход» — пусть попробуют ещё круг; «Принять как есть» — "
+            "считать сделанное готовым и ехать вперёд; «Вернуть на …» — "
+            "переиграть с названного шага."
         )
     if reason == "ask":
         return f"Роль на шаге {step} задала вопрос — ответьте ей в чате этой сессии."
