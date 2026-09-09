@@ -183,3 +183,128 @@ def test_пресет_можно_писать_плоско_и_с_пояснен�
     assert chain.sheet_with_preset("старый")["one"]["ask"] is False
     assert chain.sheet_with_preset("новый")["one"]["after"] is False
     assert chain.preset_notes["новый"] == "«зачем»"
+
+
+КОРОТКИЕ = ("quick", "standard")
+
+ШАГИ_КОРОТКИХ = {
+    "quick": ["implementation", "code-review", "review-fixes", "pr"],
+    "standard": [
+        "scoping",
+        "plan",
+        "plan-review",
+        "implementation",
+        "code-review",
+        "review-fixes",
+        "pr",
+    ],
+}
+
+
+@pytest.mark.parametrize("имя, шаги", sorted(ШАГИ_КОРОТКИХ.items()))
+def test_короткие_цепочки_состоят_из_обещанных_шагов(имя, шаги):
+    """Дорожка короче deep, но развилка ревью кода в ней та же самая.
+
+    Достижимость `done` из каждого шага здесь не проверяется руками: её
+    проверяет сам линтер при `load` (`orch/src/orch/chain.py:264-268`), и
+    написанная второй раз, эта проверка была бы зелёной ещё до появления
+    цепочек.
+    """
+    c = load(chains_dir() / f"{имя}.yml")
+    assert [s.id for s in c.steps] == шаги
+    assert c.step("code-review").next == {
+        "findings": "review-fixes",
+        "tests": "implementation",
+        "clean": "pr",
+    }
+    assert c.step("review-fixes").next == {"review": "code-review", "ready": "pr"}
+    if имя == "standard":
+        assert c.step("plan").next == {"review": "plan-review", "ready": "implementation"}
+        # Назад из плана — только в разведку: шага `solution` в этой цепочке нет.
+        assert c.step("plan").human_moves == ["plan-review", "scoping"]
+
+
+def test_ворота_коротких_цепочек_стоят_где_обещано():
+    """Quick останавливает владельца один раз, standard — три."""
+    quick = load(chains_dir() / "quick.yml").default_sheet()
+    assert [s for s, v in quick.items() if v["after"]] == ["pr"]
+    assert quick["pr"]["after"] is True
+
+    standard = load(chains_dir() / "standard.yml").default_sheet()
+    assert standard["plan"]["after"] == ["ready"]
+    assert standard["review-fixes"]["after"] == ["ready"]
+    # У `pr` один безымянный переход, и `after: [ready]` линтер отвергнет
+    # (`orch/src/orch/chain.py:256-262`); на таком шаге `true` — то же самое.
+    assert standard["pr"]["after"] is True
+    assert [s for s, v in standard.items() if not v["after"]] == [
+        "scoping",
+        "plan-review",
+        "implementation",
+        "code-review",
+    ]
+
+
+@pytest.mark.parametrize("имя", КОРОТКИЕ)
+def test_пресеты_коротких_цепочек(имя):
+    """Те же три ответа на «где владелец участвует», что и в deep."""
+    from orch.chain import load_by_name
+
+    chain = load_by_name(имя)
+    assert set(chain.presets) == {"default", "auto", "step-by-step"}
+    # `default` — именованное «как записано в шагах»: пустой набор ручек.
+    assert chain.sheet_with_preset("default") == chain.default_sheet()
+    assert all(chain.preset_notes.get(name) for name in chain.presets), "пресет без пояснения"
+
+    # Ворота и вопросы ходят парой: внимание владельца внутри одного шага.
+    for name in set(chain.presets) - {"default"}:
+        sheet = chain.sheet_with_preset(name)
+        for step, knobs in sheet.items():
+            assert bool(knobs["after"]) == bool(knobs["ask"]), f"{name}: {step} врозь"
+
+    до_pr = chain.sheet_with_preset("auto")
+    assert [s for s, v in до_pr.items() if v["after"]] == ["pr"]
+
+    под_присмотром = chain.sheet_with_preset("step-by-step")
+    assert all(v["after"] and v["ask"] for v in под_присмотром.values())
+
+
+def test_цепочки_читают_только_то_что_сами_производят():
+    """`reads` без имени, которого цепочка не пишет: обещание файла, которого не будет.
+
+    Исключение одно — `remarks.md`: заметки владельца с ворот пишутся после
+    `orch done`, и в `artifact` его нет намеренно (`orch/chains/deep.yml:167-169`).
+    """
+    for path in sorted(chains_dir().glob("*.yml")):
+        c = load(path)
+        производит = {a for s in c.steps for a in s.artifact} | {"remarks.md"}
+        лишние = sorted(
+            f"{s.id}: {name}" for s in c.steps for name in s.reads if name not in производит
+        )
+        assert not лишние, f"{c.name} читает то, чего не производит: {лишние}"
+
+
+@pytest.mark.parametrize("имя", КОРОТКИЕ)
+def test_у_коротких_цепочек_есть_описание_для_мастера(имя):
+    """Мастер различает цепочки только по шапке файла — пустая шапка его слепит."""
+    from orch.chain import catalog
+
+    записи = {c["name"]: c for c in catalog()}
+    assert имя in записи, f"цепочки {имя} нет в каталоге: {sorted(записи)}"
+    запись = записи[имя]
+    assert "error" not in запись, запись.get("error")
+    assert запись["description"].strip()
+
+
+@pytest.mark.parametrize("имя", КОРОТКИЕ)
+def test_владение_тестами_подключено_тем_же_шагам_что_в_deep(имя):
+    """Короткая цепочка экономит на замысле, а не на проверке.
+
+    Скрипт владения тестами — единственное, что ловит правку теста чужим
+    шагом, и в `quick` до ворот PR владелец не смотрит ничего.
+    """
+    свои = {
+        s.id
+        for s in load(chains_dir() / f"{имя}.yml").steps
+        if "common-test-ownership" in s.includes
+    }
+    assert свои == {"implementation", "code-review", "review-fixes"}
