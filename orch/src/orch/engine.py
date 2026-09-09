@@ -53,7 +53,7 @@ from .db import (
 from .aside_role import AsideMixin
 from .buttons import ButtonsMixin
 from .inbox import InboxMixin
-from .naming import GROUP_ROOT, session_title, slug, title_from
+from .naming import group_of, session_title, slug, title_from
 from .promptctx import PromptContextMixin, artifact_sha
 from .stand_role import StandMixin
 from .wizard import WizardMixin
@@ -248,7 +248,6 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
         branch: str | None = None,
         base: str | None = None,
         author: str | None = None,
-        from_backlog: str | None = None,
         stand: bool = False,
         notify_gates: bool = False,
     ) -> str:
@@ -284,7 +283,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
                     text,
                     str(Path(project_path).resolve()),
                     branch,
-                    f"{GROUP_ROOT}/{task_id} · {title}",
+                    group_of(project_path, task_id, title),
                     None,
                     BACKLOG if backlog else QUEUED,
                     json.dumps(sheet, ensure_ascii=False),
@@ -303,13 +302,76 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
         # Один мастер — одна заявка: заведя её (в очередь или в бэклог),
         # мастер уходит в архив. Следующая идея — новый мастер.
         self.move_wizard_to(task_id, str(Path(project_path).resolve()))
-        if from_backlog:
-            # Заявка, из которой выросла задача, закрывается: работа поехала
-            # под новым номером, держать её ветку за старой незачем.
-            old = self.db.task(from_backlog)
-            if old is not None and old["status"] == BACKLOG:
-                self.button(old["id"], old["revision"], "close")
-                self.db.event(task_id, "from_backlog", {"task": from_backlog})
+        return task_id
+
+    def release_task(
+        self,
+        task_id: str,
+        *,
+        chain_name: str | None = None,
+        preset: str | None = None,
+        sheet_edits: dict | None = None,
+        text: str | None = None,
+        title: str | None = None,
+        branch: str | None = None,
+        base: str | None = None,
+        stand: bool | None = None,
+        notify_gates: bool | None = None,
+    ) -> str:
+        """Отпустить заявку из бэклога в работу — ту же самую, не копию.
+
+        Номер задачи не меняется от бэклога до PR: заявку уже назвали в
+        панели, в ветке и в разговоре, и новый номер на выходе из бэклога рвал
+        эту связь — ветка `t29-…` оказывалась под задачей `T35`.
+
+        Мастер спрашивает владельца о цепочке, ветке и автономии и приносит
+        сюда только то, что владелец назвал: неназванное остаётся тем, что
+        уже записано в заявке.
+        """
+        task = self.db.task(task_id)
+        if task is None:
+            raise ChainError(f"{task_id}: такой задачи нет")
+        if task["status"] != BACKLOG:
+            raise ChainError(f"{task_id}: не в бэклоге ({task['status']})")
+
+        # Цепочка перечитывается с диска: заявка могла пролежать в бэклоге
+        # неделю, и замороженный `chain_yaml` уже не то, что поедет.
+        chain = load_chain(chain_path(chain_name or task["chain"]))
+        if chain_name and chain.name != task["chain"] or preset:
+            sheet = chain.sheet_with_preset(preset)
+        else:
+            sheet = json.loads(task["human_sheet"] or "{}") or chain.sheet_with_preset(None)
+        if sheet_edits:
+            sheet = apply_preset(sheet, sheet_edits)
+
+        text = text if text is not None else (task["text"] or "")
+        title = title or (title_from(text) if text != (task["text"] or "") else task["title"])
+        branch = branch or task["branch"] or f"{task_id.lower()}-{slug(title)}"
+        with self.db.tx():
+            self.db.bump(
+                task_id,
+                chain=chain.name,
+                chain_yaml=chain.source,
+                title=title,
+                text=text,
+                branch=branch,
+                group_path=group_of(task["project_path"], task_id, title),
+                status=QUEUED,
+                human_sheet=json.dumps(sheet, ensure_ascii=False),
+                base_branch=base or task["base_branch"],
+                stand_wanted=int(task["stand_wanted"]) if stand is None else (1 if stand else 0),
+                notify_gates=(
+                    int(task["notify_gates"]) if notify_gates is None
+                    else (1 if notify_gates else 0)
+                ),
+                wait_reason=None,
+            )
+            self.db.event(
+                task_id,
+                "released",
+                {"chain": chain.name, "preset": preset, "branch": branch, "base": base},
+            )
+        self.move_wizard_to(task_id, task["project_path"])
         return task_id
 
     def promote_queue(self) -> None:
@@ -357,6 +419,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
             error = ""
             if task["worktree_path"] and Path(task["worktree_path"]).is_dir():
                 error = remove_worktree(task["project_path"], task["worktree_path"])
+            self.close_task_asides(task["id"])
             with self.db.tx():
                 self.db.bump(task["id"], archived_at=now())
                 self.db.event(
@@ -376,6 +439,9 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
                 continue
             for sid in self.db.sessions_of_task(task["id"]):
                 self.aoe.archive(sid)
+            # Вместе с задачей кончаются и приставленные к ней побочные роли:
+            # их переписки иначе копятся в сайдбаре по одной на задачу.
+            self.close_task_asides(task["id"])
             # Рабочую копию убирает движок: AoE о ней не знает. Ветку не
             # трогаем — в ней вся работа задачи.
             error = ""
@@ -675,7 +741,9 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
                 title=session_title(
                     task["id"], step.id, run["n"], step.context in ("own", "continue")
                 ),
-                group=task["group_path"] or f"{GROUP_ROOT}/{task['id']}",
+                group=task["group_path"] or group_of(
+                    task["project_path"], task["id"], task["title"]
+                ),
                 idempotency_key=key,
             )
         except AoeError as exc:
@@ -1186,7 +1254,10 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
             session_id,
             session_title(task["id"], step.id, run_n, step.context in ("own", "continue")),
         )
-        self.aoe.set_group(session_id, task["group_path"] or f"{GROUP_ROOT}/{task['id']}")
+        self.aoe.set_group(
+            session_id,
+            task["group_path"] or group_of(task["project_path"], task["id"], task["title"]),
+        )
         self.aoe.set_color(session_id, "amber")
         self.aoe.set_urgent(session_id, False)
         # Уведомление ставим щедро: шаг, который может встать хоть на каком-то

@@ -15,7 +15,12 @@ from . import stand as stands
 from .aoe import AoeError
 from .chain import prompts_dir
 from .db import WAITING as ST_WAITING, epoch, now
-from .naming import GROUP_ROOT
+from .naming import group_of
+
+# Знак служебной сессии в сайдбаре: строки стенда стоят вперемешку со
+# строками шагов, и по знаку видно, что это обслуга задачи, а не её работа.
+# У побочных ролей знак берётся из их описания (`icon`), у стенда он один.
+STAND_ICON = "🧪"
 
 # Сколько ждём уборщика стенда, прежде чем убрать самим. Пятнадцати минут
 # хватает на `docker compose down` даже с тяжёлыми томами; дольше ждать —
@@ -92,8 +97,10 @@ class StandMixin:
                 agent="claude",
                 model="sonnet",
                 effort=None,
-                title=f"{task['id']} · стенд",
-                group=task["group_path"] or f"{GROUP_ROOT}/{task['id']}",
+                title=f"{STAND_ICON} {task['id']} · стенд",
+                group=task["group_path"] or group_of(
+                    task["project_path"], task["id"], task["title"]
+                ),
                 # Ключ детерминированный: падение между созданием сессии и
                 # записью в базу не должно оставлять вторую сессию. Номер
                 # попытки в ключе — стенд можно поднимать заново после отказа.
@@ -187,8 +194,10 @@ class StandMixin:
                 agent="claude",
                 model=self.settings.cheap_model,
                 effort=None,
-                title=f"{task['id']} · уборка стенда",
-                group=task["group_path"] or f"{GROUP_ROOT}/{task['id']}",
+                title=f"{STAND_ICON} {task['id']} · уборка стенда",
+                group=task["group_path"] or group_of(
+                    task["project_path"], task["id"], task["title"]
+                ),
                 idempotency_key=f"{task['id']}@{task['created_at']}/teardown",
             )
             self.aoe.apply_model(session.id, self.settings.cheap_model)

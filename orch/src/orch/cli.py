@@ -201,7 +201,6 @@ def cmd_task_new(args: argparse.Namespace) -> int:
         "backlog": not bool(getattr(args, "start", False)),
         "stand": bool(getattr(args, "stand", False)),
         "notify": bool(getattr(args, "notify", False)),
-        "from_backlog": getattr(args, "from_backlog", None),
         "at": signals.now(),
     }
     INBOX.mkdir(parents=True, exist_ok=True)
@@ -209,6 +208,43 @@ def cmd_task_new(args: argparse.Namespace) -> int:
     path.write_text(json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8")
     where = "в очередь" if getattr(args, "start", False) else "в бэклог"
     print(f"заявка {where}: {path}")
+    return 0
+
+
+def cmd_task_start(args: argparse.Namespace) -> int:
+    """Заявка из бэклога едет сама: тот же номер, та же ветка, та же строка."""
+    text = None
+    if args.text:
+        text = (sys.stdin.read() if args.text == "-" else args.text).strip()
+        if not text:
+            raise Refused("текст задачи пуст")
+        check_text(text, args.task)
+    sheet_edits = {}
+    for item in args.after or []:
+        key, _, value = item.partition("=")
+        sheet_edits[f"{key}.after"] = _flag(value)
+    for item in args.ask or []:
+        key, _, value = item.partition("=")
+        sheet_edits[f"{key}.ask"] = _flag(value)
+    request = {
+        "id": uuid.uuid4().hex[:12],
+        "kind": "start",
+        "task": args.task,
+        "chain": args.chain,
+        "preset": args.preset,
+        "text": text,
+        "branch": args.branch,
+        "base": args.base,
+        "sheet_edits": sheet_edits,
+        # Неназванное остаётся тем, что записано в заявке: `None`, а не `False`.
+        "stand": True if args.stand else None,
+        "notify": True if args.notify else None,
+        "at": signals.now(),
+    }
+    INBOX.mkdir(parents=True, exist_ok=True)
+    path = INBOX / f"{request['id']}.json"
+    path.write_text(json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"заявка {args.task} отпущена в работу: {path}")
     return 0
 
 
@@ -929,13 +965,25 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="звать владельца в Telegram, когда задача встанет на воротах",
     )
-    p.add_argument(
-        "--from-backlog",
-        dest="from_backlog",
-        metavar="T12",
-        help="заявка, из которой выросла задача: она закроется сама",
-    )
     p.set_defaults(func=cmd_task_new)
+
+    p = task_sub.add_parser(
+        "start", help="отпустить заявку из бэклога в работу (тем же номером)"
+    )
+    p.add_argument("task", metavar="T12")
+    p.add_argument("--chain", help="цепочка; по умолчанию та, что записана в заявке")
+    p.add_argument("--preset", help="пресет автономии; без него лист заявки остаётся как был")
+    p.add_argument("--text", help="переписанное ТЗ; «-» — со стандартного ввода")
+    p.add_argument("--branch", help="ветка задачи; по умолчанию ветка заявки")
+    p.add_argument("--base", help="от какой ветки ответвляться")
+    p.add_argument("--after", action="append", metavar="шаг=да|нет", help="ворота после шага")
+    p.add_argument("--ask", action="append", metavar="шаг=да|нет", help="спрашивать ли на шаге")
+    p.add_argument("--stand", action="store_true", help="поднять стенд задачи")
+    p.add_argument(
+        "--notify", action="store_true",
+        help="звать владельца в Telegram, когда задача встанет на воротах",
+    )
+    p.set_defaults(func=cmd_task_start)
 
     p = task_sub.add_parser("edit", help="переписать ТЗ заявки в бэклоге")
     p.add_argument("task")

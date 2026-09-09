@@ -46,6 +46,10 @@ class Wake:
     # и обрывает то, что там идёт, — движок бил бы по разговору владельца, а
     # реплика владельца по разбору.
     session: str = "shared"
+    # Позвать владельца, когда ход этого повода закончится: AoE пришлёт пуш
+    # по `Idle`. Для сводки конца прогона — единственного хода, который
+    # владелец должен прочитать обязательно.
+    attention: bool = False
 
 
 @dataclass(frozen=True)
@@ -69,6 +73,9 @@ class Aside:
     budget: dict = field(default_factory=dict)
     enabled: bool = False
     title: str = ""
+    # Знак роли в титуле сессии: её строка стоит в сайдбаре вперемешку со
+    # строками шагов задачи, и глазу нужно за что-то зацепиться.
+    icon: str = ""
     source: str = ""
 
     def kinds(self) -> tuple[str, ...]:
@@ -197,6 +204,7 @@ def parse(text: str, source: str = "?") -> Aside:
                 model=str(run.get("model") or "sonnet"),
                 effort=(str(run["effort"]) if run.get("effort") else None),
                 session=session,
+                attention=bool(item.get("attention")),
             )
         )
     if not wakes:
@@ -226,5 +234,6 @@ def parse(text: str, source: str = "?") -> Aside:
         budget=dict(raw.get("budget") or {}),
         enabled=bool(raw.get("enabled", False)),
         title=str(raw.get("title") or ""),
+        icon=str(raw.get("icon") or ""),
         source=source,
     )

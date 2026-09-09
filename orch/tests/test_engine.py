@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from orch.chain import ChainError
 from orch.chain import parse as parse_chain
 from orch.db import ABANDONED, BACKLOG, DONE, QUEUED, RUNNING, WAITING
 
@@ -822,18 +823,80 @@ def test_мастер_из_бэклога_видит_заявку_и_режим(
     assert "orch task edit" in text and "Задачу не запускай" in text
 
 
-def test_задача_из_заявки_закрывает_её(engine, fake, repo):
-    """Мастер заводит задачу с `--from-backlog`: заявка не должна остаться."""
+def test_группа_задачи_начинается_с_имени_проекта(engine, fake, repo):
+    """`vps-dev/T35 · …`: с осью «по группе» задачи проекта встают рядом."""
+    monkey_chain(engine)
+    task_id = start(engine, repo)
+    task = engine.db.task(task_id)
+    assert task["group_path"] == f"{repo.name}/{task_id} · {task['title']}"
+    assert fake.rows[session_of(engine, task_id)]["group_path"] == task["group_path"]
+
+
+def test_заявка_из_бэклога_едет_под_своим_номером(engine, fake, repo):
+    """Номер задачи не меняется от бэклога до PR.
+
+    Заявку уже назвали в панели, в ветке и в разговоре: новый номер на выходе
+    из бэклога рвал эту связь — ветка `t29-…` оказывалась под задачей `T35`.
+    """
     monkey_chain(engine)
     заявка = engine.create_task(
         chain_name="t", project_path=str(repo), text="черновик", backlog=True
     )
-    новая = engine.create_task(
-        chain_name="t", project_path=str(repo), text="настоящая", from_backlog=заявка
+    ветка = engine.db.task(заявка)["branch"]
+    поехала = engine.release_task(заявка, chain_name="t", preset=None, text="настоящая")
+    assert поехала == заявка, "заявка поехала под новым номером"
+    задача = engine.db.task(заявка)
+    assert задача["status"] in ("queued", "running")
+    assert задача["text"] == "настоящая", "мастер не переписал ТЗ"
+    assert задача["branch"] == ветка, "ветку заявки потеряли"
+    assert задача["title"] == "настоящая", "титул остался от черновика"
+    assert len(engine.db.tasks()) == 1, "рядом осталась вторая карточка"
+    assert [e["kind"] for e in engine.db.events(заявка)].count("created") == 1
+
+
+def test_отпущенная_заявка_держит_неназванное(engine, fake, repo):
+    """Мастер приносит только то, что владелец назвал; остальное — из заявки."""
+    monkey_chain(engine)
+    заявка = engine.create_task(
+        chain_name="t", project_path=str(repo), text="черновик", backlog=True,
+        branch="pr-42", base="release", notify_gates=True,
     )
-    assert engine.db.task(заявка)["status"] == "closed"
-    assert engine.db.task(заявка)["status"] == "closed"
-    assert engine.db.task(новая)["status"] in ("queued", "running")
+    лист = engine.db.task(заявка)["human_sheet"]
+    engine.release_task(заявка)
+    задача = engine.db.task(заявка)
+    assert задача["branch"] == "pr-42" and задача["base_branch"] == "release"
+    assert задача["notify_gates"] == 1, "звать в Telegram перестали молча"
+    assert задача["human_sheet"] == лист, "лист автономии переписали без спроса"
+    assert задача["text"] == "черновик"
+
+
+def test_заявка_start_из_inbox_отпускает_задачу(engine, fake, repo):
+    """Путь целиком: `orch task start` → файл в `inbox/` → движок."""
+    import orch.inbox as inbox_mod
+
+    monkey_chain(engine)
+    заявка = engine.create_task(
+        chain_name="t", project_path=str(repo), text="черновик", backlog=True
+    )
+    (inbox_mod.INBOX / "z.json").write_text(
+        json.dumps({"kind": "start", "task": заявка, "chain": "t", "text": "настоящая"}),
+        encoding="utf-8",
+    )
+    engine.take_inbox()
+    assert engine.db.task(заявка)["status"] == QUEUED
+    assert engine.db.task(заявка)["text"] == "настоящая"
+    assert len(engine.db.tasks()) == 1
+
+
+def test_отпустить_можно_только_заявку(engine, fake, repo):
+    """Поехавшую задачу вторым `start` не перезапустить."""
+    monkey_chain(engine)
+    поехала = start(engine, repo)
+    with pytest.raises(ChainError) as exc:
+        engine.release_task(поехала)
+    assert "не в бэклоге" in str(exc.value)
+    with pytest.raises(ChainError):
+        engine.release_task("T404")
 
 
 def test_тз_правится_только_у_заявки(engine, fake, repo):
@@ -878,7 +941,7 @@ def test_сессия_с_группой_orch_становится_мастеро
         idempotency_key="ручная",
     )
     engine.reconcile()
-    assert fake.rows[session.id]["group_path"] == "orch/мастер"
+    assert fake.rows[session.id]["group_path"] == f"{repo.name}/мастер"
     assert fake.titles[session.id].startswith("Мастер · ")
     text = [t for target, t in fake.prompts if target == session.id][0]
     assert "Мастер задачи" in text and "Цепочки:" in text
@@ -903,7 +966,7 @@ def test_метка_orch_читается_и_из_титула(engine, fake, rep
         title="orch правки в списке", group="", idempotency_key="титул",
     )
     engine.reconcile()
-    assert fake.rows[session.id]["group_path"] == "orch/мастер"
+    assert fake.rows[session.id]["group_path"] == f"{repo.name}/мастер"
     assert [t for target, t in fake.prompts if target == session.id]
 
 
@@ -1015,7 +1078,7 @@ def test_мастер_уходит_в_архив_заведя_задачу(engin
     """Рядом с ходами его строку не поставить, а вечная строка в стороне — сор."""
     monkey_chain(engine)
     sid = engine.open_wizard(str(repo))
-    assert fake.rows[sid]["group_path"] == "orch/мастер"
+    assert fake.rows[sid]["group_path"] == f"{repo.name}/мастер"
     task_id = engine.create_task(chain_name="t", project_path=str(repo), text="новая")
     assert sid in fake.archived
     assert fake.titles[sid] == f"{task_id} · постановка"
@@ -1108,7 +1171,7 @@ def test_стенд_поднимает_роль_а_движок_даёт_ей_п
     assert engine.button(task_id, task["revision"], "stand") == "роль «Стенд» поднимает окружение"
     task = engine.db.task(task_id)
     sid = engine.stand_session(task_id)
-    assert sid and fake.rows[sid]["title"] == f"{task_id} · стенд"
+    assert sid and fake.rows[sid]["title"] == f"🧪 {task_id} · стенд"
     prompt = [t for target, t in fake.prompts if target == sid][0]
     assert "# Стенд" in prompt and task["stand"] in prompt and "8020" in prompt
 

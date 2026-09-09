@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .aoe import AoeError, Session
 from .chain import catalog, prompts_dir
-from .naming import GROUP_ROOT
+from .naming import group_of, wizard_group
 from .workspace import projects_on_disk
 
 
@@ -50,7 +50,7 @@ class WizardMixin:
                 continue
             if not session.project_path:
                 continue
-            self.aoe.set_group(session.id, f"{GROUP_ROOT}/мастер")
+            self.aoe.set_group(session.id, wizard_group(session.project_path))
             self.aoe.set_title(session.id, f"Мастер · {Path(session.project_path).name}")
             # Модель ставится вызовом: `agent_model` до адаптера не доезжает,
             # и мастер молча уходил бы на Opus.
@@ -106,7 +106,7 @@ class WizardMixin:
                 model="sonnet",
                 effort=None,
                 title=f"Мастер · {Path(project).name}",
-                group=f"{GROUP_ROOT}/мастер",
+                group=wizard_group(project),
                 # Ключ уникален на вызов: повтор мастера не страшен, а вот
                 # вернуть по вечному ключу сессию, уехавшую в группу задачи,
                 # — страшно. От лишних сессий бережёт поиск свободного выше.
@@ -117,7 +117,7 @@ class WizardMixin:
             return None
         # Группу ставим отдельным вызовом: при создании AoE её не применяет,
         # и мастер оказывался вне группы, вперемешку с сессиями шагов.
-        self.aoe.set_group(session.id, f"{GROUP_ROOT}/мастер")
+        self.aoe.set_group(session.id, wizard_group(project))
         # Модель ставится вызовом, а не полем при создании: `agent_model` до
         # адаптера Claude не доезжает, и сессия молча уходит на Opus (см.
         # `apply_model`). Мастер — дешёвая роль, платить за него Opus незачем.
@@ -183,8 +183,12 @@ class WizardMixin:
             else:
                 lines.append(
                     "Владелец нажал «В работу»: уточни, что нужно, спроси цепочку, "
-                    "ветку и автономию, и заведи задачу вызовом `orch task new` с "
-                    f"`--from-backlog {task['id']}` — заявка закроется сама."
+                    "ветку и автономию и отпусти заявку вызовом "
+                    f"`orch task start {task['id']} --chain … --preset …`. Поедет "
+                    f"она сама: номер {task['id']} останется за задачей до конца, "
+                    "новую заводить не надо. Названное тобой заменит записанное в "
+                    "заявке, остальное останется как есть; переписанное ТЗ — "
+                    "флагом `--text -`."
                 )
         elif mode == "pick":
             names = ", ".join(f"`{p}`" for p in self.projects_on_disk()) or "не нашёл"
@@ -215,7 +219,7 @@ class WizardMixin:
         except AoeError:
             return None
         for session in sessions.values():
-            if session.group != f"{GROUP_ROOT}/мастер":
+            if not (session.group or "").endswith("/мастер"):
                 continue
             if str(Path(session.project_path).resolve()) == project:
                 return session.id
@@ -238,11 +242,14 @@ class WizardMixin:
         except AoeError:
             return
         for session in sessions.values():
-            if session.group != f"{GROUP_ROOT}/мастер":
+            if not (session.group or "").endswith("/мастер"):
                 continue
             if str(Path(session.project_path).resolve()) != project:
                 continue
-            self.aoe.set_group(session.id, task["group_path"] or f"{GROUP_ROOT}/{task_id}")
+            self.aoe.set_group(
+                session.id,
+                task["group_path"] or group_of(task["project_path"], task_id, task["title"]),
+            )
             self.aoe.set_title(session.id, f"{task_id} · постановка")
             self.aoe.archive(session.id)
             with self.db.tx():

@@ -24,6 +24,18 @@ from .db import LIVE, STATE_DIR, now
 from .naming import GROUP_ROOT, slug
 from .workspace import create_worktree
 
+
+def aside_title(spec: Aside, task_id: str | None) -> str:
+    """Титул сессии роли: `🔧 T35 · Наладчик`.
+
+    Порядок тот же, что у сессий шагов (`T35 · plan`): номер задачи первым,
+    иначе строки роли и шагов читаются как из разных систем. Знак роли стоит
+    перед номером — по нему в общем списке видно наблюдателя, а не шаг.
+    """
+    имя = f"{task_id or 'машина'} · {spec.title or spec.name}"
+    return f"{spec.icon} {имя}".strip()
+
+
 # Сколько событий одна роль разбирает за проход: движок не должен зависать
 # на журнале, накопившемся, пока роль была выключена.
 BATCH = 20
@@ -228,7 +240,7 @@ class AsideMixin:
         # в занятую сессию AoE обрывает то, что в ней идёт, поэтому разбор и
         # разговор разведены по разным сессиям, а не по вежливости промпта.
         повод = self.wake_title(spec, event["kind"])
-        титул = f"{spec.title or spec.name} · {event['task_id'] or 'машина'}"
+        титул = aside_title(spec, event["task_id"])
         if свежая:
             титул = f"{титул} · {повод.lower()}"
         try:
@@ -277,8 +289,94 @@ class AsideMixin:
                 self.db.conn.execute(
                     "UPDATE aside SET session_id = ? WHERE id = ?", (session.id, aside_id)
                 )
+        # Сводку конца прогона владелец должен прочитать: AoE пришлёт пуш,
+        # когда роль допишет её и сессия встанет в `Idle`. Остальные ходы
+        # роли молчат — иначе пуш на каждый шаг.
+        self.aoe.set_notify(session.id, wake.attention)
+        self.aoe.set_color(session.id, "blue")
+        if свежая:
+            self.aside_home(spec, aside_id, task, path)
+
+    def aside_home(self, spec: Aside, aside_id: int, task, path: Path) -> None:
+        """Общая переписка роли: карточка, в которой с ней говорит владелец.
+
+        Заводится вместе с первым ходом роли на задаче и живёт до конца
+        прогона. Без неё роли в сайдбаре не видно вовсе: поводы разбора идут в
+        своих сессиях и уезжают в архив, как только ход сдан, а общая
+        переписка раньше появлялась только с первым поводом `session: shared`
+        — у Наладчика это конец прогона.
+
+        Заводка несёт общие правила: первое слово владельца иначе прилетело
+        бы агенту, который не знает ни кто он, ни как отвечать движку.
+        """
+        aside = self.db.aside(aside_id)
+        if aside is None or aside["session_id"]:
+            return
+        дом = next((w for w in spec.wakes if w.session == "shared"), None)
+        if дом is None:
+            # Роль, которая с владельцем не разговаривает: и заводить нечего.
+            return
+        if not self.capacity(aside["task_id"], f"переписка роли {spec.name}"):
+            return
+        try:
+            session = self.aoe.create(
+                path=str(path),
+                agent=дом.agent,
+                model=дом.model,
+                effort=дом.effort,
+                title=aside_title(spec, aside["task_id"]),
+                group=(task["group_path"] if task is not None else None)
+                or f"{GROUP_ROOT}/побочные",
+                idempotency_key=f"aside/{spec.name}/{aside_id}",
+            )
+        except AoeError as exc:
+            self.db.event(
+                aside["task_id"], "aside_failed",
+                {"aside": spec.name, "why": "переписка", "error": str(exc)[:300]},
+            )
+            return
+        if session is None:
+            return
+        try:
+            self.aoe.prompt(session.id, self.aside_home_prompt(spec, task))
+        except AoeError as exc:
+            self.db.event(
+                aside["task_id"], "aside_failed",
+                {"aside": spec.name, "why": "переписка", "error": str(exc)[:300]},
+            )
+            return
+        with self.db.tx():
+            self.db.conn.execute(
+                "UPDATE aside SET session_id = ?, greeted_at = ? WHERE id = ?",
+                (session.id, now(), aside_id),
+            )
+            self.db.event(
+                aside["task_id"], "aside_home",
+                {"aside": spec.name, "session": session.id},
+            )
         self.aoe.set_notify(session.id, False)
         self.aoe.set_color(session.id, "blue")
+
+    def aside_home_prompt(self, spec: Aside, task) -> str:
+        """Заводка общей переписки: общие правила и чем эта переписка занята."""
+        parts = []
+        for name in spec.includes:
+            common = prompts_dir() / f"{name}.md"
+            if common.exists():
+                parts.append(common.read_text(encoding="utf-8").strip())
+        куда = f"задачей {task['id']} («{task['title']}»)" if task is not None else "машиной"
+        parts.append(
+            "# Эта переписка\n\n"
+            f"Ты приставлена к {куда}. Здесь с тобой разговаривает владелец: "
+            "спрашивает, что ты видишь, и решает по твоим находкам.\n\n"
+            "Разбор каждого хода идёт не здесь, а в отдельной сессии на повод — "
+            "она заводится сама и уезжает в архив, как только ход сдан. Сюда "
+            "движок приведёт тебя на ответ владельца и на сводку в конце прогона.\n\n"
+            "Отвечать сейчас нечего: работы тебе не дано, хода у тебя нет "
+            "(команды `orch aside` без номера хода не работают). Скажи одной "
+            "строкой, что ты на месте, и жди."
+        )
+        return "\n\n".join(parts)
 
     def aside_path(self, spec: Aside, task) -> Path | None:
         """Где роль работает: копия задачи, своя копия, или всё равно где."""
@@ -310,12 +408,21 @@ class AsideMixin:
         # общие правила и текст роли на каждый повод значит платить за них
         # заново каждый ход. Полный текст идёт, только пока он новый для этой
         # переписки; дальше — короткая шапка и «что случилось».
+        # Считается по этой переписке, а не по всем ходам роли: ходы с
+        # `session: fresh` шли в свои сессии, и их «уже читала выше» здесь
+        # было бы неправдой.
+        aside = self.db.aside(int(run["aside_id"]))
+        сюда = (aside["session_id"] or "") if aside is not None else ""
         было = [
             r["wake"] for r in self.db.aside_runs_of(int(run["aside_id"]))
-            if int(r["id"]) != int(run["id"])
+            if int(r["id"]) != int(run["id"]) and сюда and r["session_id"] == сюда
         ] if wake.session != "fresh" else []
+        # Общие правила уехали в эту переписку при её заводке.
+        правила_были = bool(было) or (
+            wake.session != "fresh" and aside is not None and bool(aside["greeted_at"])
+        )
         parts = []
-        if not было:
+        if not правила_были:
             for name in spec.includes:
                 common = prompts_dir() / f"{name}.md"
                 if common.exists():
@@ -621,6 +728,31 @@ class AsideMixin:
                     run["task_id"], "aside_session_archived",
                     {"aside": run["name"], "run": int(run["id"]), "session": sid},
                 )
+
+    def close_task_asides(self, task_id: str) -> None:
+        """Роль, приставленная к задаче, кончается вместе с задачей.
+
+        Иначе запись роли остаётся `live` навсегда, а её общая переписка —
+        строкой в сайдбаре: по одной на каждую прошедшую задачу. Роли с
+        областью «проект» и «машина» это не касается — они переживают задачу
+        по замыслу.
+
+        Зовётся из `archive_old`, то есть через `ARCHIVE_AFTER_H` после
+        конца: сводка к этому времени прочитана, а ответить на находку
+        владелец успел.
+        """
+        for aside in self.db.asides_live():
+            if aside["task_id"] != task_id or aside["scope"] not in ("run", "task"):
+                continue
+            сессии = {aside["session_id"] or ""} | {
+                r["session_id"] for r in self.db.aside_runs_of(int(aside["id"]))
+                if r["session_id"]
+            }
+            for sid in sorted(x for x in сессии if x):
+                self.aoe.archive(sid)
+            with self.db.tx():
+                self.db.aside_close(int(aside["id"]))
+                self.db.event(task_id, "aside_closed", {"aside": aside["name"]})
 
     def retry_aside(self, run) -> None:
         """Сессия роли исчезла, не сдав ход, — поднять её ещё раз.

@@ -76,6 +76,22 @@ class InboxMixin:
                     self.db.event(request["task"], "autonomy_set", {"answer": answer})
                 elif kind == "edit_text":
                     self.edit_text(request["task"], request["text"])
+                elif kind == "start":
+                    # Заявка из бэклога едет сама, под своим номером.
+                    self.release_task(
+                        request["task"],
+                        chain_name=request.get("chain"),
+                        preset=request.get("preset"),
+                        sheet_edits=request.get("sheet_edits") or {},
+                        text=request.get("text"),
+                        branch=request.get("branch"),
+                        base=request.get("base"),
+                        stand=request.get("stand"),
+                        notify_gates=request.get("notify"),
+                    )
+                    self.db.event(
+                        request["task"], "task_released", {"from": "inbox", "file": path.name}
+                    )
                 elif kind == "wizard":
                     self.open_wizard(
                         request["project_path"],
@@ -93,7 +109,6 @@ class InboxMixin:
                         branch=request.get("branch"),
                         base=request.get("base"),
                         author=request.get("author"),
-                        from_backlog=request.get("from_backlog"),
                         stand=bool(request.get("stand")),
                         notify_gates=bool(request.get("notify")),
                     )

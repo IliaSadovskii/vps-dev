@@ -36,6 +36,8 @@ STATUS_TEXT = {
 # так, и код события ему не помощник. Чего нет в карте — показывается кодом.
 EVENT_TEXT = {
     "created": "задача заведена",
+    "released": "заявка отпущена в работу",
+    "aside_closed": "побочная роль закончила с задачей",
     "started": "поехала",
     "prompt_sent": "промпт отправлен роли",
     "gate": "ворота: ждёт решения",
@@ -617,6 +619,17 @@ def row_badge(db: Db, task, session_id: str, chain: Chain | None = None) -> dict
         "tone": "info",
         "tooltip": f"{task['id']} · {task['title']}",
     }
+
+
+def aside_row_badge(роль: str, повод: str = "", идёт: bool = False) -> dict:
+    """Слот `row-badge` на строке побочной роли: чем она тут занята.
+
+    Строка роли стоит в сайдбаре среди строк шагов задачи, и без бейджа её
+    не отличить от шага: у шага там «review-fixes 7/8», а у роли — пусто.
+    """
+    if идёт and повод:
+        return {"text": повод.lower(), "tone": "info", "tooltip": f"{роль}: идёт ход"}
+    return {"text": роль.lower(), "tone": "neutral", "tooltip": f"{роль}: разговор и сводка"}
 
 
 def step_place(task, chain: Chain | None) -> tuple[int | None, int | None]:
