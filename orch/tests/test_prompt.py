@@ -93,6 +93,20 @@ def test_ещё_заход_кнопкой(ctx):
     assert "ещё заход" in text
 
 
+def test_без_ворот_промпт_говорит_об_этом(ctx):
+    """Молчание про ворота роль читала как «ворота на месте» (прогон T35)."""
+    text = build(ctx)
+    assert "задача не встанет" in text
+
+    ctx.gate_after = True
+    assert "задача встанет и будет ждать владельца" in build(ctx)
+
+    ctx.gate_after = ["ok"]
+    с_исходом = build(ctx)
+    assert "на исходе `ok`" in с_исходом
+    assert "задача не встанет" not in с_исходом
+
+
 def test_вопросы_выключены(ctx):
     ctx.ask_allowed = False
     assert "задавать нельзя" in build(ctx)
