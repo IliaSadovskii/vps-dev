@@ -410,6 +410,30 @@ def test_на_автономии_находка_не_останавливает_
     assert session_of(engine, task_id) not in fake.cancels
 
 
+def test_возврат_начисто_снимает_находки_переигранного_хода(engine, fake, repo, tune):
+    """Забыли ход — забыли и то, что о нём сказали.
+
+    Карточка с вопросом про план висела в панели, когда самого плана уже не
+    было: задача поехала заново со scoping (T37, 2026-09-10).
+    """
+    monkey_chain(engine)
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)      # шаг one сдан, едем на two
+    engine.reconcile()
+    run_id = engine.db.aside_runs_open()[0]["id"]
+    engine.aside_note(
+        int(run_id), "log", "Замечание про шаг two", "Подробности.", [],
+        пропуск(engine, run_id),
+    )
+    assert engine.db.note(1)["state"] == "open"
+
+    task = engine.db.task(task_id)
+    assert task["step"] == "two"
+    engine.button(task_id, task["revision"], "back_clean", target="one")
+
+    assert engine.db.note(1)["state"] == "dropped", "находка пережила переигранный ход"
+
+
 def test_роль_без_права_останавливать_только_сообщает(engine, fake, repo, tune):
     (tune / "tune.yml").write_text(SPEC.replace("[read, hold]", "[read]"), encoding="utf-8")
     task_id = start(engine, repo)

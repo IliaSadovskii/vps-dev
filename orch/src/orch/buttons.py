@@ -200,6 +200,17 @@ class ButtonsMixin:
         with self.db.tx():
             for run in doomed:
                 self.db.void_run(int(run["id"]))
+            # Находки побочных ролей висели дальше возврата: карточка с
+            # вопросом про план осталась в панели, когда самого плана уже не
+            # было — задача поехала заново со scoping (T37, 2026-09-10).
+            # Забыли ход — забыли и то, что о нём сказали.
+            снято = [
+                int(n["id"])
+                for n in self.db.notes(task_id=task["id"])
+                if n["state"] in ("open", "sent")
+            ]
+            for note_id in снято:
+                self.db.note_state(note_id, "dropped", decided_at=now(), decision="переиграно")
             self.db.event(
                 task["id"],
                 "cleared",
@@ -207,6 +218,7 @@ class ButtonsMixin:
                     "to": target,
                     "runs": [int(r["id"]) for r in doomed],
                     "artifacts": moved,
+                    "notes": снято,
                 },
             )
         return {"runs": [int(r["id"]) for r in doomed], "artifacts": moved}
