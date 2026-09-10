@@ -1046,6 +1046,38 @@ def test_откат_не_уносит_работу_шагов_выше(engine, f
     assert живые_one, "заходы шага выше забыты вместе с целевым"
 
 
+def test_автономия_берёт_пресет_из_нынешней_цепочки(engine, fake, repo, tmp_path, monkeypatch):
+    """Команда обещала переставить автономию и не переставляла ничего.
+
+    Пресет читался из копии цепочки, замороженной при заведении задачи:
+    правку в файле цепочки задача не видела, а ответ был «переставлена»
+    (T42, 2026-09-10).
+    """
+    from orch import chain as chain_mod
+
+    monkey_chain(engine)
+    task_id = start(engine, repo)
+
+    # Цепочку задачи поправили после того, как она поехала.
+    свежая = tmp_path / "t.yml"
+    свежая.write_text(
+        CHAIN + "\npresets:\n  тихо:\n    when: не будить\n"
+        '    set: { "*.after": false, "*.ask": false }\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(chain_mod, "path_of", lambda name: свежая)
+
+    ответ = engine.set_autonomy(task_id, "тихо", {})
+
+    assert "переставлена" in ответ
+    лист = json.loads(engine.db.task(task_id)["human_sheet"])
+    assert all(not v["after"] and not v["ask"] for v in лист.values()), лист
+
+    # Пресета, которого нет в нынешней цепочке, команда не выдумывает.
+    отказ = engine.set_autonomy(task_id, "нетакого", {})
+    assert "нет пресета" in отказ
+
+
 def test_заявка_из_бэклога_едет_под_своим_номером(engine, fake, repo):
     """Номер задачи не меняется от бэклога до PR.
 

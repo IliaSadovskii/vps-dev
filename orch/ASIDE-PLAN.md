@@ -37,9 +37,6 @@ wakes:                         # поводы проснуться, по одн�
     prompt: role-tune-review
     session: fresh
     run: { agent: claude, model: "opus[1m]", effort: medium }
-  - on: [watch_overtime, watch_out_of_bounds, session_error]
-    prompt: role-tune-alarm
-    run: { agent: claude, model: "opus[1m]", effort: medium }
   - on: note_decided           # владелец ответил на находку
     prompt: role-tune-apply
     run: { agent: claude, model: "opus[1m]", effort: medium }
@@ -110,15 +107,13 @@ reconcile()
 наблюдателя.
 
 Чтобы шина была полной, движок обязан писать события на все узловые
-моменты. Часть уже есть; добавляются недостающие: `run_started`,
-`run_ended`, `gate_opened`, `note_decided`, и сторожевые `watch_overtime`,
-`watch_out_of_bounds`.
+моменты: `run_started`, `run_ended`, `gate_opened`, `note_decided`.
 
-**Сторожа** — дешёвая механика движка, без модели: ход идёт дольше порога;
-ход стоит дороже порога; ветка задачи ушла на сервер не на шаге PR; тронут
-файл вне зоны шага (`zone:` в цепочке; пусто — сторож молчит); две живые
-задачи полезли в один файл; побочная сессия потерялась. Сторож только
-публикует событие; думает агент.
+**Сторож** — дешёвая механика движка, без модели: он только публикует
+событие, думает агент. Живёт один — `watch_file_clash`: две задачи полезли
+в один файл. Остальные (ход дольше порога, ход дороже порога, файл вне зоны
+шага) сняты решением владельца 2026-09-10: Наладчик и так разбирает каждый
+ход, а пороги пришлось бы держать в согласии с ценами и размером задач.
 
 ## 3. Схема базы
 
@@ -363,7 +358,10 @@ task`, право `memory`, команда `orch aside memory`), а копилк
 ## 13. Порядок работ
 
 1. **Сделано.** `digest.py`, `max_sessions` и порог памяти, события
-   `run_started`/`run_ended`, сторожа `watch_overtime`/`watch_cost`.
+   `run_started`/`run_ended`. Сторожа `watch_overtime`/`watch_cost`/
+   `watch_out_of_bounds` **сняты** решением владельца 2026-09-10: в движке
+   остался только `watch_file_clash`, промпт `role-tune-alarm` удалён.
+   Наладчику хватает разбора конца хода — он и так читает каждый ход.
 2. **Сделано.** Схема `aside*`, `pump_asides`, переезд Стенда,
    `asides/*.yml`, `orch aside note|done`.
 3. **Сделано** (кроме кнопки привязки в панели): `Notifier`, канал

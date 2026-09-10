@@ -121,7 +121,7 @@ class InboxMixin:
         Идущий заход не трогаем: он уже получил свой промпт. Новые настройки
         действуют со следующего шага — как и правка переключателем в панели.
         """
-        from .chain import apply_preset
+        from .chain import ChainError, apply_preset, load, path_of
 
         task = self.db.task(task_id)
         if task is None:
@@ -129,13 +129,34 @@ class InboxMixin:
         chain = self.chain_of(task)
         if chain is None:
             return "цепочка задачи не читается"
-        sheet = chain.sheet_with_preset(preset) if preset else self.sheet(task)
+        sheet = self.sheet(task)
+        живая = ""
+        if preset:
+            # Пресет читаем из нынешнего файла цепочки, а не из замороженной
+            # копии задачи. Иначе команда отвечала «переставлена» и не
+            # переставляла ничего: пресет правили в файле, а задача несла
+            # старую копию с собой (T42, 2026-09-10). Сама цепочка остаётся
+            # замороженной — меняется только лист автономии.
+            try:
+                свежая = load(path_of(task["chain"]))
+            except (ChainError, OSError):
+                свежая = chain
+            if preset not in свежая.presets:
+                есть = ", ".join(sorted(свежая.presets)) or "—"
+                return f"в цепочке {task['chain']} нет пресета {preset!r}; есть: {есть}"
+            sheet = свежая.sheet_with_preset(preset)
+            if свежая.source != task["chain_yaml"]:
+                живая = " (пресет взят из нынешней цепочки, она разошлась с замороженной)"
         if edits:
             sheet = apply_preset(sheet, edits)
         with self.db.tx():
             self.db.bump(task_id, human_sheet=json.dumps(sheet, ensure_ascii=False))
-            self.db.event(task_id, "sheet_replaced", {"preset": preset, "edits": edits})
-        return f"{task_id}: автономия переставлена"
+            self.db.event(
+                task_id,
+                "sheet_replaced",
+                {"preset": preset, "edits": edits, "sheet": sheet},
+            )
+        return f"{task_id}: автономия переставлена{живая}"
 
     def edit_text(self, task_id: str, text: str) -> str:
         """Переписать ТЗ заявки. Только пока она в бэклоге: у поехавшей задачи
