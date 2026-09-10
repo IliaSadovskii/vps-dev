@@ -1,7 +1,7 @@
 <!-- Навык. Читают шаги: code-review — и передаёт его подагентам sub-review-defects и sub-review-security. Подключается по строке `Навыки:` в scoping.md. -->
 
-Skill: checking user-facing UI. Loaded by Verification, Code Review and
-Fix Review when `discovery.md` names `frontend` under «Навыки». It adds
+Skill: checking user-facing UI. Loaded by Code Review and its sub-agents
+when `scoping.md` names `frontend` under «Навыки». It adds
 to the role's own prompt; findings go into the role's own artifact in the
 role's own format, never into a separate report.
 
@@ -19,9 +19,11 @@ live phases were skipped so the human gate stays honest.
 
 ## Getting a browser
 
-Look for a running dev server first — `discovery.md` names the command
-and port; never guess a URL. If nothing is running, start it the way the
-project does, wait for the port, and stop it when you are done. Drive it
+Look for a running dev server first — the task's stand (its address is in
+the task block and in the orch panel) or the command from `scoping.md`;
+never guess a URL. If nothing is running, start it the way the project does
+through `ports run <stand> -- …` so it lands on the task's own ports, wait
+for the port, and stop it when you are done. Drive it
 through the Playwright MCP tools when the agent has them
 (`browser_navigate`, `browser_snapshot`, `browser_take_screenshot`,
 `browser_resize`, `browser_press_key`, `browser_console_messages`,

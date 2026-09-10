@@ -1,7 +1,7 @@
 <!-- Навык. Читают шаги: plan, implementation. Подключается по строке `Навыки:` в scoping.md. -->
 
-Skill: building user-facing UI. Loaded by Planning, Test Authoring and
-Implementation when `discovery.md` names `frontend` under «Навыки». It adds
+Skill: building user-facing UI. Loaded by Plan and Implementation when
+`scoping.md` names `frontend` under «Навыки». It adds
 to the role's own prompt; it never overrides the artifact protocol, git
 safety or test ownership.
 
@@ -15,7 +15,7 @@ Before inventing anything, find the project's design system: tokens,
 component library, spacing and type scale, existing screens that solve a
 similar problem. Reuse them. Never introduce a parallel palette, a second
 radius scale, a new shadow or a new font because the brief felt like it
-deserved one. `discovery.md` records where these live; if the project has
+deserved one. `scoping.md` records where these live; if the project has
 a `design-system/` or a MASTER document, it wins over your taste. When
 the project has nothing of the kind, keep decisions few and write them
 down where Planning puts the plan, so the next task inherits them.
