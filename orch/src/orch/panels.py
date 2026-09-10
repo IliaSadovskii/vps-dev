@@ -17,6 +17,7 @@ from .db import ABANDONED, BACKLOG, CLOSED, Db, QUEUED, RUNNING, WAIT_REASONS, W
 from .db import DONE as ST_DONE
 
 # Сколько строк показываем, чтобы панель влезала в 64 КиБ и читалась с телефона.
+MAX_DECISIONS = 3      # сколько задач получают кнопки прямо на обзоре
 MAX_TASKS = 30
 MAX_EVENTS = 10
 MAX_COMMENTS = 3
@@ -178,20 +179,24 @@ def home_pane(
                 "children": [_waiting_row(db, t, base_url) for t in waiting[:MAX_TASKS]],
             }
         )
-        first = waiting[0]
-        blocks.append(
-            {
-                "kind": "callout",
-                "tone": "danger",
-                "icon": "hand",
-                "title": f"{first['id']}: {_reason_text(first['wait_reason'])}",
-                "detail": _what_to_decide(db, first),
-                "actions": _buttons(db, first),
-            }
-        )
-        # Остановка побочной роли решается кнопками самой находки, и без
-        # неё обзор говорил «просит посмотреть», а нажать было нечего.
-        blocks.extend(_note_blocks(db, first))
+        # Кнопки — у каждой ждущей, а не только у первой. Утром на воротах
+        # стоят три задачи, и решать их по одной, раскрывая каждую, — не
+        # обзор, а очередь. Больше трёх не рисуем: остальные видны списком
+        # выше и открываются ссылкой.
+        for task in waiting[:MAX_DECISIONS]:
+            blocks.append(
+                {
+                    "kind": "callout",
+                    "tone": "danger",
+                    "icon": "hand",
+                    "title": f"{task['id']}: {_reason_text(task['wait_reason'])}",
+                    "detail": _what_to_decide(db, task),
+                    "actions": _buttons(db, task),
+                }
+            )
+            # Остановка побочной роли решается кнопками самой находки, и без
+            # неё обзор говорил «просит посмотреть», а нажать было нечего.
+            blocks.extend(_note_blocks(db, task))
 
     queued = db.tasks((QUEUED,))
     if queued:

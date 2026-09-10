@@ -629,6 +629,29 @@ def test_сломанная_цепочка_не_запирает_задачу(en
     assert engine.db.task(task_id)["status"] == "closed"
 
 
+def test_кнопки_есть_у_каждой_ждущей_задачи(engine, fake, repo):
+    """Утром на воротах три задачи, и решать их по одной — не обзор, а очередь."""
+    from orch import panels
+
+    from tests.test_engine import start, turn
+
+    первая = start(engine, repo)
+    turn(engine, fake, первая, "one", 1, None)
+    turn(engine, fake, первая, "two", 1, "ok")          # встала на воротах
+    # Вторая ждущая задача: `start` чистит таблицу, поэтому заводим её руками
+    # тем же путём, что и движок.
+    вторая = engine.create_task(
+        chain_name="t", project_path=str(repo), text="вторая задача"
+    )
+    with engine.db.tx():
+        engine.db.bump(вторая, status="waiting", wait_reason="gate", step="two")
+
+    pane = panels.home_pane(engine.db, [str(repo)])
+    решения = [b for b in pane["blocks"] if b.get("kind") == "callout" and b.get("actions")]
+    assert len(решения) >= 2, "кнопки дали только первой ждущей задаче"
+    assert {первая, вторая} <= {b["title"].split(":")[0] for b in решения}
+
+
 def test_панель_закрытой_задачи_рисуется_без_ворот(engine, fake, repo):
     """Панель рисуется толчком: перестанешь обновлять — в сессии навсегда
     застынет кадр с кнопкой «Принять» у принятой задачи."""
