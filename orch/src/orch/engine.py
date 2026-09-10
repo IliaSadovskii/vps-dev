@@ -1285,17 +1285,32 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
         after = entry.get("after", step.human_after) if entry else step.human_after
         return chain_gates_on(after, outcome)
 
-    def stop(self, task_id: str, reason: str, status: str = ST_WAITING, urgent: bool = False) -> None:
+    def stop(
+        self,
+        task_id: str,
+        reason: str,
+        status: str = ST_WAITING,
+        urgent: bool = False,
+        interrupt: bool = False,
+    ) -> None:
         with self.db.tx():
             self.db.bump(task_id, status=status, wait_reason=reason)
             self.db.event(task_id, "stopped", {"reason": reason})
         if urgent or status == ST_WAITING:
             run = self.db.conn.execute(
-                "SELECT session_id FROM run WHERE task_id = ? AND session_id IS NOT NULL "
-                "ORDER BY id DESC LIMIT 1",
+                "SELECT session_id, ended_at FROM run WHERE task_id = ? "
+                "AND session_id IS NOT NULL ORDER BY id DESC LIMIT 1",
                 (task_id,),
             ).fetchone()
             if run:
+                # `interrupt` — остановка посреди хода: обрываем роль, иначе
+                # остановка ничего не останавливает. Наладчик поднял `hold` на
+                # шаге плана, движок пометил задачу ждущей — а роль договорила
+                # и уехала дальше, и ответ владельца опоздал (T37, 2026-09-10).
+                # Остальные остановки приходят на законченный ход, а на вопросе
+                # роли отмена убила бы сам вопрос.
+                if interrupt and not run["ended_at"]:
+                    self.aoe.cancel(run["session_id"])
                 self.mark_stopped(self.db.task(task_id), run["session_id"])
             self.stand_if_wanted(self.db.task(task_id))
 

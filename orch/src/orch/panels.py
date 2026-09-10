@@ -112,6 +112,10 @@ BUTTONS_BY_REASON = {
     "bad_outcome": ("again", "accept_as_is", "back"),
     "error": ("again", "back"),
     "ask": (),
+    # Отвечают кнопками самой находки («передать решение», «пусть решит сам»),
+    # и голая «Ещё заход» рядом с ними только путала: непонятно, чей это
+    # заход и что будет с вопросом.
+    "aside_hold": (),
     "no_worker": ("again",),
     "branch_busy": ("again", "back"),
     "abandoned": (),

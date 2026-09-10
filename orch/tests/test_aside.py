@@ -10,7 +10,7 @@ from orch import asides
 from orch.asides import AsideError, parse
 from orch.db import WAITING
 
-from tests.test_engine import monkey_chain, start, turn
+from tests.test_engine import monkey_chain, session_of, start, turn
 
 
 SPEC = """
@@ -382,6 +382,9 @@ def test_находка_с_остановкой_ставит_задачу_на_�
     assert task["status"] == WAITING and task["wait_reason"] == "aside_hold"
     note = engine.db.note(1)
     assert note["severity"] == "hold" and json.loads(note["options"])[0]["verb"] == "continue"
+    # Остановка обязана останавливать: идущий ход шага обрывается, иначе роль
+    # договорит и уедет дальше, а ответ владельца опоздает (T37, 2026-09-10).
+    assert session_of(engine, task_id) in fake.cancels
 
 
 def test_роль_без_права_останавливать_только_сообщает(engine, fake, repo, tune):

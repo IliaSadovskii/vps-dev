@@ -891,7 +891,7 @@ class AsideMixin:
             )
         задача = run["task_id"] or aside["task_id"]
         if severity == "hold" and задача:
-            self.stop(задача, "aside_hold", urgent=True)
+            self.stop(задача, "aside_hold", urgent=True, interrupt=True)
         return f"находка записана (N{note_id})"
 
     def aside_done(self, run_id: int, outcome: str | None = None, token: str = "") -> str:
@@ -953,7 +953,7 @@ class AsideMixin:
                 answer = self.button(task_id, task["revision"], "accept")
         elif verb == "stop":
             if task is not None:
-                self.stop(task_id, "aside_hold", urgent=True)
+                self.stop(task_id, "aside_hold", urgent=True, interrupt=True)
                 answer = "задача остановлена"
         elif verb in ("restart", "again"):
             if task is not None:
