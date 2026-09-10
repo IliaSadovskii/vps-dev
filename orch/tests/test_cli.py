@@ -356,6 +356,47 @@ def test_заявка_из_копии_записывает_проект_а_не_
     assert request["project_path"] == str(root.resolve())
 
 
+def test_digest_не_отдаёт_забытый_заход(tmp_path, capsys, monkeypatch):
+    """После отката номера заходов повторяются — по номеру находились двое.
+
+    Наладчику отдавали отменённый ход, и он разбирал чужую работу как
+    текущую (находки 66 и 68, прогон T37).
+    """
+    import sqlite3
+
+    import orch.cli as mod
+
+    path = tmp_path / "orch.db"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE task (id TEXT PRIMARY KEY, worktree_path TEXT, project_path TEXT)")
+    conn.execute("INSERT INTO task VALUES ('T1', ?, ?)", (str(tmp_path), str(tmp_path)))
+    conn.execute(
+        "CREATE TABLE run (id INTEGER PRIMARY KEY, task_id TEXT, step TEXT, n INT, "
+        "started_at TEXT, ended_at TEXT, void_at TEXT, acp_session_id TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO run VALUES (1,'T1','plan',1,'2026-01-01T00:00:00Z',"
+        "'2026-01-01T01:00:00Z','2026-01-01T02:00:00Z','забытый')"
+    )
+    conn.execute(
+        "INSERT INTO run VALUES (2,'T1','plan',1,'2026-01-01T03:00:00Z',NULL,NULL,'живой')"
+    )
+    conn.commit()
+    monkeypatch.setattr(mod, "DB_PATH", path)
+
+    видел = {}
+
+    def подсмотреть(root, since, until, session, max_tools):
+        видел["session"] = session
+        return {"turns": [], "tools": [], "files": [], "errors": [], "questions": [], "final": ""}
+
+    import orch.digest as dg
+
+    monkeypatch.setattr(dg, "digest", подсмотреть)
+    run(["digest", "T1", "plan"], capsys)
+    assert видел["session"] == "живой", "разбирать зовут отменённый ход"
+
+
 def test_gc_показывает_сирот_и_не_трогает_без_согласия(tmp_path, capsys, monkeypatch):
     """Копия без живой задачи — сирота; удалять её молча нельзя."""
     import sqlite3

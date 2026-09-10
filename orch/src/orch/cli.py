@@ -771,12 +771,17 @@ def cmd_digest(args: argparse.Namespace) -> int:
 
     # `_ro_db` отдаёт голое соединение sqlite3, а не `Db`: `.conn` у него нет.
     conn = _ro_db()
+    # Забытые заходы (`void_at`) не в счёт, и последний живой — по `id`, а не
+    # по номеру: после отката номера начинаются заново, и по `(шаг, номер)`
+    # находились сразу два хода. Наладчику отдавали отменённый, и он разбирал
+    # чужую работу как текущую (находки 66 и 68, прогон T37).
     row = conn.execute(
         "SELECT r.*, t.worktree_path, t.project_path FROM run r JOIN task t ON t.id = r.task_id "
-        "WHERE r.task_id = ? AND r.step = ? ORDER BY r.n DESC LIMIT 1"
+        "WHERE r.task_id = ? AND r.step = ? AND r.void_at IS NULL ORDER BY r.id DESC LIMIT 1"
         if args.run is None else
         "SELECT r.*, t.worktree_path, t.project_path FROM run r JOIN task t ON t.id = r.task_id "
-        "WHERE r.task_id = ? AND r.step = ? AND r.n = ?",
+        "WHERE r.task_id = ? AND r.step = ? AND r.n = ? AND r.void_at IS NULL "
+        "ORDER BY r.id DESC LIMIT 1",
         (args.task, args.step) if args.run is None else (args.task, args.step, args.run),
     ).fetchone()
     if row is None:
