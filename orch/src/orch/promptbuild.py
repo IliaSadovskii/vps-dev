@@ -175,10 +175,30 @@ def _files(ctx: Context, inline: bool) -> str:
             continue
         lines.append(f"- `{path}`")
         if inline:
+            # Вклеивается только `## Итог`: чужой файл целиком — это ещё и
+            # инъекция через артефакт (`PLAN.md` §13, вопрос 19). Но молчать
+            # об этом нельзя: роль Плана на T37 прочла 24 строки из 337 и не
+            # знала, что «Правила проекта» и «Тесты и проверки» остались в
+            # файле. Поэтому здесь сказано, что вклеено и что осталось.
             summary = _summary(path)
+            rest = _other_headings(path)
             if summary:
                 lines.append("")
                 lines.append(_indent(summary))
+                lines.append("")
+                if rest:
+                    lines.append(
+                        "  Выше — только первый раздел файла. Остальное в нём: "
+                        + ", ".join(f"`{h}`" for h in rest)
+                        + " — открой файл и читай нужные разделы, по памяти о "
+                        "вклейке их не восстановить."
+                    )
+                    lines.append("")
+            else:
+                lines.append(
+                    "  Содержание не вклеено: у файла нет раздела `## Итог`. "
+                    "Открой его сама."
+                )
                 lines.append("")
     if missing:
         lines.append("")
@@ -316,10 +336,14 @@ def _finish(ctx: Context) -> str:
             else ""
         )
         lines.append(f"Задача встанет и будет ждать владельца на исходе {named}.{tail}")
-    lines.append(
-        "После остановки правки владельца вноси в свой файл, второй раз "
-        "`orch done` не вызывай."
-    )
+    if gate:
+        # Строка про правки после остановки — только тем, у кого остановка
+        # есть: после «задача не встанет» она читалась как противоречие, и
+        # роль без ворот ждала разговора, которого не будет.
+        lines.append(
+            "После остановки правки владельца вноси в свой файл, второй раз "
+            "`orch done` не вызывай."
+        )
     return "\n".join(lines)
 
 
@@ -340,6 +364,19 @@ def _summary(path: Path) -> str:
         if taking:
             out.append(line)
     return "\n".join(out).strip()
+
+
+def _other_headings(path: Path) -> list[str]:
+    """Заголовки `## …` файла, кроме вклеенного: что роль ещё не видела."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return [
+        line.strip()
+        for line in text.splitlines()
+        if line.startswith("## ") and line.strip() not in SUMMARY_HEADINGS
+    ]
 
 
 def _reads_skill(path: Path, step_id: str) -> bool:
