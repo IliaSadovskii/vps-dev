@@ -60,7 +60,6 @@ from .wizard import WizardMixin
 from .workspace import (
     Workspace,
     create_worktree,
-    git_try,
     has_work,
     remove_worktree,
     touched_files,
@@ -217,7 +216,8 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
         except ChainError:
             return
         row = self.db.conn.execute(
-            "SELECT * FROM run WHERE task_id = ? AND step = ? ORDER BY id DESC LIMIT 1",
+            "SELECT * FROM run WHERE task_id = ? AND step = ? AND void_at IS NULL "
+            "ORDER BY id DESC LIMIT 1",
             (task["id"], step.id),
         ).fetchone()
         if row is None or not row["ended_at"]:
@@ -227,27 +227,70 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
         if not signal or signal.get("kind") != "done":
             return
         outcome = signal.get("outcome")
-        if outcome is not None and outcome not in step.next:
+        if step.single_next is None and outcome not in step.next:
             return
-        target = step.target(outcome)
-        if target is None:
+        if step.target(outcome) is None:
             return
+        # Те же правила, что у сигнала, пришедшего вовремя: без файла сдачи
+        # нет, а ворота листа автономии и конец цепочки — не пустой звук.
+        # Раньше запоздавший сигнал проскакивал ворота и писал `step = 'done'`
+        # как имя шага — задача висела с ошибкой на каждом проходе.
+        problems = art.check_all(ws.artifacts, step.artifact)
+        if problems:
+            self.note_once(
+                task["id"], "late_signal_artifact",
+                {"step": step.id, "run": row["n"], "problems": problems},
+            )
+            return
+        sha = artifact_sha(ws, step)
+        trigger = f"signal_late:{outcome or ''}"
         with self.db.tx():
             self.db.conn.execute(
                 "UPDATE run SET outcome = ?, signalled = 1 WHERE id = ?", (outcome, row["id"])
             )
-            revision = self.db.bump(task["id"], status=ST_RUNNING, step=target, wait_reason=None)
-            self.db.move(
-                task["id"], step.id, target, "agent", f"signal_late:{outcome or ''}", revision
-            )
+            gated, closed_now = self.advance(task, step, outcome, sha, trigger)
             self.db.event(
                 task["id"],
                 "late_signal",
-                {"step": step.id, "run": row["n"], "outcome": outcome, "to": target},
+                {"step": step.id, "run": row["n"], "outcome": outcome,
+                 "to": step.id if gated else step.target(outcome)},
             )
+        fresh = self.db.task(task["id"])
+        if gated:
+            self.mark_stopped(fresh, row["session_id"])
+            self.stand_if_wanted(fresh)
+            return
         if row["session_id"]:
             self.aoe.set_urgent(row["session_id"], False)
             self.aoe.set_color(row["session_id"], "green")
+        if closed_now:
+            self.drop_stand(fresh)
+
+    def advance(self, task, step: Step, outcome: str | None, sha: str | None, trigger: str):
+        """Куда едет задача после сданного хода: ворота, следующий шаг или конец.
+
+        Только внутри `tx`. Одна функция на сигнал вовремя и на запоздавший:
+        два экземпляра одной логики уже разошлись — второй не знал ни про
+        ворота, ни про `done`. Возвращает (встала на воротах, закрыта).
+        """
+        if self.gates_on(task, step, outcome):
+            revision = self.db.bump(task["id"], status=ST_WAITING, wait_reason="gate")
+            self.db.move(
+                task["id"], step.id, step.id, "agent", trigger, revision, artifact_sha=sha
+            )
+            self.db.event(task["id"], "gate", {"step": step.id, "outcome": outcome})
+            return True, False
+        target = step.target(outcome)
+        if target == DONE:
+            revision = self.db.bump(
+                task["id"], status=ST_DONE, step=None, closed_at=now(), wait_reason=None
+            )
+            self.db.move(task["id"], step.id, DONE, "agent", trigger, revision, artifact_sha=sha)
+            self.db.event(task["id"], "done", {})
+            return False, True
+        revision = self.db.bump(task["id"], status=ST_RUNNING, step=target, wait_reason=None)
+        self.db.move(task["id"], step.id, target, "agent", trigger, revision, artifact_sha=sha)
+        return False, False
 
     def resume_after_answer(self, task, sessions: dict[str, Session]) -> None:
         """Владелец ответил роли в чате — задача снова едет."""
@@ -500,13 +543,14 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
 
         with self.db.tx():
             run_id = self.db.start_run(task["id"], step.id, step.context, start_sha)
+            run = self.db.conn.execute("SELECT * FROM run WHERE id = ?", (run_id,)).fetchone()
+            # `n` — номер захода, как в титуле сессии и в промпте, а не счёт
+            # по кругу: после возврата ролью второй заход объявлялся первым.
             self.db.event(
                 task["id"],
                 "run_started",
-                {"run": run_id, "step": step.id, "n": len(done_runs) + 1,
-                 "context": step.context},
+                {"run": run_id, "step": step.id, "n": run["n"], "context": step.context},
             )
-        run = self.db.conn.execute("SELECT * FROM run WHERE id = ?", (run_id,)).fetchone()
 
         session = self.attach_session(task, chain, step, run)
         if session is None:
@@ -1042,34 +1086,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
                 self.db.conn.execute(
                     "UPDATE run SET cost_usd = ? WHERE id = ?", (cost, run["id"])
                 )
-            if self.gates_on(task, step, outcome):
-                revision = self.db.bump(task["id"], status=ST_WAITING, wait_reason="gate")
-                self.db.move(
-                    task["id"], step.id, step.id, "agent", trigger, revision,
-                    artifact_sha=sha,
-                )
-                self.db.event(task["id"], "gate", {"step": step.id, "outcome": outcome})
-                gated = True
-            else:
-                target = step.target(outcome)
-                gated = False
-                closed_now = False
-                if target == DONE:
-                    revision = self.db.bump(
-                        task["id"], status=ST_DONE, step=None, closed_at=now()
-                    )
-                    self.db.move(
-                        task["id"], step.id, DONE, "agent", trigger, revision,
-                        artifact_sha=sha,
-                    )
-                    self.db.event(task["id"], "done", {})
-                    closed_now = True
-                else:
-                    revision = self.db.bump(task["id"], step=target)
-                    self.db.move(
-                        task["id"], step.id, target, "agent", trigger, revision,
-                        artifact_sha=sha,
-                    )
+            gated, closed_now = self.advance(task, step, outcome, sha, trigger)
         if gated:
             self.mark_stopped(task, session.id)
             self.stand_if_wanted(self.db.task(task["id"]))
@@ -1191,33 +1208,45 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
         """
         runs = [r for r in self.db.runs_of_step(task["id"], step.id) if not r["void_at"]]
         начало = self.cycle_start(task, step, chain)
-        if not начало:
+        if начало is None:
             return runs
-        # Строго позже: заход, начатый в ту же секунду, что и движение
-        # назад, — это и есть заход нового круга.
-        return [r for r in runs if (r["started_at"] or "") > начало]
 
-    def cycle_start(self, task, step: Step, chain: Chain | None = None) -> str:
-        """С какого момента считать заходы этого шага.
+        def в_круге(r) -> bool:
+            # По номеру движения, а не по времени: кнопка владельца и заход
+            # после неё пишутся в одну секунду (клик исполняется тем же
+            # проходом), и «строго позже» по времени терял этот заход — предел
+            # давал на заход больше (T37: движение 240 и заход 166 в 02:13:53).
+            # Время — только для заходов, записанных до появления колонки.
+            if r["after_move"] is not None:
+                return int(r["after_move"]) >= int(начало["id"])
+            return (r["started_at"] or "") > начало["at"]
+
+        return [r for r in runs if в_круге(r)]
+
+    def cycle_start(self, task, step: Step, chain: Chain | None = None):
+        """Движение, с которого считать заходы этого шага, или None.
 
         Круг шага начинается, когда работа ушла **выше него** по цепочке —
         неважно, кнопкой владельца или исходом роли. Возврат на сам шаг
-        (Правки просят Ревью кода перечитать) круг не открывает: именно от
-        такого хождения на месте предел и поставлен.
+        (Правки просят Ревью кода перечитать, владелец жмёт «ещё заход») круг
+        не открывает: именно от такого хождения на месте предел и поставлен,
+        а кнопка на пределе добавляет **один** заход (`grant_run`), не полный
+        предел заново. Движение вперёд круг тоже не трогает: вернувшись,
+        роль читает ту же свою работу.
         """
         chain = chain or self.chain_of(task)
         порядок = {s.id: i for i, s in enumerate(chain.steps)} if chain else {}
         мой = порядок.get(step.id)
+        if мой is None:
+            return None
         for row in self.db.conn.execute(
-            "SELECT actor, to_step, at FROM move WHERE task_id = ? ORDER BY id DESC",
+            "SELECT id, to_step, at FROM move WHERE task_id = ? ORDER BY id DESC",
             (task["id"],),
         ):
-            if row["actor"] == "human":
-                return row["at"]
             куда = порядок.get(row["to_step"])
-            if мой is not None and куда is not None and куда < мой:
-                return row["at"]
-        return ""
+            if куда is not None and куда < мой:
+                return row
+        return None
 
     def loops_this_cycle(self, task, chain: Chain | None = None) -> int:
         """Сколько раз роли сами отправляли работу назад после хода владельца.

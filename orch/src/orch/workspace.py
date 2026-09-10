@@ -52,20 +52,20 @@ class Workspace:
 
     def exclude_from_git(self) -> None:
         """`.orch/` не попадает в git — локально, без правки `.gitignore` проекта."""
-        exclude = self.root / ".git" / "info" / "exclude"
-        if not exclude.parent.is_dir():
-            # В worktree `.git` — файл; настоящий каталог у основного репозитория.
-            gitfile = self.root / ".git"
-            if gitfile.is_file():
-                try:
-                    line = gitfile.read_text(encoding="utf-8").strip()
-                    common = Path(line.split(": ", 1)[1])
-                    exclude = common / "info" / "exclude"
-                    exclude.parent.mkdir(parents=True, exist_ok=True)
-                except (OSError, IndexError):
-                    return
-            else:
-                return
+        # Общий каталог git, а не каталог рабочей копии: у копии, сделанной
+        # `git worktree add`, свой `.git/worktrees/<имя>/`, но `info/exclude`
+        # git читает только из общего. Раньше строка писалась в
+        # `worktrees/<имя>/info/exclude`, git её не видел, и `.orch/` стоял в
+        # `git status` каждой задачи как `??` — один `git add -A` роли, и
+        # папка задачи уезжала в PR.
+        common = git(self.root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        if not common:
+            return
+        exclude = Path(common) / "info" / "exclude"
+        try:
+            exclude.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return
         try:
             text = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
             if ".orch/" not in text:
@@ -101,6 +101,17 @@ class Workspace:
     def save_history(self, step: str, run: int, start_sha: str | None) -> Path:
         """Копия артефактов, дифф захода и логи — на случай возврата."""
         dest = self.history / f"{step}-{run}"
+        if dest.is_dir() and any(dest.iterdir()):
+            # Папка с таким именем уже есть — от захода с тем же номером,
+            # забытого возвратом начисто. Писать поверх нельзя: история и
+            # существует для того, чтобы владелец мог прочитать, что было
+            # (T37: `history/scoping-1` датирована третьим заходом).
+            stale = self.history / f"{step}-{run}.{int(dest.stat().st_mtime)}"
+            n = 0
+            while stale.exists():
+                n += 1
+                stale = self.history / f"{step}-{run}.{int(dest.stat().st_mtime)}-{n}"
+            dest.replace(stale)
         dest.mkdir(parents=True, exist_ok=True)
         if self.artifacts.is_dir():
             # Только файлы ролей: снимки экрана и прочее тяжёлое, что роль
@@ -134,6 +145,57 @@ class Workspace:
             dest.mkdir(parents=True, exist_ok=True)
             src.replace(dest / name)
             moved.append(name)
+        return moved
+
+    def clear_runs(self, runs: list[tuple[str, int]], tag: str) -> list[str]:
+        """Убрать сигналы и историю забытых заходов вслед за их артефактами.
+
+        Забытый заход не в счёт, и новый заход того же шага получает его же
+        номер. Файлы забытого захода при этом лежали на месте и выдавали себя
+        за файлы нового: сигнал `one-1.json` движок принимал за сдачу нового
+        хода, едва тот кончился, а `orch done` роли отказывал — «ход уже
+        сдан» (T37, 2026-09-10: `scoping-1-refused-1.json` рядом с чужим
+        `scoping-1.json`); папка `history/one-1/` перезаписывалась новым
+        заходом, и «убрано в историю» оказывалось неправдой.
+        """
+        dest = self.history / f"cleared-{tag}"
+        moved: list[str] = []
+        for step, n in runs:
+            if self.signals.is_dir():
+                for src in sorted(self.signals.glob(f"{step}-{n}.json")) + sorted(
+                    self.signals.glob(f"{step}-{n}-*.json")
+                ):
+                    (dest / "signals").mkdir(parents=True, exist_ok=True)
+                    src.replace(dest / "signals" / src.name)
+                    moved.append(f"signals/{src.name}")
+            past = self.history / f"{step}-{n}"
+            if past.is_dir() and past != dest:
+                (dest / "history").mkdir(parents=True, exist_ok=True)
+                past.replace(dest / "history" / past.name)
+                moved.append(f"history/{past.name}")
+            prompt = self.prompts / f"{step}-{n}.md"
+            if prompt.exists():
+                (dest / "prompts").mkdir(parents=True, exist_ok=True)
+                prompt.replace(dest / "prompts" / prompt.name)
+                moved.append(f"prompts/{prompt.name}")
+        return moved
+
+    def clear_steps(self, steps: list[str], tag: str) -> list[str]:
+        """Убрать логи шагов, работа которых стёрта целиком.
+
+        `logs/<шаг>.txt` роль дописывает, а не переписывает: после отката
+        следующий заход того же шага читал бы вывод команд шага, которого
+        «не было», и приписывал бы его себе.
+        """
+        dest = self.history / f"cleared-{tag}" / "logs"
+        moved: list[str] = []
+        if not self.logs.is_dir():
+            return moved
+        for step in steps:
+            for src in sorted(self.logs.glob(f"{step}.*")):
+                dest.mkdir(parents=True, exist_ok=True)
+                src.replace(dest / src.name)
+                moved.append(f"logs/{src.name}")
         return moved
 
     # ── git ──────────────────────────────────────────────────────────────
