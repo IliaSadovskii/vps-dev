@@ -119,10 +119,14 @@ class Db:
         self.conn.execute("BEGIN IMMEDIATE")
         try:
             yield self.conn
+            self.conn.execute("COMMIT")
         except BaseException:
-            self.conn.execute("ROLLBACK")
+            # Откатываем и тогда, когда сорвался сам COMMIT (занятая база):
+            # иначе транзакция остаётся открытой, и каждый следующий `BEGIN`
+            # падает «within a transaction» до перезапуска воркера.
+            if self.conn.in_transaction:
+                self.conn.execute("ROLLBACK")
             raise
-        self.conn.execute("COMMIT")
 
     def close(self) -> None:
         self.conn.close()
@@ -217,10 +221,14 @@ class Db:
         # Забытые заходы не в счёт: возврат начисто стёр их работу, и шаг
         # начинается заново — «заход 1», а не «заход 3» (T37, 2026-09-10).
         n = 1 + len([r for r in self.runs_of_step(task_id, step) if not r["void_at"]])
+        # После какого движения начат заход. Круг шага считается по
+        # движениям, а кнопка владельца и заход после неё ложатся в одну
+        # секунду (клик → тот же проход): по времени их не упорядочить, по
+        # номеру движения — всегда.
         cur = self.conn.execute(
-            "INSERT INTO run (task_id, step, n, context, started_at, start_sha) "
-            "VALUES (?,?,?,?,?,?)",
-            (task_id, step, n, context, now(), start_sha),
+            "INSERT INTO run (task_id, step, n, context, started_at, start_sha, after_move) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (task_id, step, n, context, now(), start_sha, self.last_move_id(task_id)),
         )
         return cur.lastrowid
 
@@ -276,10 +284,13 @@ class Db:
     def run_events(self, task_id: str, kind: str, run_id: int) -> list[sqlite3.Row]:
         """События захода: у повторяемых действий (побудка, «продолжай»)
         счётчик — это число событий, а не поле."""
+        # Номер закрывается запятой или скобкой: `'%"run": 1%'` подходил и к
+        # заходу 12, и счёт побудок и толчков брал чужие события.
         return list(
             self.conn.execute(
-                "SELECT * FROM event WHERE task_id = ? AND kind = ? AND payload LIKE ? ORDER BY seq",
-                (task_id, kind, f'%"run": {run_id}%'),
+                "SELECT * FROM event WHERE task_id = ? AND kind = ? "
+                "AND (payload LIKE ? OR payload LIKE ?) ORDER BY seq",
+                (task_id, kind, f'%"run": {run_id},%', f'%"run": {run_id}}}%'),
             )
         )
 

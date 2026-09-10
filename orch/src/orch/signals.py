@@ -75,7 +75,11 @@ def latest(signals: Path, step: str, run: int, kinds: tuple[str, ...] = KINDS) -
     if not signals.is_dir():
         return None
     best: dict | None = None
-    for path in signals.glob(f"{step}-{run}*.json"):
+    # Два шаблона, а не `{step}-{run}*.json`: тот подходил и к десятому
+    # заходу (`one-1` → `one-10.json`, `one-12-refused-1.json`), и панель
+    # показывала отказ чужого захода как ответ на этот.
+    paths = list(signals.glob(f"{step}-{run}.json")) + list(signals.glob(f"{step}-{run}-*.json"))
+    for path in paths:
         data = read(path)
         if not data or data.get("kind") not in kinds:
             continue

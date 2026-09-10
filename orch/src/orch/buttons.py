@@ -17,7 +17,7 @@ from .db import (
     WAITING as ST_WAITING,
     now,
 )
-from .workspace import git, git_try
+from .workspace import git, git_try, has_work
 
 
 class ButtonsMixin:
@@ -75,6 +75,12 @@ class ButtonsMixin:
         ws = self.workspace(task)
         end_sha = ws.head() if task["worktree_path"] else None
         if run["session_id"]:
+            # Роль может ещё работать: откат, «начать заново» и закрытие
+            # доступны на идущем ходу. Заход закрывается в базе — значит и
+            # ход обрывается, иначе роль продолжит писать в ту же копию
+            # поверх сброшенной ветки, рядом со следующей ролью. На
+            # законченном ходу отмена безвредна.
+            self.aoe.cancel(run["session_id"])
             ws.save_history(run["step"], run["n"], run["start_sha"])
         with self.db.tx():
             self.db.end_run(run["id"], None, end_sha)
@@ -208,7 +214,15 @@ class ButtonsMixin:
         names = sorted({n for n in names if n not in свои})
         moved: list[str] = []
         if task["worktree_path"]:
-            moved = self.workspace(task).clear_artifacts(names, now().replace(":", "-"))
+            tag = now().replace(":", "-")
+            ws = self.workspace(task)
+            moved = ws.clear_artifacts(names, tag)
+            # Сигналы, промпты и история забытых заходов уходят вместе с
+            # ними: новый заход получит те же номера, и чужой `one-1.json`
+            # сошёл бы за его сдачу (T37). Логи — только у шагов ниже: свой
+            # файл шаг-цель дописывает сам.
+            moved += ws.clear_runs([(r["step"], int(r["n"])) for r in doomed], tag)
+            moved += ws.clear_steps(sorted({r["step"] for r in doomed} - {target}), tag)
         with self.db.tx():
             for run in doomed:
                 self.db.void_run(int(run["id"]))
@@ -244,7 +258,13 @@ class ButtonsMixin:
         нажимать в пустоту.
         """
         step = chain.step(task["step"])
-        grant = task["wait_reason"] == "max_runs"
+        # Предел поднимается и тогда, когда задача встала по другой причине
+        # на последнем допустимом заходе («нет сигнала», ошибка): иначе
+        # «Продолжай» тут же упирается в «предел заходов», и владелец
+        # нажимает второй раз ту же по смыслу кнопку.
+        grant = task["wait_reason"] == "max_runs" or (
+            len(self.runs_this_cycle(task, step, chain)) >= self.runs_allowed(task, step)
+        )
         with self.db.tx():
             revision = self.db.bump(task["id"], status=ST_RUNNING, wait_reason=None)
             if grant:
@@ -365,9 +385,33 @@ class ButtonsMixin:
         tag = now().replace(":", "-")
         moved: list[str] = []
         if task["worktree_path"]:
-            moved = self.workspace(task).clear_artifacts(sorted(set(names)), tag)
+            ws = self.workspace(task)
+            moved = ws.clear_artifacts(sorted(set(names)), tag)
+            moved += ws.clear_runs([(r["step"], int(r["n"])) for r in doomed], tag)
+            moved += ws.clear_steps(sorted(отсюда), tag)
 
-        запаска = self.rewind_git(task, doomed[0] if doomed else None, tag)
+        # Ветка сбрасывается к началу первого забытого захода, который идёт
+        # **после** последнего уцелевшего: коммиты в ветке линейны, и сброс
+        # ниже унёс бы работу шага выше, сходившего позже целевого, — ту
+        # самую, чей файл мы только что сберегли. Что забытые заходы успели
+        # закоммитить раньше уцелевшего, остаётся: это основание, на котором
+        # уцелевший работал.
+        уцелевшие = [
+            r
+            for r in self.db.conn.execute(
+                "SELECT id FROM run WHERE task_id = ? AND void_at IS NULL ORDER BY id",
+                (task["id"],),
+            )
+            if r["id"] not in {d["id"] for d in doomed}
+        ]
+        граница = max((int(r["id"]) for r in уцелевшие), default=0)
+        первый = next((r for r in doomed if int(r["id"]) > граница), None)
+        if doomed and первый is None:
+            self.db.event(
+                task["id"], "rewind_kept_git",
+                {"why": "после забытых заходов ходили уцелевшие", "runs": [int(r["id"]) for r in doomed]},
+            )
+        запаска = self.rewind_git(task, первый, tag)
 
         with self.db.tx():
             for run in doomed:
@@ -397,7 +441,17 @@ class ButtonsMixin:
             self.db.move(
                 task["id"], task["step"], step, "human", "button", revision, comment=comment
             )
-        self.archive_runs([r["session_id"] for r in doomed])
+        # Сессию, в которой продолжает жить уцелевший заход (`context:
+        # continue` делит сессию между шагами), в архив не отправляем.
+        живые = {
+            r["session_id"]
+            for r in self.db.conn.execute(
+                "SELECT session_id FROM run WHERE task_id = ? AND void_at IS NULL "
+                "AND session_id IS NOT NULL",
+                (task["id"],),
+            )
+        }
+        self.archive_runs([r["session_id"] for r in doomed if r["session_id"] not in живые])
         хвост = f"; ветка откачена, запаска {запаска}" if запаска else ""
         return (
             f"откат на {step}: забыто заходов {len(doomed)}, "
@@ -415,8 +469,38 @@ class ButtonsMixin:
             return None
         root = task["worktree_path"]
         head = git(root, "rev-parse", "HEAD")
-        if not head or head == первый["start_sha"]:
+        if not head:
             return None
+        # Незакоммиченная работа — тоже работа забытого шага: Реализация
+        # правила дерево и не коммитила, `HEAD` совпадал с началом захода, и
+        # откат уходил ни с чем — следующая роль читала недоделки шага,
+        # которого «не было» (T37, 2026-09-10). Всё, что есть в дереве, идёт
+        # в запаску коммитом, и только потом дерево сбрасывается.
+        грязно = has_work(root)
+        if head == первый["start_sha"] and not грязно:
+            return None
+        if git(root, "ls-files", "--cached", ".orch"):
+            self.db.event(task["id"], "rewind_failed", {"error": ".orch/ отслеживается git"})
+            return None
+        if грязно:
+            code, out = git_try(root, "add", "-A")
+            if code == 0 and git(root, "ls-files", "--cached", ".orch"):
+                # Папка задачи попала под git (исключение не сработало):
+                # сброс дерева унёс бы её вместе с сигналами и промптами.
+                # Ветку в таком дереве не трогаем.
+                code, out = 1, ".orch/ отслеживается git"
+            if code == 0:
+                code, out = git_try(
+                    root, "-c", "user.name=orch", "-c", "user.email=orch@localhost",
+                    "commit", "-q", "--no-verify", "-m",
+                    f"orch: несохранённая работа перед откатом {task['id']} ({tag})",
+                )
+            if code != 0:
+                # Сохранить не смогли — значит и стирать нельзя.
+                self.db.event(task["id"], "rewind_failed", {"error": out[:300]})
+                git_try(root, "reset", "-q")
+                return None
+            head = git(root, "rev-parse", "HEAD") or head
         запаска = f"orch/{task['id'].lower()}-{tag}"
         code, out = git_try(root, "branch", запаска, head)
         if code != 0:
