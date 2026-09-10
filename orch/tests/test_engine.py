@@ -955,6 +955,24 @@ def test_заход_после_возврата_начисто_снова_пер
     assert len(живые) == 1 and живые[0]["n"] == 1
 
 
+def test_после_возврата_начисто_путь_задачи_начинается_заново(engine, fake, repo):
+    """Роль не должна читать в промпте историю, которой для неё больше нет.
+
+    План видел «scoping → plan → plan-review → ⟲ plan», делал вывод, что
+    ревью уже было, и уходил исходом мимо ревью (T37, 2026-09-10).
+    """
+    monkey_chain(engine)
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)      # one сходил, едем на two
+    task = engine.db.task(task_id)
+    engine.button(task_id, task["revision"], "restart_step", target="one")
+
+    путь = engine.db.path_steps(task_id)
+    assert путь == ["one"], f"путь тянет прошлую жизнь задачи: {путь}"
+    # И «твой файл с прошлого захода» не отсылает в стёртое.
+    assert engine.db.last_run_of_step(task_id, "one") is None
+
+
 def test_заявка_из_бэклога_едет_под_своим_номером(engine, fake, repo):
     """Номер задачи не меняется от бэклога до PR.
 

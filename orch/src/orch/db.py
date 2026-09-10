@@ -171,8 +171,15 @@ class Db:
         )
 
     def last_run_of_step(self, task_id: str, step: str) -> sqlite3.Row | None:
+        """Прошлый заход шага — только живой.
+
+        Забытый возвратом начисто заход роли не принадлежит: его файла нет,
+        его разговора нет, и «перепиши свой файл с прошлого захода» отсылало
+        бы в пустоту (T37, 2026-09-10).
+        """
         return self.conn.execute(
-            "SELECT * FROM run WHERE task_id = ? AND step = ? ORDER BY n DESC LIMIT 1",
+            "SELECT * FROM run WHERE task_id = ? AND step = ? AND void_at IS NULL "
+            "ORDER BY n DESC LIMIT 1",
             (task_id, step),
         ).fetchone()
 
@@ -529,10 +536,20 @@ class Db:
         Одна функция на промпт («Где ты») и на панель («Путь задачи»): два
         экземпляра одного алгоритма разошлись бы при первой правке.
         """
+        # Возврат начисто стирает работу и начинает шаг с чистого листа —
+        # значит и путь начинается заново. Иначе роль Плана читала в промпте
+        # «scoping → plan → plan-review → ⟲ plan», делала вывод, что ревью
+        # уже было, и уходила исходом `ready` мимо ревью (T37, 2026-09-10).
+        moves = list(reversed(self.moves(task_id, limit=40)))
+        начисто = self.conn.execute(
+            "SELECT at FROM event WHERE task_id = ? AND kind = 'cleared' "
+            "ORDER BY seq DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        if начисто:
+            moves = [m for m in moves if m["at"] >= начисто["at"]]
         steps = [
-            m["to_step"]
-            for m in reversed(self.moves(task_id, limit=40))
-            if m["to_step"] and m["to_step"] != "done"
+            m["to_step"] for m in moves if m["to_step"] and m["to_step"] != "done"
         ]
         out: list[str] = []
         seen: set[str] = set()
