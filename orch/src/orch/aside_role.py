@@ -338,7 +338,12 @@ class AsideMixin:
         # когда роль допишет её и сессия встанет в `Idle`. Остальные ходы
         # роли молчат — иначе пуш на каждый шаг.
         self.aoe.set_notify(session.id, wake.attention)
-        self.aoe.set_color(session.id, "blue")
+        # Цвет побочной роли — «нет цвета»: AoE знает только red, amber,
+        # green и null, а «blue» отвергал с 400. Отказ был не виден, пока
+        # тихие вызовы молчали: строка роли просто не красилась (2026-09-10).
+        # Наблюдателя и так видно знаком в титуле и закреплением, а красные и
+        # жёлтые кружки должны означать состояние работы, а не роль.
+        self.aoe.set_color(session.id, None)
         # Точку «не прочитано» не оставляем и здесь: строку роли и так видно
         # цветом и закреплением, а точка рябила у владельца постоянно.
         self.aoe.set_unread(session.id, False)
@@ -406,7 +411,7 @@ class AsideMixin:
                 {"aside": spec.name, "session": session.id},
             )
         self.aoe.set_notify(session.id, False)
-        self.aoe.set_color(session.id, "blue")
+        self.aoe.set_color(session.id, None)
         self.aoe.set_unread(session.id, False)
         self.aoe.set_pinned(session.id, True)
 

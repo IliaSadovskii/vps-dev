@@ -147,7 +147,11 @@ class FakeAoe:
     def set_group(self, sid, group): self.rows[sid]["group_path"] = group
     def set_pinned(self, sid, pinned): self.pinned[sid] = pinned
     def set_unread(self, sid, unread): self.unread[sid] = unread
-    def set_color(self, sid, color): self.colors[sid] = color
+    def set_color(self, sid, color):
+        # AoE знает red, amber, green и null. Фейк, принимавший любую строку,
+        # прятал «blue» у побочных ролей: тесты зелёные, живой AoE — 400.
+        assert color in (None, "red", "amber", "green"), f"AoE не знает цвет {color!r}"
+        self.colors[sid] = color
     def set_notify(self, sid, on_idle): self.notify[sid] = on_idle
     def set_urgent(self, sid, urgent): self.urgent[sid] = urgent
     def archive(self, sid): self.archived.append(sid)
