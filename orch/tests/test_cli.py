@@ -416,3 +416,41 @@ def test_тз_со_ссылкой_в_папку_чужой_задачи_отве
     with pytest.raises(Refused) as exc:
         check_text("подробности — .orch/T19/artifacts/remarks.md", "T23")
     assert ".orch/T19/" in str(exc.value)
+
+
+def test_каждую_заявку_cli_умеет_разобрать_движок():
+    """Заявка с видом, которого движок не знает, молча уходит в `inbox_rejected`.
+
+    Та же сверка, что у кнопок панели с обработчиками воркера: команда и
+    движок живут в разных файлах, и расхождение между ними тесты с
+    поддельным AoE не ловят.
+    """
+    import inspect
+    import re
+
+    from orch import cli, inbox
+
+    пишет = set(re.findall(r'"kind":\s*"(\w+)"', inspect.getsource(cli)))
+    читает = set(re.findall(r'kind == "(\w+)"', inspect.getsource(inbox)))
+    assert {"button", "start", "aside"} <= пишет, пишет
+    assert пишет <= читает, f"движок не разбирает заявки: {sorted(пишет - читает)}"
+
+
+def test_aside_done_с_флагами_находки_отказывает(task, capsys, tmp_path, monkeypatch):
+    """`done --hold --title …` закрывал ход, а находки не оставлял — роль
+    считала, что сказала."""
+    import orch.cli as mod
+
+    monkeypatch.setattr(mod, "INBOX", tmp_path / "inbox")
+    code, text = run(
+        ["aside", "done", "--id", "A3", "--pass", "x", "--hold", "--title", "Не то"], capsys
+    )
+    assert code == 1 and "сначала `orch aside note" in text
+    assert not list((tmp_path / "inbox").glob("*.json"))
+
+    code, text = run(
+        ["aside", "note", "--id", "A3", "--pass", "x", "--title", "Не то", "--outcome", "clean"],
+        capsys,
+    )
+    assert code == 1 and "--outcome" in text
+    assert not list((tmp_path / "inbox").glob("*.json"))

@@ -148,3 +148,11 @@ def test_сохранение_собирается_из_заводской_а_н
         mine = saved.step(step.id)
         assert mine.artifact == step.artifact and mine.next == step.next
         assert mine.reads == step.reads and mine.prompt_file == step.prompt_file
+
+
+def test_дорожки_разработки_идут_первыми_а_проверка_механики_последней(page):
+    """Порядок задан руками: без `standard` и `quick` в списке они вставали
+    после служебной `smoke`, будто это тоже что-то служебное."""
+    names = page.ordered_names()
+    assert names[:3] == ["deep", "standard", "quick"]
+    assert names[-1] == "smoke"

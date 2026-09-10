@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yaml
 
-from .chain import ChainError, _repo_dir
+from .chain import ChainError, _repo_dir, names as chain_names, prompts_dir
 from .db import STATE_DIR
 
 # Что роль вправе делать. Проверяет движок на входе `orch aside`, а не
@@ -158,6 +158,29 @@ def all_asides() -> list[Aside]:
 
 def enabled() -> list[Aside]:
     return [a for a in all_asides() if a.enabled]
+
+
+def missing_files(spec: Aside) -> list[str]:
+    """Чего роли не хватает на диске: промпты поводов, общие правила, цепочки.
+
+    Проверка, а не линтер, по той же причине, что и у цепочек
+    (`chain.missing_files`): описания в тестах ссылаются на промпты, которых
+    нет. Повод без файла промпта уходит роли одним блоком «что случилось» —
+    без правил работы, и это не видно нигде, кроме транскрипта.
+    """
+    prompts = prompts_dir()
+    problems: list[str] = []
+    for name in spec.includes:
+        if not (prompts / f"{name}.md").exists():
+            problems.append(f"нет общего файла {name}.md")
+    for wake in spec.wakes:
+        if not (prompts / f"{wake.prompt}.md").exists():
+            problems.append(f"повод {', '.join(wake.on)}: нет файла {wake.prompt}.md")
+    known = set(chain_names())
+    for chain in spec.chains:
+        if chain not in known:
+            problems.append(f"цепочки {chain!r} нет: есть {', '.join(sorted(known))}")
+    return problems
 
 
 def parse(text: str, source: str = "?") -> Aside:
