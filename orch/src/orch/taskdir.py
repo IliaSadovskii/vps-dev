@@ -38,6 +38,40 @@ def git_toplevel(start: Path | None = None) -> Path | None:
     return Path(top) if top else None
 
 
+def git_main_repo(start: Path | None = None) -> Path | None:
+    """Корень главного репозитория, а не рабочей копии задачи.
+
+    Внутри worktree `--show-toplevel` возвращает саму копию, и задача,
+    заведённая ролью изнутри копии, записывала «проект» = копию. Дальше
+    движок видел ветку вычекнутой прямо в проекте и вставал (`branch_busy`,
+    прогон T37). Общий каталог git один на все копии, его родитель и есть
+    главная рабочая копия.
+    """
+    top = git_toplevel(start)
+    if top is None:
+        return None
+    cwd = Path(start) if start else Path.cwd()
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return top
+    if out.returncode != 0:
+        return top
+    common = out.stdout.strip()
+    if not common:
+        return top
+    parent = Path(common).parent
+    # Голый репозиторий и нестандартный `.git` разбирать не беремся:
+    # рабочего каталога у них нет, остаёмся на том, что нашли.
+    return parent if (parent / ".git").exists() else top
+
+
 @dataclass(frozen=True)
 class TaskDir:
     """Папка задачи `.orch/<task>/` и её текущее состояние."""

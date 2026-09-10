@@ -325,6 +325,37 @@ def test_заявка_из_корня_проекта_не_подписана_ч�
     assert request["author"] is None
 
 
+def test_заявка_из_копии_записывает_проект_а_не_копию(tmp_path, capsys, monkeypatch):
+    """Роль заводит задачу изнутри worktree: проект — главный репозиторий.
+
+    Иначе следующая задача на той же ветке видит ветку вычекнутой «прямо в
+    проекте» и встаёт с `branch_busy`, не сделав ни хода (прогон T37).
+    """
+    import orch.cli as mod
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", "."], cwd=root, check=True)
+    (root / "readme").write_text("x", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"],
+        cwd=root,
+        check=True,
+    )
+    copy = tmp_path / "repo-orch" / "t1"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", "-b", "t1", str(copy)], cwd=root, check=True
+    )
+    monkeypatch.chdir(copy)
+    monkeypatch.setattr(mod, "INBOX", tmp_path / "inbox")
+
+    code, _ = run(["task", "new", "продолжение", "--chain", "smoke", "--branch", "t1"], capsys)
+    assert code == 0
+    request = json.loads(next((tmp_path / "inbox").glob("*.json")).read_text(encoding="utf-8"))
+    assert request["project_path"] == str(root.resolve())
+
+
 def test_gc_показывает_сирот_и_не_трогает_без_согласия(tmp_path, capsys, monkeypatch):
     """Копия без живой задачи — сирота; удалять её молча нельзя."""
     import sqlite3

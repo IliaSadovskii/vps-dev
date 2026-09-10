@@ -34,7 +34,7 @@ from .chain import (
 )
 from .branchref import recent
 from .db import DB_PATH, INBOX
-from .taskdir import NotInTask, TaskDir, find_task, git_toplevel
+from .taskdir import NotInTask, TaskDir, find_task, git_main_repo, git_toplevel
 from .workspace import remove_worktree
 
 
@@ -204,7 +204,7 @@ def cmd_task_new(args: argparse.Namespace) -> int:
     # проекте от прошлой задачи, поэтому мало найти её: задача должна быть
     # жива и работать именно в этой копии, иначе мастер, запущенный в корне
     # проекта, подписался бы чужим номером.
-    author = _author_here(project)
+    author = _author_here()
     request = {
         "id": uuid.uuid4().hex[:12],
         "author": author,
@@ -268,8 +268,15 @@ def cmd_task_start(args: argparse.Namespace) -> int:
 
 
 # ── команды владельца: чтение базы ───────────────────────────────────────
-def _author_here(project: Path) -> str | None:
-    """Номер живой задачи, которой принадлежит эта рабочая копия, или None."""
+def _author_here() -> str | None:
+    """Номер живой задачи, которой принадлежит эта рабочая копия, или None.
+
+    Сверяемся с корнем текущей копии, а не с корнем проекта: заявку роль
+    заводит из своей копии, а проект у задачи теперь главный репозиторий.
+    """
+    here = git_toplevel()
+    if here is None:
+        return None
     try:
         task_id = find_task().task_id
     except NotInTask:
@@ -285,7 +292,7 @@ def _author_here(project: Path) -> str | None:
         return None
     if not row["worktree_path"]:
         return None
-    return task_id if Path(row["worktree_path"]).resolve() == project else None
+    return task_id if Path(row["worktree_path"]).resolve() == here.resolve() else None
 
 
 def _ro_db():
@@ -891,7 +898,8 @@ def _git(root: Path, *args: str) -> str:
 
 
 def _project_here() -> Path:
-    root = git_toplevel()
+    """Корень проекта, а не рабочей копии: роль зовёт нас изнутри копии."""
+    root = git_main_repo()
     if root is None:
         raise Refused("не понял, какой это проект: вызови с --project <корень>")
     return root
