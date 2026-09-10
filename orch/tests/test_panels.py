@@ -535,6 +535,21 @@ def test_решения_под_рукой_всегда(engine, fake, repo):
     assert "orch.pause" not in [a["method"] for a in решения["children"]], "уже на паузе"
 
 
+def test_подпись_кнопки_зависит_от_остановки(engine, fake, repo):
+    """«Ещё заход» на паузе — враньё: захода не было, надо «Продолжить»."""
+    from orch import panels
+
+    from tests.test_engine import start
+
+    task_id = start(engine, repo)
+    task = engine.db.task(task_id)
+    engine.button(task_id, task["revision"], "pause")
+
+    pane = panels.task_pane(engine.db, engine.db.task(task_id), "s1", "http://x")
+    callout = next(b for b in pane["blocks"] if b.get("kind") == "callout")
+    assert [a["label"] for a in callout["actions"]] == ["Продолжить"]
+
+
 def test_панель_закрытой_задачи_рисуется_без_ворот(engine, fake, repo):
     """Панель рисуется толчком: перестанешь обновлять — в сессии навсегда
     застынет кадр с кнопкой «Принять» у принятой задачи."""

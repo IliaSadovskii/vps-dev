@@ -339,19 +339,25 @@ class ButtonsMixin:
         if not step or not chain.has(step):
             return f"откатить можно на: {', '.join(s.id for s in chain.steps)}"
 
-        runs = [r for r in self.db.runs_of_step(task["id"], step) if not r["void_at"]]
-        первый = runs[0] if runs else None
-        doomed = list(
-            self.db.conn.execute(
-                "SELECT * FROM run WHERE task_id = ? AND void_at IS NULL "
-                "AND id >= ? ORDER BY id",
-                (task["id"], int(первый["id"]) if первый else 0),
+        # Стираем работу шагов, которые в цепочке стоят на целевом шаге и
+        # ниже, — по месту в цепочке, а не по времени. Шаг выше мог сходить
+        # позже целевого (задачу возвращали), и его файл — не мусор, а вход
+        # для того, на кого откатываемся: откат на план не смеет уносить
+        # `scoping.md`, переписанный после плана.
+        порядок = [s.id for s in chain.steps]
+        отсюда = set(порядок[порядок.index(step):])
+        doomed = [
+            r
+            for r in self.db.conn.execute(
+                "SELECT * FROM run WHERE task_id = ? AND void_at IS NULL ORDER BY id",
+                (task["id"],),
             )
-        ) if первый else []
+            if r["step"] in отсюда
+        ]
 
         # Файлы: свои у шага тоже уходят — он приходит сюда впервые.
         names: list[str] = []
-        for step_id in {r["step"] for r in doomed} | {step}:
+        for step_id in отсюда:
             try:
                 names += chain.step(step_id).artifact
             except ChainError:
@@ -361,7 +367,7 @@ class ButtonsMixin:
         if task["worktree_path"]:
             moved = self.workspace(task).clear_artifacts(sorted(set(names)), tag)
 
-        запаска = self.rewind_git(task, первый, tag)
+        запаска = self.rewind_git(task, doomed[0] if doomed else None, tag)
 
         with self.db.tx():
             for run in doomed:

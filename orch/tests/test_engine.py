@@ -1020,6 +1020,32 @@ def test_откат_на_шаг_стирает_всё_включая_ветку(
     assert engine.db.path_steps(task_id) == ["one"]
 
 
+def test_откат_не_уносит_работу_шагов_выше(engine, fake, repo):
+    """Откат на `two` не смеет стирать `one.md`, переписанный после `two`.
+
+    Стираем по месту в цепочке, а не по времени: шаг выше мог сходить позже
+    целевого (задачу возвращали), и его файл — вход для того, на кого
+    откатываемся, а не мусор.
+    """
+    monkey_chain(engine)
+    task_id = start(engine, repo)
+    ws = engine.workspace(engine.db.task(task_id))
+    turn(engine, fake, task_id, "one", 1, None)      # one сходил, едем на two
+    turn(engine, fake, task_id, "two", 1, "back")    # two вернул на one
+    turn(engine, fake, task_id, "one", 2, None)      # one сходил ЕЩЁ РАЗ, позже two
+    (ws.artifacts / "one.md").write_text("свежая разведка", encoding="utf-8")
+    (ws.artifacts / "two.md").write_text("старый план", encoding="utf-8")
+
+    task = engine.db.task(task_id)
+    engine.button(task_id, task["revision"], "rewind", target="two")
+
+    assert (ws.artifacts / "one.md").exists(), "откат унёс вход шага, на который откатились"
+    assert (ws.artifacts / "one.md").read_text(encoding="utf-8") == "свежая разведка"
+    assert not (ws.artifacts / "two.md").exists(), "файл целевого шага остался"
+    живые_one = [r for r in engine.db.runs_of_step(task_id, "one") if not r["void_at"]]
+    assert живые_one, "заходы шага выше забыты вместе с целевым"
+
+
 def test_заявка_из_бэклога_едет_под_своим_номером(engine, fake, repo):
     """Номер задачи не меняется от бэклога до PR.
 

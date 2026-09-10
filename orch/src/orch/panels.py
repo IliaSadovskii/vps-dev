@@ -962,7 +962,7 @@ def _always_row(task) -> dict:
         actions.append(
             {
                 "kind": "action",
-                "label": f"Откатить на {step.id} — начисто, с веткой",
+                "label": f"Откатить на {step.id}",
                 "method": "orch.rewind",
                 "params": {
                     "task": task["id"],
@@ -986,6 +986,30 @@ def _always_row(task) -> dict:
         "collapsed": True,
         "children": actions,
     }
+
+
+# «Ещё заход» — не одно и то же в разных остановках: где-то это «продолжай
+# с места», где-то «сходи в шаг заново». Одна подпись на все случаи врала:
+# на паузе кнопка предлагала «ещё заход», хотя захода не было вовсе.
+AGAIN_LABELS = {
+    "paused": "Продолжить",
+    "ask": "Продолжить",
+    "no_worker": "Поднять сессию заново",
+    "error": "Повторить ход",
+    "abandoned": "Повторить ход",
+    "no_signal": "Дать ещё заход",
+    "max_runs": "Дать заход сверх предела",
+    "loops": "Дать заход сверх предела",
+    "artifact": "Дать ещё заход",
+    "bad_outcome": "Дать ещё заход",
+    "branch_busy": "Попробовать снова",
+}
+
+
+def _button_label(action: str, reason: str) -> str:
+    if action == "again":
+        return AGAIN_LABELS.get(reason, BUTTON_LABELS["again"])
+    return BUTTON_LABELS.get(action, action)
 
 
 def _buttons(db: Db, task) -> list[dict]:
@@ -1050,7 +1074,7 @@ def _buttons(db: Db, task) -> list[dict]:
         actions.append(
             {
                 "kind": "action",
-                "label": BUTTON_LABELS.get(action, action),
+                "label": _button_label(action, reason),
                 "method": f"orch.{action}",
                 "variant": "primary" if action in ("accept", "again") else None,
                 "params": {"task": task["id"], "revision": task["revision"]},
