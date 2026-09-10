@@ -8,13 +8,12 @@
 from __future__ import annotations
 
 import time
-import uuid
 from pathlib import Path
 
 from . import stand as stands
 from .aoe import AoeError
 from .chain import prompts_dir
-from .db import WAITING as ST_WAITING, epoch, now
+from .db import WAITING as ST_WAITING, epoch
 from .naming import group_for
 
 # Знак служебной сессии в сайдбаре: строки стенда стоят вперемешку со
@@ -91,6 +90,7 @@ class StandMixin:
         name, error = stands.claim(task)
         if error:
             self.db.event(task["id"], "stand_failed", {"stage": "claim", "error": error})
+            self.db.aside_close(aside_id)
             return f"не смог занять порты: {error[:200]}"
         try:
             session = self.aoe.create(
@@ -102,24 +102,32 @@ class StandMixin:
                 group=group_for(task),
                 # Ключ детерминированный: падение между созданием сессии и
                 # записью в базу не должно оставлять вторую сессию. Номер
-                # попытки в ключе — стенд можно поднимать заново после отказа.
-                # Ключ детерминированный: падение между созданием сессии и
-                # записью в базу не должно оставлять вторую сессию. Номер
                 # записи роли делает ключ разным у попыток: после отказа
                 # стенд поднимают заново, и это должна быть новая сессия.
                 idempotency_key=f"{task['id']}@{task['created_at']}/stand/{aside_id}",
             )
         except AoeError as exc:
             self.db.event(task["id"], "stand_failed", {"stage": "session", "error": str(exc)})
+            self.db.aside_close(aside_id)
             return f"сессия стенда не создалась: {exc}"
-        self.aoe.apply_model(session.id, "sonnet")
+        if not self.aoe.apply_model(session.id, "sonnet"):
+            self.db.event(
+                task["id"], "model_not_applied",
+                {"session": session.id, "want": "sonnet", "step": "стенд"},
+            )
         prompt = prompts_dir() / "role-stand.md"
         text = prompt.read_text(encoding="utf-8") if prompt.exists() else ""
         text += "\n\n" + self.stand_context(task, name)
         try:
             self.aoe.prompt(session.id, text)
         except AoeError as exc:
+            # Сессия есть, задания в ней нет: записывать её как идущий ход
+            # нельзя — панель показывала бы «поднимается» без конца, а
+            # кнопка «Поднять стенд снова» не возвращалась. Роль отпускаем,
+            # причина остаётся в журнале, откуда её читает панель.
             self.db.event(task["id"], "stand_failed", {"stage": "prompt", "error": str(exc)})
+            self.db.aside_close(aside_id)
+            return f"задание стенду не ушло: {exc}"
         with self.db.tx():
             run_id = self.db.aside_run_start(aside_id, "raise", None)
             self.db.aside_run_sent(run_id, session.id)
@@ -197,7 +205,12 @@ class StandMixin:
                 group=group_for(task),
                 idempotency_key=f"{task['id']}@{task['created_at']}/teardown",
             )
-            self.aoe.apply_model(session.id, self.settings.cheap_model)
+            if not self.aoe.apply_model(session.id, self.settings.cheap_model):
+                self.db.event(
+                    task["id"], "model_not_applied",
+                    {"session": session.id, "want": self.settings.cheap_model,
+                     "step": "уборка стенда"},
+                )
             self.aoe.prompt(session.id, text)
         except AoeError as exc:
             self.db.event(task["id"], "teardown_failed", {"stage": "session", "error": str(exc)})

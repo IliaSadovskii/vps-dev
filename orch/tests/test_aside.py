@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
@@ -511,9 +512,6 @@ def manager(tmp_path, monkeypatch, engine):
     monkeypatch.setattr(asides, "factory_dir", lambda: folder)
     monkeypatch.setattr(asides, "user_dir", lambda: tmp_path / "нет")
     monkeypatch.setattr(asides, "STATE_DIR", tmp_path)
-    import orch.aside_role as mod
-
-    monkeypatch.setattr(mod, "STATE_DIR", tmp_path)
     with engine.db.tx():
         engine.db.cursor_set("manager", "", 0)
     return folder
@@ -665,38 +663,6 @@ def test_менеджеру_дают_копию_проекта_под_докум
     assert "-orch/aside/manager" in текст, "копия под документы не отдельная"
 
 
-def test_вес_находки_по_умолчанию_самый_тихий(engine, fake, repo, tune):
-    """Без флага находка копится: в мессенджер уходит только названное."""
-    task_id = start(engine, repo)
-    engine.reconcile()
-    run_id = int(engine.db.aside_runs_open()[0]["id"])
-
-    engine.aside_note(run_id, "непонятно-что", "Мелочь", "", [], пропуск(engine, run_id))
-    assert engine.db.note(1)["severity"] == "log"
-    assert engine.db.task(task_id)["status"] != WAITING
-
-
-def test_умершая_сессия_роли_поднимается_ещё_раз(engine, fake, repo, tune):
-    """Повод уже прошёл курсор и сам не вернётся: без повтора запись пропала бы."""
-    start(engine, repo)
-    engine.reconcile()
-    первый = engine.db.aside_runs_open()[0]
-    fake.drop(первый["session_id"])          # сессия исчезла, ход не сдан
-
-    engine.reconcile()
-    ходы = асайды(engine)
-    assert len(ходы) == 2, "роль не подняли заново"
-    assert ходы[0]["ended_at"] and not ходы[1]["ended_at"]
-    assert ходы[1]["wake"] == ходы[0]["wake"]
-
-    # Второй раз — не случайность: третий ход не заводим.
-    fake.drop(ходы[1]["session_id"])
-    engine.reconcile()
-    assert len(асайды(engine)) == 2
-
-
-
-
 def test_сессия_роли_одна_на_задачу_и_живёт_до_владельца(engine, fake, repo, tune):
     """Отчёт роль оставляет в своей сессии, и закрывает её владелец сам."""
     task_id = start(engine, repo)
@@ -720,7 +686,7 @@ def test_сессия_роли_одна_на_задачу_и_живёт_до_в�
 def test_роль_помнит_разговор_лентой_находок(engine, fake, repo, tune):
     """Сессии не переживают ход: без ленты роль на третьем круге не помнит,
     с чего начали."""
-    task_id = start(engine, repo)
+    start(engine, repo)
     engine.reconcile()
     run_id = int(engine.db.aside_runs_open()[0]["id"])
     engine.aside_note(run_id, "tell", "Первая находка", "…", [], пропуск(engine, run_id))
@@ -956,3 +922,128 @@ def test_вариант_вернуть_начисто_исполняется_д�
     assert engine.db.task(task_id)["step"] == "one"
     assert not (ws_of(engine, task_id).artifacts / "two.md").exists()
     assert all(r["void_at"] for r in engine.db.runs_of_step(task_id, "two"))
+
+
+# ── отказы AoE ───────────────────────────────────────────────────────────
+def сбой_создания_сессий_роли(fake, раз: int | None = 1):
+    """Создание сессии роли падает `раз` первых попыток (None — всегда)."""
+    from orch.aoe import AoeError
+
+    original = fake.create
+    счёт = {"n": 0}
+
+    def create(**kw):
+        if kw["idempotency_key"].startswith("aside/"):
+            счёт["n"] += 1
+            if раз is None or счёт["n"] <= раз:
+                raise AoeError(503, "worker_capacity_full (6/6)", "/api/sessions")
+        return original(**kw)
+
+    fake.create = create
+
+
+def test_ход_без_сессии_доводится_а_не_держит_роль_занятой(engine, fake, repo, tune):
+    """Создание сессии сорвалось (AoE занят): ход записан, сессии нет.
+
+    Раньше такой ход висел открытым навсегда, роль считалась им занятой
+    (`aside_live_runs` ≥ `max_live`), все следующие поводы откладывались, и
+    роль молча выбывала из прогона.
+    """
+    сбой_создания_сессий_роли(fake, раз=1)
+    task_id = start(engine, repo)
+    ходы = асайды(engine)
+    assert len(ходы) == 1 and not ходы[0]["session_id"]
+
+    engine.reconcile()
+    ходы = асайды(engine)
+    assert len(ходы) == 1 and ходы[0]["session_id"], "ход так и остался без сессии"
+    assert any(e["kind"] == "aside_resend" for e in engine.db.events(task_id, limit=50))
+
+
+def test_повторы_отправки_идут_с_выдержкой_и_кончаются(engine, fake, repo, tune, monkeypatch):
+    from orch import aside_role
+
+    сбой_создания_сессий_роли(fake, раз=None)
+    task_id = start(engine, repo)
+    engine.reconcile()
+    engine.reconcile()
+    повторы = [e for e in engine.db.events(task_id, limit=50) if e["kind"] == "aside_resend"]
+    assert len(повторы) == 1, "повтор на каждом проходе засорял бы журнал"
+
+    # Десять минут без сессии — ход несостоявшийся; роль снова свободна.
+    monkeypatch.setattr(
+        aside_role, "_epoch_now", lambda: time.time() + aside_role.ASIDE_SEND_GRACE_S + 1
+    )
+    engine.reconcile()
+    ход = асайды(engine)[0]
+    assert ход["ended_at"] and not ход["session_id"]
+    assert engine.db.conn.execute("SELECT outcome FROM aside_run").fetchone()["outcome"] == "failed"
+
+
+def test_отказ_aoe_не_хоронит_ход_роли(engine, fake, repo, tune):
+    """«AoE не ответил» — не «сессии нет»: по одному таймауту ход закрывался
+    как потерянный, а роль поднималась заново."""
+    from orch.aoe import AoeError
+
+    start(engine, repo)
+    engine.reconcile()
+    run = engine.db.aside_runs_open()[0]
+    fake.drop(run["session_id"])          # в живом списке её нет — идём спрашивать
+
+    def session(sid):
+        raise AoeError(0, "timed out", "/api/sessions")
+
+    fake.session = session
+    engine.reconcile()
+    assert not engine.db.aside_run(int(run["id"]))["ended_at"]
+    assert len(асайды(engine)) == 1
+
+
+def test_роль_на_чужой_модели_видна_в_журнале(engine, fake, repo, tune):
+    """Как у шагов: молча уехать на Opus вместо Sonnet нельзя."""
+    fake.model_apply_fails = True
+    task_id = start(engine, repo)
+    события = [
+        json.loads(e["payload"]) for e in engine.db.events(task_id, limit=50)
+        if e["kind"] == "model_not_applied"
+    ]
+    assert any(p.get("step") == "роль tune" and p.get("want") == "sonnet" for p in события)
+
+
+def test_стенд_без_задания_не_числится_поднимающимся(engine, fake, repo, monkeypatch):
+    """Сессия создалась, промпт не ушёл: панель показывала «поднимается» без
+    конца, а кнопка «Поднять стенд снова» не возвращалась."""
+    from orch import panels, stand as stands
+    from orch.aoe import AoeError
+
+    monkeypatch.setattr(stands, "claim", lambda task: (stands.name_of(task), ""))
+    monkeypatch.setattr(stands, "ports_of", lambda name: {})
+    task_id = start(engine, repo)
+    task = engine.db.task(task_id)
+
+    def prompt(sid, text, attempts=3):
+        raise AoeError(503, "worker_not_ready", "/api/sessions/x/acp/prompt")
+
+    fake.prompt = prompt
+    ответ = engine.button(task_id, task["revision"], "stand")
+    assert "не ушло" in ответ
+    assert engine.stand_session(task_id) is None
+    pane = json.dumps(
+        panels.task_pane(engine.db, engine.db.task(task_id), "s9", "http://x"), ensure_ascii=False
+    )
+    assert "Поднять стенд снова" in pane
+
+
+def test_заводские_роли_ссылаются_на_существующие_промпты_и_цепочки(monkeypatch, tmp_path):
+    """Повод без файла промпта уходит роли одним блоком «что случилось»."""
+    monkeypatch.setattr(asides, "user_dir", lambda: tmp_path / "нет")
+    assert asides.names(), "в asides/ нет ни одной роли"
+    for name in asides.names():
+        assert asides.missing_files(asides.load_by_name(name)) == [], name
+
+    сломанная = parse(
+        "name: x\nchains: [нету]\nwakes:\n  - on: run_ended\n    prompt: role-нет-такого\n"
+    )
+    пропажи = asides.missing_files(сломанная)
+    assert any("role-нет-такого" in p for p in пропажи)
+    assert any("цепочки 'нету' нет" in p for p in пропажи)

@@ -12,16 +12,17 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from pathlib import Path
 
 from . import asides as spec_mod
 from . import digest as dg
-from .aoe import RUNNING, STARTING, WAITING, Aoe, AoeError, Session
+from .aoe import RUNNING, STARTING, WAITING, AoeError, Session
 from .asides import Aside, Wake
 from .chain import ChainError, prompts_dir
-from .db import LIVE, STATE_DIR, now
-from .naming import GROUP_ROOT, group_for, slug
+from .db import LIVE, epoch, now
+from .naming import GROUP_ROOT, group_for
 from .workspace import create_worktree
 
 
@@ -55,6 +56,18 @@ def aside_scope_label(spec: Aside, aside) -> str:
 # Сколько событий одна роль разбирает за проход: движок не должен зависать
 # на журнале, накопившемся, пока роль была выключена.
 BATCH = 20
+
+# Сколько ждём сессию для уже записанного хода, прежде чем признать ход
+# несостоявшимся. Десяти минут хватает пережить занятый AoE и нехватку
+# места под воркер; дольше держать роль «занятой» пустым ходом незачем.
+ASIDE_SEND_GRACE_S = 600.0
+# Между повторами отправки — выдержка: AoE, отказавший секунду назад, не
+# станет отвечать иначе на каждом проходе, а журнал засорится.
+ASIDE_RESEND_EVERY_S = 60.0
+
+
+def _epoch_now() -> float:
+    return time.time()
 
 
 class AsideMixin:
@@ -181,7 +194,12 @@ class AsideMixin:
         sid = aside["session_id"] if aside is not None else None
         if not sid:
             return True
-        session = self.aoe.session(sid)
+        try:
+            session = self.aoe.session(sid)
+        except AoeError:
+            # AoE не ответил. Считать переписку свободной нельзя: промпт в
+            # идущий ход оборвал бы разговор владельца. Повод подождёт.
+            return False
         # Занята = идёт ход. `Waiting` (роль ждёт ответа или разрешения) сюда
         # не входит: такой промпт мост кладёт в очередь, а не рвёт им ход.
         if session is None or session.status not in (STARTING, RUNNING):
@@ -290,7 +308,15 @@ class AsideMixin:
                 {"aside": spec.name, "why": "сессия не создалась"},
             )
             return
-        self.aoe.apply_model(session.id, wake.model)
+        if not self.aoe.apply_model(session.id, wake.model):
+            # Как у шагов: ход пойдёт на модели адаптера по умолчанию (у
+            # Claude это Opus вместо заказанного Sonnet), и это должно быть
+            # видно в журнале, а не в счёте.
+            self.db.event(
+                event["task_id"], "model_not_applied",
+                {"session": session.id, "want": wake.model,
+                 "got": self.aoe.model_now(session.id), "step": f"роль {spec.name}"},
+            )
         text = self.aside_prompt(spec, wake, run, task, event)
         try:
             self.aoe.prompt(session.id, text)
@@ -742,9 +768,15 @@ class AsideMixin:
                 continue
             sid = run["session_id"]
             if not sid:
-                # Ход записан, сессии нет: следующий проход её заведёт.
+                # Ход записан, сессии нет: доводим внешнюю часть здесь.
+                self.resend_aside(run)
                 continue
-            session = sessions.get(sid) or self.aoe.session(sid)
+            try:
+                session = sessions.get(sid) or self.aoe.session(sid)
+            except AoeError:
+                # «Не ответил» — не «сессии нет»: закрывать ход как потерянный
+                # и поднимать роль заново по одному таймауту нельзя.
+                continue
             if session is None:
                 with self.db.tx():
                     self.db.aside_run_end(int(run["id"]), "lost")
@@ -765,6 +797,42 @@ class AsideMixin:
                     "aside_ended",
                     {"aside": run["name"], "run": int(run["id"]), "cost_usd": cost},
                 )
+
+    def resend_aside(self, run) -> None:
+        """Ход записан, а сессии нет: довести внешнюю часть или закрыть ход.
+
+        Так бывает, когда `aside_send` упал на создании сессии или на
+        промпте (AoE занят, нет места под воркер) либо процесс умер между
+        записью хода и отправкой. Раньше такой ход висел открытым навсегда, и
+        роль считалась им занятой: `aside_live_runs` ≥ `max_live`, все
+        следующие поводы откладывались, и роль молча выбывала из прогона.
+        Повторяем по тому же ключу идемпотентности, с выдержкой; не вышло за
+        `ASIDE_SEND_GRACE_S` — ход закрывается как несостоявшийся.
+        """
+        run_id = int(run["id"])
+        spec = self.spec_of(run["name"])
+        wake = spec.wake_by_prompt(run["wake"]) if spec else None
+        event = (
+            self.db.conn.execute("SELECT * FROM event WHERE seq = ?", (run["cause_seq"],)).fetchone()
+            if run["cause_seq"] else None
+        )
+        started = epoch(run["started_at"])
+        stale = started is None or _epoch_now() - started > ASIDE_SEND_GRACE_S
+        if spec is None or wake is None or event is None or stale:
+            with self.db.tx():
+                self.db.aside_run_end(run_id, "failed")
+                self.db.event(
+                    run["task_id"], "aside_failed",
+                    {"aside": run["name"], "run": run_id, "why": "сессия так и не завелась"},
+                )
+            return
+        if run["task_id"]:
+            past = self.db.run_events(run["task_id"], "aside_resend", run_id)
+            last = epoch(past[-1]["at"]) if past else None
+            if last is not None and _epoch_now() - last < ASIDE_RESEND_EVERY_S:
+                return
+        self.db.event(run["task_id"], "aside_resend", {"aside": spec.name, "run": run_id})
+        self.aside_send(spec, wake, int(run["aside_id"]), run_id, event)
 
     def sweep_aside_sessions(self, sessions: dict[str, Session]) -> None:
         """Сессия повода живёт один ход: сдала — уезжает в архив.
