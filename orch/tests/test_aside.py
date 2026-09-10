@@ -243,8 +243,10 @@ def test_строка_роли_помечена_знаком_и_бейджем(e
     start(engine, repo)
     engine.reconcile()
     sid = асайды(engine)[0]["session_id"]
-    assert fake.rows[sid]["title"].startswith("🔧 T"), fake.rows[sid]["title"]
+    assert fake.rows[sid]["title"].startswith("T"), fake.rows[sid]["title"]
+    assert fake.rows[sid]["title"].endswith("🔧"), "знак роли — в конце строки"
     assert "· Наладчик" in fake.rows[sid]["title"], "имя роли после номера задачи"
+    assert fake.unread.get(sid) is False, "точки «не прочитано» нет и у роли"
 
     assert fake.pinned.get(sid) is True, "строка роли не закреплена наверху группы"
 

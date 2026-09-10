@@ -98,7 +98,7 @@ class StandMixin:
                 agent="claude",
                 model="sonnet",
                 effort=None,
-                title=f"{STAND_ICON} {task['id']} · стенд",
+                title=f"{task['id']} · стенд {STAND_ICON}",
                 group=group_for(task),
                 # Ключ детерминированный: падение между созданием сессии и
                 # записью в базу не должно оставлять вторую сессию. Номер
@@ -193,7 +193,7 @@ class StandMixin:
                 agent="claude",
                 model=self.settings.cheap_model,
                 effort=None,
-                title=f"{STAND_ICON} {task['id']} · уборка стенда",
+                title=f"{task['id']} · уборка стенда {STAND_ICON}",
                 group=group_for(task),
                 idempotency_key=f"{task['id']}@{task['created_at']}/teardown",
             )

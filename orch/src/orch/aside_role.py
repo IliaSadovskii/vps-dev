@@ -26,14 +26,15 @@ from .workspace import create_worktree
 
 
 def aside_title(spec: Aside, метка: str | None) -> str:
-    """Титул сессии роли: `🔧 T35 · Наладчик`, `📋 listate-crm · Менеджер`.
+    """Титул сессии роли: `T35 · Наладчик 🔧`, `listate-crm · Менеджер 📋`.
 
     Порядок тот же, что у сессий шагов (`T35 · plan`): чья это работа — первым,
-    иначе строки роли и шагов читаются как из разных систем. Знак роли стоит
-    перед меткой — по нему в общем списке видно наблюдателя, а не шаг.
+    иначе строки роли и шагов читаются как из разных систем. Знак роли — в
+    конце: в узком сайдбаре строки начинаются с номера задачи и выравниваются
+    друг под другом, а не сдвигаются на ширину картинки.
     """
     имя = f"{метка or 'машина'} · {spec.title or spec.name}"
-    return f"{spec.icon} {имя}".strip()
+    return f"{имя} {spec.icon}".strip()
 
 
 def aside_scope_label(spec: Aside, aside) -> str:
@@ -312,6 +313,9 @@ class AsideMixin:
         # роли молчат — иначе пуш на каждый шаг.
         self.aoe.set_notify(session.id, wake.attention)
         self.aoe.set_color(session.id, "blue")
+        # Точку «не прочитано» не оставляем и здесь: строку роли и так видно
+        # цветом и закреплением, а точка рябила у владельца постоянно.
+        self.aoe.set_unread(session.id, False)
         # Роль стоит в группе задачи вперемешку с её шагами; закрепляем наверху,
         # чтобы наблюдателя было видно, не разглядывая список.
         self.aoe.set_pinned(session.id, True)
@@ -377,6 +381,7 @@ class AsideMixin:
             )
         self.aoe.set_notify(session.id, False)
         self.aoe.set_color(session.id, "blue")
+        self.aoe.set_unread(session.id, False)
         self.aoe.set_pinned(session.id, True)
 
     def aside_home_prompt(self, spec: Aside, task) -> str:

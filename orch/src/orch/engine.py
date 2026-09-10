@@ -1332,10 +1332,9 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
             self.aoe.set_urgent(sid, False)
             self.aoe.set_notify(sid, False)
             self.aoe.set_color(sid, "green")
-            # Синяя точка «не прочитано» на каждой сданной строке — рябь рядом
-            # с цветом состояния: шаг закончен, ждать там нечего. Снимаем её
-            # только у тех, кто уже отработал; текущая сессия, ворота и сводка
-            # роли остаются непрочитанными — они и должны звать.
+            # Синяя точка «не прочитано» — рябь рядом с цветом состояния,
+            # который и так говорит всё нужное. Снимаем её везде, где движок
+            # оформляет строку: зовут цвет, «зовёт» и уведомление, а не точка.
             self.aoe.set_unread(sid, False)
 
     def dress(self, task, chain: Chain, step: Step, session_id: str, run_n: int = 1) -> None:
@@ -1348,6 +1347,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
         self.aoe.set_group(session_id, group_for(task))
         self.aoe.set_color(session_id, "amber")
         self.aoe.set_urgent(session_id, False)
+        self.aoe.set_unread(session_id, False)
         # Уведомление ставим щедро: шаг, который может встать хоть на каком-то
         # исходе или на вопросе, зовёт владельца заранее.
         after = (self.sheet(task).get(step.id) or {}).get("after", step.human_after)

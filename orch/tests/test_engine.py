@@ -179,7 +179,7 @@ def test_прямой_путь_до_конца(engine, fake, repo):
     assert task["status"] == WAITING and task["wait_reason"] == "gate"
     # Ворота — не поломка: жёлтый. Красный остаётся для «сломалось».
     assert fake.colors[sid] == "amber"
-    assert fake.unread.get(sid) is not False, "строка, которая ждёт вас, прочитанной не считается"
+    assert fake.unread.get(sid) is False, "точку «не прочитано» движок не оставляет нигде"
 
     engine.button(task_id, task["revision"], "accept", comment="Годится.")
     engine.reconcile()
@@ -248,14 +248,14 @@ def test_ещё_заход_на_пределе_поднимает_предел(e
     assert len(engine.db.runs_of_step(task_id, "one")) == 3
 
 
-def test_сданный_шаг_перестаёт_быть_непрочитанным(engine, fake, repo):
-    """Синяя точка на каждой сданной строке — рябь рядом с цветом состояния."""
+def test_точки_не_прочитано_не_остаётся_ни_на_одной_строке(engine, fake, repo):
+    """Синяя точка — рябь рядом с цветом состояния, который говорит всё сам."""
     task_id = start(engine, repo)
     первая = session_of(engine, task_id)
     turn(engine, fake, task_id, "one", 1, None)     # шаг сдан, задача уехала на two
     assert fake.unread.get(первая) is False
     assert fake.colors[первая] == "green", "цвет состояния остаётся"
-    assert fake.unread.get(session_of(engine, task_id)) is not False, "текущий шаг зовёт"
+    assert fake.unread.get(session_of(engine, task_id)) is False, "и на текущем шаге тоже"
 
 
 def test_цена_хода_читается_из_ленты_кадров(engine, fake, repo):
@@ -1275,7 +1275,7 @@ def test_стенд_поднимает_роль_а_движок_даёт_ей_п
     assert engine.button(task_id, task["revision"], "stand") == "роль «Стенд» поднимает окружение"
     task = engine.db.task(task_id)
     sid = engine.stand_session(task_id)
-    assert sid and fake.rows[sid]["title"] == f"🐳 {task_id} · стенд"
+    assert sid and fake.rows[sid]["title"] == f"{task_id} · стенд 🐳"
     prompt = [t for target, t in fake.prompts if target == sid][0]
     assert "# Стенд" in prompt and task["stand"] in prompt and "8020" in prompt
 
