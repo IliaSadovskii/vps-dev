@@ -22,7 +22,9 @@ presets:
   auto:
     when: >-
       участвую только в итоге: ни вопросов, ни ворот до готового чертежа
-    set: { "*.after": false, "*.ask": false, blueprint-check.after: true }
+    # Ворота только на успехе: `rework` — это круг внутри цепочки, и
+    # владельцу на нём решать нечего (прогон T42, 2026-09-10).
+    set: { "*.after": false, "*.ask": false, blueprint-check.after: [ok] }
 
   step-by-step:
     when: >-
