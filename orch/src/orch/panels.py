@@ -455,17 +455,9 @@ def task_pane(
                 "kind": "section",
                 "title": "Путь задачи",
                 "value": " → ".join(db.path_steps(task["id"])) or (task["step"] or "—"),
+                "collapsible": True,
+                "collapsed": True,
                 "children": _trail_rows(db, task, chain, base_url),
-            }
-        )
-
-    answer = _last_orch_answer(db, task)
-    if answer:
-        blocks.append(
-            {
-                "kind": "note",
-                "tone": "warn",
-                "text": f"последний ответ orch: {answer[:400]}",
             }
         )
 
@@ -479,7 +471,6 @@ def task_pane(
             }
         )
 
-    blocks.append(_notify_row(task))
     clash = _clash_note(db, task)
     if clash:
         blocks.append(clash)
@@ -524,6 +515,7 @@ def task_pane(
                 "kind": "section",
                 "title": "Комментарии",
                 "collapsible": True,
+                "collapsed": True,
                 "children": [
                     {
                         "kind": "comment",
@@ -765,21 +757,6 @@ def _what_to_decide(db: Db, task) -> str:
     return f"Шаг {step} ждёт вас."
 
 
-def _notify_row(task) -> dict:
-    """Звать ли владельца в Telegram, когда эта задача встанет на воротах."""
-    on = bool(task["notify_gates"])
-    return {
-        "kind": "row",
-        "label": "Ворота в Telegram",
-        "sublabel": "звать вас в мессенджер, когда задача встанет"
-        if on else "задача ждёт молча, решения — в этой панели",
-        "value": "звать" if on else "молча",
-        "value_tone": "accent" if on else "muted",
-        "method": "orch.notify_gates",
-        "params": {"task": task["id"], "revision": task["revision"], "on": not on},
-    }
-
-
 def _clash_note(db: Db, task) -> dict | None:
     """Соседняя задача правит те же файлы — сказать до того, как рванёт."""
     for event in db.events(task["id"], limit=30):
@@ -798,8 +775,7 @@ def _clash_note(db: Db, task) -> dict | None:
 def _note_blocks(db: Db, task) -> list[dict]:
     """Находки побочных ролей, ждущие решения (`ASIDE-PLAN.md` §9).
 
-    Панель — второй канал наравне с Telegram: без привязанного бота роль
-    остановила бы задачу, а сказать было бы негде.
+    Единственное место, где роль говорит с владельцем: канала наружу нет.
     """
     out: list[dict] = []
     мелочь: list[dict] = []

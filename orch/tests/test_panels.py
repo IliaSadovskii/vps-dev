@@ -500,27 +500,6 @@ def test_находка_рисуется_в_панели_с_кнопками(eng
     assert all(a["method"] == "orch.note" for a in callout["actions"])
 
 
-def test_кнопка_ворот_в_телеграм_живёт_в_задаче(engine, fake, repo):
-    """Звать или не звать — свойство задачи, и переключается в её панели."""
-    from orch import panels
-
-    from tests.test_engine import start
-
-    task_id = start(engine, repo)
-    pane = panels.task_pane(engine.db, engine.db.task(task_id), "s1", "http://x")
-    строка = next(b for b in pane["blocks"] if b.get("label") == "Ворота в Telegram")
-    assert строка["value"] == "молча" and строка["params"]["on"] is True
-
-    task = engine.db.task(task_id)
-    assert "буду звать" in engine.set_notify_gates(task_id, task["revision"], True)
-    pane = panels.task_pane(engine.db, engine.db.task(task_id), "s1", "http://x")
-    строка = next(b for b in pane["blocks"] if b.get("label") == "Ворота в Telegram")
-    assert строка["value"] == "звать" and строка["params"]["on"] is False
-
-    task = engine.db.task(task_id)
-    assert "устаревшая" in engine.set_notify_gates(task_id, task["revision"] - 1, False)
-
-
 def test_панель_закрытой_задачи_рисуется_без_ворот(engine, fake, repo):
     """Панель рисуется толчком: перестанешь обновлять — в сессии навсегда
     застынет кадр с кнопкой «Принять» у принятой задачи."""

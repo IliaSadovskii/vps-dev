@@ -171,15 +171,6 @@ def _later(now=time.time) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now() + 60))
 
 
-@pytest.fixture(autouse=True)
-def без_канала(tmp_path: Path, monkeypatch):
-    """Ни один тест не должен дотянуться до настоящего бота."""
-    from orch import secrets
-
-    monkeypatch.setattr(secrets, "PATH", tmp_path / "секреты" / "secrets.json")
-    return tmp_path
-
-
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
     """Пустой репозиторий: рабочая копия задачи в тестах."""

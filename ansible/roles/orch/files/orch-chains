@@ -44,7 +44,6 @@ from pathlib import Path
 import yaml
 
 from orch import asides as aside_mod
-from orch.telegram import Telegram, TelegramError
 from orch.asides import AsideError
 from orch.chain import (
     VALID_AGENTS,

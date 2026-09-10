@@ -47,18 +47,6 @@ class ButtonsMixin:
             self.close_open_run(task, chain, action)
         return handler(task, chain, target, comment)
 
-    def set_notify_gates(self, task_id: str, revision: int, on: bool) -> str:
-        """Кнопка «Ворота в Telegram» в панели задачи."""
-        task = self.db.task(task_id)
-        if task is None:
-            return "нет такой задачи"
-        if int(revision) != int(task["revision"]):
-            return "устаревшая кнопка, панель перерисована"
-        with self.db.tx():
-            self.db.bump(task_id, notify_gates=1 if on else 0)
-            self.db.event(task_id, "notify_gates", {"on": bool(on)})
-        return "буду звать в Telegram" if on else "звать в Telegram не буду"
-
     def close_open_run(self, task, chain: Chain, action: str) -> None:
         """Заход, который ещё числится идущим, закрывается перед ходом владельца.
 

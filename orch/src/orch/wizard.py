@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .aoe import AoeError, Session
 from .chain import catalog, prompts_dir
-from .naming import group_for, group_of, wizard_group
+from .naming import group_for, wizard_group
 from .workspace import projects_on_disk
 
 

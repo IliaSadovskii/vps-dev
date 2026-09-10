@@ -121,7 +121,6 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
         self.settings = settings or Settings()
         self.live_sessions = 0
         # Канал наружу заводится лениво: без токена он молчит.
-        self.notifier = None
 
     # ── проход ───────────────────────────────────────────────────────────
     def reconcile(self) -> None:
@@ -153,7 +152,6 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
         # Побочные роли — последними: шаг цепочки важнее наблюдателя и
         # место под сессию занимает первым (`ASIDE-PLAN.md` §2).
         self.pump_asides(sessions)
-        self.pump_notify()
         self.archive_old()
 
     def sync_group(self, task) -> None:
@@ -279,7 +277,6 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
         base: str | None = None,
         author: str | None = None,
         stand: bool = False,
-        notify_gates: bool = False,
     ) -> str:
         """Завести задачу.
 
@@ -304,7 +301,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
             self.db.conn.execute(
                 "INSERT INTO task (id, chain, chain_yaml, title, text, project_path, branch, "
                 "group_path, step, status, human_sheet, base_branch, author, stand_wanted, "
-                "notify_gates, revision, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)",
+                "revision, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)",
                 (
                     task_id,
                     chain.name,
@@ -320,7 +317,6 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
                     base or None,
                     author or None,
                     1 if stand else 0,
-                    1 if notify_gates else 0,
                     now(),
                 ),
             )
@@ -346,7 +342,6 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
         branch: str | None = None,
         base: str | None = None,
         stand: bool | None = None,
-        notify_gates: bool | None = None,
     ) -> str:
         """Отпустить заявку из бэклога в работу — ту же самую, не копию.
 
@@ -390,10 +385,6 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
                 human_sheet=json.dumps(sheet, ensure_ascii=False),
                 base_branch=base or task["base_branch"],
                 stand_wanted=int(task["stand_wanted"]) if stand is None else (1 if stand else 0),
-                notify_gates=(
-                    int(task["notify_gates"]) if notify_gates is None
-                    else (1 if notify_gates else 0)
-                ),
                 wait_reason=None,
             )
             self.db.event(
@@ -545,20 +536,6 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
                 {"step": step.id, "run": run["n"], "disposition": disposition, "sha": sha[:12]},
             )
         self.dress(task, chain, step, session.id, run["n"])
-
-    def notify(self):
-        """Канал наружу. Создаётся один раз и переживает проходы."""
-        if self.notifier is None:
-            from .notify import Notifier
-
-            self.notifier = Notifier(self)
-        return self.notifier
-
-    def pump_notify(self) -> None:
-        try:
-            self.notify().pump()
-        except Exception as exc:  # noqa: BLE001 — канал не роняет проход
-            self.note_once(None, "notify_error", {"error": repr(exc)[:300]})
 
     def capacity(self, task_id: str | None, what: str) -> bool:
         """Можно ли поднять ещё одну сессию AoE.

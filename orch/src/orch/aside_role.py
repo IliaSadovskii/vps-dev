@@ -19,7 +19,7 @@ from . import asides as spec_mod
 from . import digest as dg
 from .aoe import RUNNING, STARTING, WAITING, Aoe, AoeError, Session
 from .asides import Aside, Wake
-from .chain import prompts_dir
+from .chain import ChainError, prompts_dir
 from .db import LIVE, STATE_DIR, now
 from .naming import GROUP_ROOT, group_for, slug
 from .workspace import create_worktree
@@ -879,6 +879,11 @@ class AsideMixin:
             # Роль без права останавливать всё равно скажет, но прогон не
             # застопорит.
             severity = "log"
+        if severity == "hold" and not self.hold_allowed(run["task_id"] or aside["task_id"]):
+            # Задача на автономии: владелец сказал «решай сам», и остановка
+            # ради вопроса — то же самое, что вопрос. Находка остаётся, но
+            # прогон едет; владелец прочтёт её в сводке конца прогона.
+            severity = "log"
         with self.db.tx():
             задача = run["task_id"] or aside["task_id"]
             note_id = self.db.note_add(
@@ -893,6 +898,28 @@ class AsideMixin:
         if severity == "hold" and задача:
             self.stop(задача, "aside_hold", urgent=True, interrupt=True)
         return f"находка записана (N{note_id})"
+
+    def hold_allowed(self, task_id: str | None) -> bool:
+        """Можно ли остановить эту задачу ради вопроса владельцу.
+
+        Только в ручном режиме — там, где владелец сам разрешил вопросы на
+        идущем шаге. На автономии («решай сам, пиши допущения») остановка
+        побочной роли — это тот же вопрос с чёрного хода: задача замирала до
+        ответа, которого владелец не ждал и не видел (T37, 2026-09-10).
+        """
+        if not task_id:
+            return False
+        task = self.db.task(task_id)
+        if task is None or not task["step"]:
+            return False
+        chain = self.chain_of(task)
+        if chain is None:
+            return False
+        try:
+            step = chain.step(task["step"])
+        except ChainError:
+            return False
+        return self.ask_allowed(task, step)
 
     def aside_done(self, run_id: int, outcome: str | None = None, token: str = "") -> str:
         run, aside, _spec, refuse = self.aside_caller(run_id, token)

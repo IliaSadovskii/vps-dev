@@ -221,7 +221,7 @@ def test_повод_в_общую_переписку_не_шлёт_правил�
     run_id = int(engine.db.aside_runs_open()[0]["id"])
     engine.aside_note(run_id, "tell", "Находка", "…", [], пропуск(engine, run_id))
     engine.aside_done(run_id, "done", пропуск(engine, run_id))
-    engine.note_decision(1, "say", "Правь только промпт", who="telegram")
+    engine.note_decision(1, "say", "Правь только промпт", who="панель")
     fake.finish_turn(разбор)
     fake.finish_turn(дом)
     for _ in range(4):
@@ -385,6 +385,29 @@ def test_находка_с_остановкой_ставит_задачу_на_�
     # Остановка обязана останавливать: идущий ход шага обрывается, иначе роль
     # договорит и уедет дальше, а ответ владельца опоздает (T37, 2026-09-10).
     assert session_of(engine, task_id) in fake.cancels
+
+
+def test_на_автономии_находка_не_останавливает_задачу(engine, fake, repo, tune):
+    """«Решай сам» значит и для наблюдателя: остановка ради вопроса — тот же вопрос.
+
+    Наладчик остановил T37 на шаге плана, хотя лист автономии выключил вопросы
+    у всех шагов: задача замерла до ответа, которого владелец не ждал.
+    """
+    task_id = start(engine, repo)
+    with engine.db.tx():
+        engine.db.bump(task_id, human_sheet=json.dumps({"one": {"ask": False, "after": False}}))
+    engine.reconcile()
+    run_id = engine.db.aside_runs_open()[0]["id"]
+
+    engine.aside_note(
+        int(run_id), "hold", "Два правила решит агент молча", "Подробности.", [],
+        пропуск(engine, run_id),
+    )
+
+    assert engine.db.note(1)["severity"] == "log", "находка остаётся, но весом «в сводку»"
+    task = engine.db.task(task_id)
+    assert task["status"] != WAITING and task["wait_reason"] != "aside_hold"
+    assert session_of(engine, task_id) not in fake.cancels
 
 
 def test_роль_без_права_останавливать_только_сообщает(engine, fake, repo, tune):
@@ -677,7 +700,7 @@ def test_роль_помнит_разговор_лентой_находок(engi
     engine.reconcile()
     run_id = int(engine.db.aside_runs_open()[0]["id"])
     engine.aside_note(run_id, "tell", "Первая находка", "…", [], пропуск(engine, run_id))
-    engine.note_decision(1, "say", "Правь только промпт", who="telegram")
+    engine.note_decision(1, "say", "Правь только промпт", who="панель")
     engine.aside_done(run_id, "done", пропуск(engine, run_id))
 
     fake.finish_turn(engine.db.aside_run(run_id)["session_id"])
@@ -706,7 +729,7 @@ def test_ответ_доходит_и_после_конца_задачи(engine,
         note_id = 1
 
     assert engine.db.task(task_id)["status"] == "done"
-    engine.note_decision(note_id, "say", "Всё равно поправь", who="telegram")
+    engine.note_decision(note_id, "say", "Всё равно поправь", who="панель")
     for _ in range(3):
         # Повод в общую переписку ждёт, пока та свободна: освобождаем все
         # сессии роли, а не только те, чей ход ещё открыт.

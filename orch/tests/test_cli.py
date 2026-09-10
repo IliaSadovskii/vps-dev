@@ -186,7 +186,7 @@ def test_task_start_кладёт_заявку_на_ту_же_задачу(task, 
     assert request["chain"] == "deep" and request["preset"] == "auto"
     # Неназванное приходит пустым: в базе останется то, что записано в заявке.
     assert request["text"] is None and request["branch"] is None
-    assert request["stand"] is None and request["notify"] is None
+    assert request["stand"] is None
 
 
 def test_ворота_из_среды_агента_отказывают(task, capsys, tmp_path, monkeypatch):

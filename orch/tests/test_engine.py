@@ -963,13 +963,12 @@ def test_отпущенная_заявка_держит_неназванное(e
     monkey_chain(engine)
     заявка = engine.create_task(
         chain_name="t", project_path=str(repo), text="черновик", backlog=True,
-        branch="pr-42", base="release", notify_gates=True,
+        branch="pr-42", base="release",
     )
     лист = engine.db.task(заявка)["human_sheet"]
     engine.release_task(заявка)
     задача = engine.db.task(заявка)
     assert задача["branch"] == "pr-42" and задача["base_branch"] == "release"
-    assert задача["notify_gates"] == 1, "звать в Telegram перестали молча"
     assert задача["human_sheet"] == лист, "лист автономии переписали без спроса"
     assert задача["text"] == "черновик"
 

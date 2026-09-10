@@ -145,16 +145,6 @@ class Worker:
             db.bump(task["id"], human_sheet=json.dumps(sheet, ensure_ascii=False))
             db.event(task["id"], "sheet_edited", {"step": params["step"], **knobs})
 
-    def btn_notify_gates(self, session_id, params) -> None:
-        """Переключатель «Ворота в Telegram» на карточке задачи."""
-        if self.engine is None:
-            self.notify("orch", "движок ведёт другой процесс", tone="warn")
-            return
-        answer = self.engine.set_notify_gates(
-            str(params.get("task")), int(params.get("revision", -1)), bool(params.get("on"))
-        )
-        self.notify("orch", answer, tone="info")
-
     def btn_note(self, session_id, params) -> None:
         """Решение владельца под находкой побочной роли."""
         if self.engine is None:

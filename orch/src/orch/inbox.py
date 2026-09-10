@@ -82,7 +82,6 @@ class InboxMixin:
                         branch=request.get("branch"),
                         base=request.get("base"),
                         stand=request.get("stand"),
-                        notify_gates=request.get("notify"),
                     )
                     self.db.event(
                         request["task"], "task_released", {"from": "inbox", "file": path.name}
@@ -105,7 +104,6 @@ class InboxMixin:
                         base=request.get("base"),
                         author=request.get("author"),
                         stand=bool(request.get("stand")),
-                        notify_gates=bool(request.get("notify")),
                     )
                     self.db.event(task_id, "task_created", {"from": "inbox", "file": path.name})
             except Exception as exc:  # noqa: BLE001 — одна кривая заявка не останавливает движок

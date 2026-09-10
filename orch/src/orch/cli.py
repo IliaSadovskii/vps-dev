@@ -219,7 +219,6 @@ def cmd_task_new(args: argparse.Namespace) -> int:
         # только рукой владельца (кнопка «В работу» или явный `--start`).
         "backlog": not bool(getattr(args, "start", False)),
         "stand": bool(getattr(args, "stand", False)),
-        "notify": bool(getattr(args, "notify", False)),
         "at": signals.now(),
     }
     INBOX.mkdir(parents=True, exist_ok=True)
@@ -257,7 +256,6 @@ def cmd_task_start(args: argparse.Namespace) -> int:
         "sheet_edits": sheet_edits,
         # Неназванное остаётся тем, что записано в заявке: `None`, а не `False`.
         "stand": True if args.stand else None,
-        "notify": True if args.notify else None,
         "at": signals.now(),
     }
     INBOX.mkdir(parents=True, exist_ok=True)
@@ -992,11 +990,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--branch", help="ветка задачи; по умолчанию новая от базовой")
     p.add_argument("--base", help="от какой ветки ответвляться")
-    p.add_argument(
-        "--notify",
-        action="store_true",
-        help="звать владельца в Telegram, когда задача встанет на воротах",
-    )
     p.set_defaults(func=cmd_task_new)
 
     p = task_sub.add_parser(
@@ -1011,10 +1004,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--after", action="append", metavar="шаг=да|нет", help="ворота после шага")
     p.add_argument("--ask", action="append", metavar="шаг=да|нет", help="спрашивать ли на шаге")
     p.add_argument("--stand", action="store_true", help="поднять стенд задачи")
-    p.add_argument(
-        "--notify", action="store_true",
-        help="звать владельца в Telegram, когда задача встанет на воротах",
-    )
     p.set_defaults(func=cmd_task_start)
 
     p = task_sub.add_parser("edit", help="переписать ТЗ заявки в бэклоге")
