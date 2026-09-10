@@ -8,7 +8,15 @@
 from __future__ import annotations
 
 from .chain import DONE, Chain, ChainError
-from .db import BACKLOG, CLOSED, DONE as ST_DONE, QUEUED, RUNNING as ST_RUNNING, now
+from .db import (
+    BACKLOG,
+    CLOSED,
+    DONE as ST_DONE,
+    QUEUED,
+    RUNNING as ST_RUNNING,
+    WAITING as ST_WAITING,
+    now,
+)
 
 
 class ButtonsMixin:
@@ -40,10 +48,12 @@ class ButtonsMixin:
             "start": self._btn_start,
             "accept_as_is": self._btn_accept,
             "close": self._btn_close,
+            "pause": self._btn_pause,
+            "restart_step": self._btn_restart_step,
         }.get(action)
         if handler is None:
             return f"неизвестное действие {action}"
-        if action != "stand":
+        if action not in ("stand", "pause"):
             self.close_open_run(task, chain, action)
         return handler(task, chain, target, comment)
 
@@ -266,6 +276,48 @@ class ButtonsMixin:
             self.db.event(task["id"], "closed", {"comment": comment})
         self.drop_stand(self.db.task(task["id"]))
         return "закрыта"
+
+    def _btn_pause(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
+        """Пауза: задача стоит, пока владелец не скажет «Продолжить».
+
+        Остановка руками в AoE паузой не была: движок видел `Idle`, считал
+        ход брошенным и толкал роль дальше. Пауза — состояние задачи, и
+        толкать в нём нечего.
+        """
+        if task["status"] == ST_WAITING and task["wait_reason"] == "paused":
+            return "уже на паузе"
+        self.stop(task["id"], "paused", urgent=True, interrupt=True)
+        return "на паузе; «Продолжить» вернёт в работу"
+
+    def _btn_restart_step(
+        self, task, chain: Chain, target: str | None, comment: str | None
+    ) -> str:
+        """Начать шаг заново, начисто: как будто он сюда и не приходил.
+
+        Не «ещё заход»: заходы, файлы и находки этого шага и всех, что были
+        после него, забываются, и предел считается с нуля. Шаг может не
+        значиться в своих же `human_moves` — на себя цепочка возвращать не
+        обязана, а владелец вправе.
+        """
+        step = target or task["step"]
+        if not step or not chain.has(step):
+            return "нечего начинать заново: шаг не назван"
+        forgotten = self.forget_after(task, chain, step)
+        with self.db.tx():
+            revision = self.db.bump(
+                task["id"], status=ST_RUNNING, step=step, wait_reason=None
+            )
+            self.db.move(
+                task["id"], task["step"], step, "human", "button", revision, comment=comment
+            )
+            self.db.event(
+                task["id"], "button", {"action": "restart_step", "to": step}
+            )
+        файлы = ", ".join(forgotten.get("artifacts") or []) or "нечего"
+        return (
+            f"шаг {step} начинается заново; забыто заходов "
+            f"{len(forgotten.get('runs') or [])}, убрано в историю: {файлы}"
+        )
 
     def _btn_start(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
         if task["status"] not in (BACKLOG, QUEUED):

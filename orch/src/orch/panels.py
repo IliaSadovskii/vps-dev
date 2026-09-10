@@ -116,6 +116,8 @@ BUTTONS_BY_REASON = {
     # и голая «Ещё заход» рядом с ними только путала: непонятно, чей это
     # заход и что будет с вопросом.
     "aside_hold": (),
+    # Пауза снимается «Продолжить»; всё остальное — в постоянных решениях.
+    "paused": ("again",),
     "no_worker": ("again",),
     "branch_busy": ("again", "back"),
     "abandoned": (),
@@ -127,6 +129,8 @@ BUTTON_LABELS = {
     "accept": "Принять",
     "accept_as_is": "Принять как есть",
     "again": "Ещё заход",
+    "pause": "Пауза",
+    "restart_step": "Начать шаг заново",
     "back": "Вернуть на",
     "start": "Запустить",
 }
@@ -490,6 +494,8 @@ def task_pane(
                 "href": public(f"{base_url}/session/{wizard}"),
             }
         )
+
+    blocks.append(_always_row(task))
 
     links = _artifact_links(db, task, chain, session_id, base_url)
     if links:
@@ -928,6 +934,55 @@ def _branch_busy_text(db: Db, task) -> str:
             )
         return f"Не смогла освободить ветку {branch}: {path}."
     return f"Ветку {branch} держит другая рабочая копия."
+
+
+def _always_row(task) -> dict:
+    """Решения, которые нужны в любой момент, а не только на остановке.
+
+    Владелец решает не только там, где движок спросил: остановить прогон,
+    начать шаг заново начисто, закрыть задачу. Раньше эти три вещи жили в
+    CLI и в кнопках остановки — то есть были недоступны ровно тогда, когда
+    задача едет не туда.
+    """
+    на_паузе = task["status"] == WAITING and task["wait_reason"] == "paused"
+    actions = []
+    if not на_паузе and task["status"] in (RUNNING, WAITING):
+        actions.append(
+            {
+                "kind": "action",
+                "label": "Пауза",
+                "method": "orch.pause",
+                "params": {"task": task["id"], "revision": task["revision"]},
+            }
+        )
+    if task["step"]:
+        actions.append(
+            {
+                "kind": "action",
+                "label": f"Начать {task['step']} заново",
+                "method": "orch.restart_step",
+                "params": {
+                    "task": task["id"],
+                    "revision": task["revision"],
+                    "target": task["step"],
+                },
+            }
+        )
+    actions.append(
+        {
+            "kind": "action",
+            "label": "Закрыть задачу",
+            "method": "orch.close",
+            "params": {"task": task["id"], "revision": task["revision"]},
+        }
+    )
+    return {
+        "kind": "section",
+        "title": "Решения",
+        "collapsible": True,
+        "collapsed": True,
+        "children": actions,
+    }
 
 
 def _buttons(db: Db, task) -> list[dict]:

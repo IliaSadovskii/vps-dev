@@ -126,6 +126,8 @@ class Worker:
     def btn_back_clean(self, session_id, params): self._move(params, "back_clean")
     def btn_start(self, session_id, params): self._move(params, "start")
     def btn_close(self, session_id, params): self._move(params, "close")
+    def btn_pause(self, session_id, params): self._move(params, "pause")
+    def btn_restart_step(self, session_id, params): self._move(params, "restart_step")
     def btn_stand(self, session_id, params): self._move(params, "stand")
 
     def btn_sheet_step(self, session_id, params) -> None:

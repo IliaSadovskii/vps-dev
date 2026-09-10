@@ -47,6 +47,7 @@ WAIT_REASONS = {
     "artifact": "роль сдала ход, но её файла нет или он не той формы",
     "abandoned": "сессия задачи исчезла",
     "aside_hold": "побочная роль просит вас посмотреть",
+    "paused": "пауза: вы остановили задачу",
 }
 
 
@@ -206,7 +207,9 @@ class Db:
     def start_run(
         self, task_id: str, step: str, context: str, start_sha: str | None
     ) -> int:
-        n = 1 + len(self.runs_of_step(task_id, step))
+        # Забытые заходы не в счёт: возврат начисто стёр их работу, и шаг
+        # начинается заново — «заход 1», а не «заход 3» (T37, 2026-09-10).
+        n = 1 + len([r for r in self.runs_of_step(task_id, step) if not r["void_at"]])
         cur = self.conn.execute(
             "INSERT INTO run (task_id, step, n, context, started_at, start_sha) "
             "VALUES (?,?,?,?,?,?)",

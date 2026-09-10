@@ -936,6 +936,25 @@ def test_группа_догоняет_смену_проекта(engine, fake, r
     assert fake.rows[sid]["group_path"] == task["group_path"]
 
 
+def test_заход_после_возврата_начисто_снова_первый(engine, fake, repo):
+    """Переиграли шаг — он идёт заново, а не «заход 3».
+
+    Номер захода видит и роль в промпте, и владелец в сайдбаре: третий заход
+    там, где работу стёрли и начали с чистого листа, читается как «мы тут
+    буксуем» (T37, 2026-09-10).
+    """
+    monkey_chain(engine)
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)     # шаг one сходил, едем на two
+    task = engine.db.task(task_id)
+
+    engine.button(task_id, task["revision"], "restart_step", target="one")
+    engine.reconcile()
+
+    живые = [r for r in engine.db.runs_of_step(task_id, "one") if not r["void_at"]]
+    assert len(живые) == 1 and живые[0]["n"] == 1
+
+
 def test_заявка_из_бэклога_едет_под_своим_номером(engine, fake, repo):
     """Номер задачи не меняется от бэклога до PR.
 

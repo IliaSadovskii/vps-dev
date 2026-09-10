@@ -500,6 +500,36 @@ def test_находка_рисуется_в_панели_с_кнопками(eng
     assert all(a["method"] == "orch.note" for a in callout["actions"])
 
 
+def test_решения_под_рукой_всегда(engine, fake, repo):
+    """Пауза, «начать шаг заново» и «закрыть» нужны и тогда, когда задача едет.
+
+    Раньше эти три вещи жили только в кнопках остановки — то есть были
+    недоступны ровно тогда, когда прогон едет не туда (T37, 2026-09-10).
+    """
+    from orch import panels
+
+    from tests.test_engine import start
+
+    task_id = start(engine, repo)
+    pane = panels.task_pane(engine.db, engine.db.task(task_id), "s1", "http://x")
+    решения = next(b for b in pane["blocks"] if b.get("title") == "Решения")
+    методы = [a["method"] for a in решения["children"]]
+    assert методы == ["orch.pause", "orch.restart_step", "orch.close"]
+
+    task = engine.db.task(task_id)
+    assert "на паузе" in engine.button(task_id, task["revision"], "pause")
+    задача = engine.db.task(task_id)
+    assert задача["wait_reason"] == "paused"
+    # На паузе движок задачу не трогает: проход не заводит новых заходов.
+    было = len(engine.db.runs_of_step(task_id, "one"))
+    engine.reconcile()
+    assert len(engine.db.runs_of_step(task_id, "one")) == было
+
+    pane = panels.task_pane(engine.db, engine.db.task(задача["id"]), "s1", "http://x")
+    решения = next(b for b in pane["blocks"] if b.get("title") == "Решения")
+    assert "orch.pause" not in [a["method"] for a in решения["children"]], "уже на паузе"
+
+
 def test_панель_закрытой_задачи_рисуется_без_ворот(engine, fake, repo):
     """Панель рисуется толчком: перестанешь обновлять — в сессии навсегда
     застынет кадр с кнопкой «Принять» у принятой задачи."""
