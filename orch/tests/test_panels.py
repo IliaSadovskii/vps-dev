@@ -89,7 +89,13 @@ def test_предел_заходов_объясняет_что_случилос�
     текст = panels._what_to_decide(engine.db, task)
     assert "Как сюда пришли: one 1 →" in текст
     assert "уже сходил" in текст
-    assert "Ещё заход" in текст and "Принять как есть" in текст
+    # Текст называет кнопки теми словами, что на них написаны: «Ещё заход»
+    # в тексте при кнопке «Дать заход сверх предела» заставлял искать кнопку,
+    # которой нет.
+    кнопки = {a["label"] for a in _actions(panels.home_pane(engine.db))}
+    assert "Дать заход сверх предела" in текст and "Дать заход сверх предела" in кнопки
+    assert "Считать ход законченным" in текст
+    assert "Ещё заход" not in текст and "Принять как есть" not in текст
 
 
 def test_ждущая_задача_первой_и_с_кнопками(engine, fake, repo):
@@ -512,9 +518,13 @@ def test_решения_под_рукой_всегда(engine, fake, repo):
 
     task_id = start(engine, repo)
     pane = panels.task_pane(engine.db, engine.db.task(task_id), "s1", "http://x")
+    # У едущей задачи пауза — аварийный выход, и стоит она на виду, а не в
+    # свёрнутом списке: искать её раскрытием, пока роль жжёт ход, поздно.
+    верх = [b for b in pane["blocks"] if b.get("kind") != "section"]
+    assert [a["method"] for b in верх for a in b.get("children", [])] == ["orch.pause"]
     решения = next(b for b in pane["blocks"] if b.get("title") == "Решения")
     методы = [a["method"] for a in решения["children"]]
-    assert методы[:2] == ["orch.pause", "orch.restart_step"]
+    assert методы[0] == "orch.restart_step"
     assert методы[-1] == "orch.close"
     откаты = [a for a in решения["children"] if a["method"] == "orch.rewind"]
     assert [a["params"]["target"] for a in откаты] == ["one", "two", "three"], (
@@ -572,3 +582,85 @@ def test_панель_закрытой_задачи_рисуется_без_во
     assert not вердикты, "у закрытой задачи не должно быть ворот с кнопками"
     шапка = pane["blocks"][0]
     assert шапка["value"] == "готово"
+
+
+def test_строка_ждущей_задачи_ведёт_в_её_сессию(engine, fake, repo):
+    """Кнопки на обзоре только у первой; остальным нужна хотя бы дорога."""
+    task_id = start(engine, repo)
+    sid = session_of(engine, task_id)
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "ok")
+    текущая = session_of(engine, task_id)
+    assert текущая != sid
+    pane = panels.home_pane(engine.db)
+    строка = next(
+        b for b in _flat(pane["blocks"]) if b.get("kind") == "row" and task_id in b["label"]
+    )
+    assert строка["href"] == f"https://{panels.HOST}:8065/session/{текущая}"
+
+
+def test_несозданная_копия_даёт_выход_а_не_тупик(engine, fake, repo):
+    """Раньше причина «no_worktree» падала в общую ветку: «Ещё заход» и ни слова
+    о том, что случилось и как чинить."""
+    from test_engine import monkey_chain
+
+    monkey_chain(engine)
+    task_id = engine.create_task(chain_name="t", project_path=str(repo), text="текст")
+    engine.reconcile()
+    engine.db.event(task_id, "worktree_failed", {"path": "/x", "error": "fatal: no origin"})
+    engine.stop(task_id, "no_worktree")
+    task = engine.db.task(task_id)
+    текст = panels._what_to_decide(engine.db, task)
+    assert "fatal: no origin" in текст and "Попробовать снова" in текст
+    подписи = [a["label"] for a in panels._buttons(engine.db, task)]
+    assert подписи == ["Попробовать снова", "Закрыть задачу"]
+
+
+def test_остановка_побочной_роли_решается_с_обзора(engine, fake, repo):
+    """На `aside_hold` кнопки — у самой находки; без неё обзор говорил
+    «просит посмотреть», а нажать было нечего."""
+    task_id = start(engine, repo)
+    aside_id = engine.db.aside_open("tune", "run", task_id, task_id)
+    with engine.db.tx():
+        engine.db.note_add(
+            aside_id, None, task_id, "hold", "Роль читает не тот файл", "…",
+            [{"verb": "restart", "target": None, "label": "перезапустить шаг"}],
+        )
+    engine.stop(task_id, "aside_hold")
+    pane = panels.home_pane(engine.db)
+    подписи = [a["label"] for a in _actions(pane)]
+    assert "перезапустить шаг" in подписи and "Ничего не делать" in подписи
+    assert "находка с вариантами ниже" in blocks_text(pane)
+
+    # И в панели задачи находка стоит сразу за остановкой, не под путём.
+    task_pane = panels.task_pane(engine.db, engine.db.task(task_id), "s1", "http://x")
+    виды = [b.get("kind") for b in task_pane["blocks"][:3]]
+    assert виды == ["row", "callout", "callout"]
+
+
+def test_панель_готовой_задачи_не_предлагает_закрыть_и_поднять_стенд(engine, fake, repo):
+    """Кнопка, которая ничего не сделает, хуже отсутствующей."""
+    task_id = start(engine, repo)
+    turn(engine, fake, task_id, "one", 1, None)
+    turn(engine, fake, task_id, "two", 1, "ok")
+    task = engine.db.task(task_id)
+    engine.button(task_id, task["revision"], "accept")
+    engine.reconcile()
+    turn(engine, fake, task_id, "three", 1, None)
+    task = engine.db.task(task_id)
+    assert task["status"] == "done"
+    pane = panels.task_pane(engine.db, task, "s1", "http://x")
+    методы = {a["method"] for a in _actions(pane)}
+    assert "orch.close" not in методы and "orch.stand" not in методы
+    assert "orch.pause" not in методы
+
+
+def test_бейдж_паузы_говорит_пауза_а_не_ждёт_вас(engine, fake, repo):
+    task_id = start(engine, repo)
+    task = engine.db.task(task_id)
+    sid = session_of(engine, task_id)
+    engine.button(task_id, task["revision"], "pause")
+    task = engine.db.task(task_id)
+    badge = panels.row_badge(engine.db, task, sid, engine.chain_of(task))
+    assert badge["text"].startswith("пауза")
+    assert "Продолжить" in panels._what_to_decide(engine.db, task)

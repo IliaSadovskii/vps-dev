@@ -120,9 +120,15 @@ BUTTONS_BY_REASON = {
     "paused": ("again",),
     "no_worker": ("again",),
     "branch_busy": ("again", "back"),
+    # Копия не создалась — причина в журнале, чинить её движок не умеет;
+    # после починки руками владелец пробует снова или закрывает задачу.
+    "no_worktree": ("again", "close"),
+    # Брошенная задача — конец: движок тут же убирает её копию вместе с
+    # файлами ролей, повторять ход не с чего. Сломанную цепочку кнопки не
+    # берут вовсе: движок отказывает до обработчика, даже «Закрыть».
     "abandoned": (),
     "chain_broken": (),
-    "path_mismatch": (),
+    "path_mismatch": ("again", "close"),
 }
 
 BUTTON_LABELS = {
@@ -133,6 +139,7 @@ BUTTON_LABELS = {
     "restart_step": "Начать шаг заново",
     "back": "Вернуть на",
     "start": "Запустить",
+    "close": "Закрыть задачу",
 }
 
 # Причины, где «принять как есть» — это выбор исхода владельцем: роль либо не
@@ -141,7 +148,12 @@ PICK_OUTCOME_REASONS = ("no_signal", "max_runs", "bad_outcome")
 
 
 # ── главная панель ───────────────────────────────────────────────────────
-def home_pane(db: Db, projects: list[str] | None = None, cost_warn: float = 5.0) -> dict:
+def home_pane(
+    db: Db,
+    projects: list[str] | None = None,
+    cost_warn: float = 5.0,
+    base_url: str = "http://127.0.0.1:8065",
+) -> dict:
     """Слот `home-pane` «Задачи»: витрина, а не пульт.
 
     Секции: что решить, что стоит в очереди и не поехало, что лежит
@@ -161,7 +173,7 @@ def home_pane(db: Db, projects: list[str] | None = None, cost_warn: float = 5.0)
                 "kind": "section",
                 "title": "Ждут вас",
                 "badges": [{"text": str(len(waiting)), "tone": "danger"}],
-                "children": [_waiting_row(db, t) for t in waiting[:MAX_TASKS]],
+                "children": [_waiting_row(db, t, base_url) for t in waiting[:MAX_TASKS]],
             }
         )
         first = waiting[0]
@@ -175,6 +187,9 @@ def home_pane(db: Db, projects: list[str] | None = None, cost_warn: float = 5.0)
                 "actions": _buttons(db, first),
             }
         )
+        # Остановка побочной роли решается кнопками самой находки, и без
+        # неё обзор говорил «просит посмотреть», а нажать было нечего.
+        blocks.extend(_note_blocks(db, first))
 
     queued = db.tasks((QUEUED,))
     if queued:
@@ -386,8 +401,14 @@ def _who_filed(task) -> str:
     return "завели вы"
 
 
-def _waiting_row(db: Db, task) -> dict:
-    return {
+def _waiting_row(db: Db, task, base_url: str) -> dict:
+    """Строка ждущей задачи — и дорога к ней.
+
+    Кнопки на обзоре есть только у первой; остальные владелец решает в
+    сессии шага, и без ссылки строка была тупиком: искать сессию приходилось
+    в сайдбаре по номеру.
+    """
+    row = {
         "kind": "row",
         "label": f"{task['id']} · {task['title']}",
         "sublabel": _reason_text(task["wait_reason"]),
@@ -395,6 +416,21 @@ def _waiting_row(db: Db, task) -> dict:
         "tone": "danger",
         "badges": [{"text": task["step"] or "—"}],
     }
+    session = _current_session(db, task)
+    if session:
+        row["href"] = public(f"{base_url}/session/{session}")
+        row["tooltip"] = "открыть сессию шага"
+    return row
+
+
+def _current_session(db: Db, task) -> str | None:
+    """Сессия последнего захода задачи: там роль и там разговор с ней."""
+    row = db.conn.execute(
+        "SELECT session_id FROM run WHERE task_id = ? AND session_id IS NOT NULL "
+        "AND void_at IS NULL ORDER BY id DESC LIMIT 1",
+        (task["id"],),
+    ).fetchone()
+    return row["session_id"] if row else None
 
 
 # ── панель задачи в сессии ───────────────────────────────────────────────
@@ -425,7 +461,9 @@ def task_pane(
         }
     ]
 
-    if task["status"] == WAITING:
+    if task["status"] in (WAITING, ABANDONED):
+        # Брошенная задача — статус, а не причина ожидания, но решать по ней
+        # надо так же: без этого блока панель говорила «брошена» и молчала.
         blocks.append(
             {
                 "kind": "callout",
@@ -436,6 +474,9 @@ def task_pane(
                 "actions": _buttons(db, task),
             }
         )
+        # Находки побочных ролей — сразу за остановкой: на `aside_hold` они
+        # и есть решение, и стояли ниже пути задачи и цены хода.
+        blocks.extend(_note_blocks(db, task))
     elif task["status"] == RUNNING:
         run = db.open_run(task["id"])
         if run:
@@ -452,6 +493,16 @@ def task_pane(
                     "tone": "info",
                 }
             )
+        # Аварийный выход на виду, а не в свёрнутом списке решений: пока
+        # задача едет, единственное, что владелец может захотеть срочно, —
+        # остановить её.
+        blocks.append(
+            {
+                "kind": "columns",
+                "children": [_pause_action(task)],
+            }
+        )
+        blocks.extend(_note_blocks(db, task))
 
     if chain:
         blocks.append(
@@ -478,8 +529,10 @@ def task_pane(
     clash = _clash_note(db, task)
     if clash:
         blocks.append(clash)
-    blocks.extend(_note_blocks(db, task))
-    blocks.append(_stand_row(db, task))
+    if task["status"] in (RUNNING, WAITING):
+        # Закрытой задаче стенд ни к чему: копии уже может не быть, а кнопка
+        # обещала бы то, чего движок не сделает.
+        blocks.append(_stand_row(db, task))
 
     wizard = task["wizard_session"] if "wizard_session" in task.keys() else None
     if wizard:
@@ -596,6 +649,13 @@ def row_badge(db: Db, task, session_id: str, chain: Chain | None = None) -> dict
             "bad_outcome": "чужой исход",
             "error": "ошибка",
             "no_worker": "агент не поднялся",
+            "loops": "по кругу",
+            "paused": "пауза",
+            "aside_hold": "стоп от роли рядом",
+            "branch_busy": "ветка занята",
+            "no_worktree": "нет копии",
+            "path_mismatch": "не та копия",
+            "chain_broken": "цепочка не читается",
         }.get(reason, "ждёт вас")
         return {
             "text": f"{text} · {run['step']}",
@@ -712,7 +772,12 @@ def _recent_runs(db: Db, task, сколько: int = 4) -> str:
 
 
 def _what_to_decide(db: Db, task) -> str:
-    """Строка «что решить» — то, ради чего владелец открыл панель."""
+    """Строка «что решить» — то, ради чего владелец открыл панель.
+
+    У каждой остановки три части: что случилось, что делает каждая кнопка,
+    куда идти, если кнопок нет. Остановка без этих трёх — тупик: владелец
+    видит код причины и идёт в терминал выяснять, что нажимать.
+    """
     reason = task["wait_reason"]
     step = task["step"] or "—"
     if reason == "gate":
@@ -721,46 +786,123 @@ def _what_to_decide(db: Db, task) -> str:
         return (
             f"{_recent_runs(db, task)} ".lstrip() +
             f"Шаг {step} закончил ход и ждёт вас. Что решать — в последнем "
-            f"сообщении роли в чате. Там же можно спорить и просить правку: "
-            f"роль перепишет свой файл на месте, задача никуда не уедет. "
-            f"Кнопка двигает задачу молча; чтобы адресат услышал «почему», "
-            f"скажите это роли словами — она передаст."
+            f"сообщении роли в чате; там же можно спорить и просить правку, "
+            f"роль перепишет свой файл на месте. Кнопка двигает задачу молча: "
+            f"«почему» скажите роли словами — она передаст."
         )
     if reason == "no_signal":
         answer = _last_orch_answer(db, task)
         tail = f" Последнее, что сказала команда: {answer[:200]}" if answer else ""
-        return f"Шаг {step} закончил ход, не сдав его.{tail}"
+        return (
+            f"Шаг {step} закончил ход, не сдав его.{tail} "
+            "«Дать ещё заход» — попросить роль закончить и сдать; "
+            "«Считать ход законченным → …» — принять то, что есть, и ехать "
+            "дальше; «Вернуть на …» — переиграть с названного шага."
+        )
     if reason == "max_runs":
         сколько = len(_cycle_runs(db, task, step))
         разы = {1: "один раз", 2: "дважды", 3: "трижды"}.get(сколько, f"{сколько} раз")
         return (
             f"Цепочка ведёт на шаг {step}, но на этом круге он уже сходил "
             f"{разы} — больше предел не даёт. {_recent_runs(db, task)} "
-            "«Ещё заход» — дать ему заход сверх предела и ехать дальше; "
-            "«Принять как есть» — считать сделанное готовым и уйти по цепочке "
-            "вперёд; «Вернуть на …» — переиграть с названного шага."
+            "«Дать заход сверх предела» — ещё один заход и ехать дальше; "
+            "«Считать ход законченным → …» — считать сделанное готовым и уйти "
+            "по цепочке вперёд; «Вернуть на …» — переиграть с названного шага."
+        )
+    if reason == "ask":
+        return (
+            f"Роль на шаге {step} задала вопрос — ответьте ей в чате этой "
+            "сессии, кнопок здесь нет. Не хотите отвечать — «Пауза» или "
+            "«Закрыть задачу» в решениях ниже."
+        )
+    if reason == "artifact":
+        return (
+            f"Шаг {step} сдал ход, но его файла нет или он не той формы. "
+            "«Дать ещё заход» — попросить роль дописать файл; «Вернуть на …» "
+            "— переиграть с названного шага."
+        )
+    if reason == "bad_outcome":
+        return (
+            f"Шаг {step} назвал исход, которого нет в цепочке. «Дать ещё "
+            "заход» — попросить роль сдать ход заново; «Считать ход "
+            "законченным → …» — выбрать исход за неё."
+        )
+    if reason == "error":
+        return (
+            f"Сессия шага {step} в ошибке: текст ошибки — в самой сессии. "
+            "«Повторить ход» заведёт новую сессию на том же шаге; «Вернуть "
+            "на …» — переиграть с названного шага."
+        )
+    if reason == "branch_busy":
+        return _branch_busy_text(db, task)
+    if reason == "no_worker":
+        return (
+            f"У сессии шага {step} не поднялся агент. «Поднять сессию заново» "
+            "заведёт новую; повторяется — смотрите журнал ниже."
+        )
+    if reason == "paused":
+        return (
+            "Задача стоит по вашей команде: движок её не трогает, ход роли "
+            "оборван. «Продолжить» вернёт в работу с того же шага."
+        )
+    if reason == "aside_hold":
+        return (
+            "Побочная роль остановила ход и ждёт вашего ответа — её находка "
+            "с вариантами ниже. Ход роли шага оборван и продолжится после "
+            "ответа."
+        )
+    if reason == "no_worktree":
+        cause = _last_event_error(db, task, "worktree_failed")
+        tail = f" Причина: {cause[:300]}" if cause else ""
+        return (
+            f"Рабочая копия задачи не создалась, ни один шаг не начинался.{tail} "
+            "Разберитесь с репозиторием и нажмите «Попробовать снова», либо "
+            "закройте задачу."
+        )
+    if reason == "abandoned":
+        return (
+            f"Сессия шага {step} исчезла из AoE: удалена или убрана в архив "
+            "руками. Задача на этом кончилась: движок убирает её рабочую копию "
+            "вместе с файлами ролей, ветка с коммитами остаётся. Продолжить "
+            "работу — новой задачей на той же ветке через мастера."
+        )
+    if reason == "chain_broken":
+        cause = _last_event_error(db, task, "chain_broken")
+        tail = f" Ошибка: {cause[:300]}" if cause else ""
+        return (
+            f"Замороженная цепочка задачи не читается, и движок не примет ни "
+            f"одной кнопки, даже «Закрыть».{tail} Это чинится только руками, "
+            f"из терминала: `orch task show {task['id']}` покажет цепочку и "
+            "ошибку."
+        )
+    if reason == "path_mismatch":
+        return (
+            f"Сессия шага {step} открыта не в рабочей копии задачи — движок "
+            "не отдаст ей ход, чтобы роль не писала в чужой каталог. «Поднять "
+            "сессию заново» создаст сессию в нужной копии."
         )
     if reason == "loops":
         return (
             f"Задача третий раз возвращается назад без вашего участия и сейчас "
             f"снова идёт на шаг {step}. {_recent_runs(db, task, 6)} "
-            "«Ещё заход» — пусть попробуют ещё круг; «Принять как есть» — "
-            "считать сделанное готовым и ехать вперёд; «Вернуть на …» — "
-            "переиграть с названного шага."
+            "«Дать заход сверх предела» — пусть попробуют ещё круг; «Считать "
+            "ход законченным → …» — считать сделанное готовым и ехать вперёд; "
+            "«Вернуть на …» — переиграть с названного шага."
         )
-    if reason == "ask":
-        return f"Роль на шаге {step} задала вопрос — ответьте ей в чате этой сессии."
-    if reason == "artifact":
-        return f"Шаг {step} сдал ход, но его файла нет или он не той формы."
-    if reason == "bad_outcome":
-        return f"Шаг {step} назвал исход, которого нет в цепочке."
-    if reason == "error":
-        return f"Сессия шага {step} в ошибке."
-    if reason == "branch_busy":
-        return _branch_busy_text(db, task)
-    if reason == "no_worker":
-        return f"У сессии шага {step} не поднялся агент. Ещё заход заведёт новую сессию."
     return f"Шаг {step} ждёт вас."
+
+
+def _last_event_error(db: Db, task, kind: str) -> str | None:
+    """Текст ошибки из последнего события такого рода, если он там есть."""
+    for event in db.events(task["id"], limit=30):
+        if event["kind"] != kind:
+            continue
+        try:
+            payload = json.loads(event["payload"] or "{}")
+        except json.JSONDecodeError:
+            return None
+        return payload.get("error") or None
+    return None
 
 
 def _clash_note(db: Db, task) -> dict | None:
@@ -793,11 +935,14 @@ def _note_blocks(db: Db, task) -> list[dict]:
             # надо. Она уходит в сводку конца прогона.
             continue
         options = json.loads(note["options"] or "[]")
-        buttons = [{"label": "Ничего не делать", "method": "orch.note",
+        # Те же блоки `action`, что и у кнопок остановки: кнопка без `kind`
+        # отличалась от соседних и по форме, и для обходчиков панели.
+        buttons = [{"kind": "action", "label": "Ничего не делать", "method": "orch.note",
                     "params": {"note": note["id"], "verb": "continue", "target": ""}}]
         for option in options:
             buttons.append(
                 {
+                    "kind": "action",
                     "label": option.get("label") or option.get("verb"),
                     "method": "orch.note",
                     "params": {
@@ -912,12 +1057,12 @@ def _branch_busy_text(db: Db, task) -> str:
             return (
                 f"Ветка {branch} вычекана в {path}, и там есть несохранённая "
                 "работа — сама я её не трону. Разберитесь с ней и нажмите "
-                "«Ещё заход»."
+                "«Попробовать снова»."
             )
         if event["kind"] == "branch_in_project":
             return (
                 f"Ветка {branch} вычекана в самом проекте ({path}). "
-                "Переключите его на другую ветку и нажмите «Ещё заход»."
+                "Переключите его на другую ветку и нажмите «Попробовать снова»."
             )
         return f"Не смогла освободить ветку {branch}: {path}."
     return f"Ветку {branch} держит другая рабочая копия."
@@ -933,15 +1078,10 @@ def _always_row(task) -> dict:
     """
     на_паузе = task["status"] == WAITING and task["wait_reason"] == "paused"
     actions = []
-    if not на_паузе and task["status"] in (RUNNING, WAITING):
-        actions.append(
-            {
-                "kind": "action",
-                "label": "Пауза",
-                "method": "orch.pause",
-                "params": {"task": task["id"], "revision": task["revision"]},
-            }
-        )
+    # У едущей задачи пауза стоит на виду, под строкой хода; здесь она нужна
+    # ждущей: у роли с вопросом, у ворот, где владелец ещё думает.
+    if not на_паузе and task["status"] == WAITING:
+        actions.append(_pause_action(task))
     if task["step"]:
         actions.append(
             {
@@ -971,20 +1111,33 @@ def _always_row(task) -> dict:
                 },
             }
         )
-    actions.append(
-        {
-            "kind": "action",
-            "label": "Закрыть задачу",
-            "method": "orch.close",
-            "params": {"task": task["id"], "revision": task["revision"]},
-        }
-    )
+    if task["status"] in (RUNNING, WAITING):
+        # Готовую, снятую и брошенную закрывать нечего: они уже кончились.
+        actions.append(
+            {
+                "kind": "action",
+                "label": "Закрыть задачу",
+                "method": "orch.close",
+                "tooltip": "снять с прогона: работа в ветке останется, стенд погаснет",
+                "params": {"task": task["id"], "revision": task["revision"]},
+            }
+        )
     return {
         "kind": "section",
         "title": "Решения",
         "collapsible": True,
         "collapsed": True,
         "children": actions,
+    }
+
+
+def _pause_action(task) -> dict:
+    return {
+        "kind": "action",
+        "label": "Пауза",
+        "method": "orch.pause",
+        "tooltip": "оборвать ход роли и остановить задачу; «Продолжить» вернёт в работу",
+        "params": {"task": task["id"], "revision": task["revision"]},
     }
 
 
@@ -1003,6 +1156,8 @@ AGAIN_LABELS = {
     "artifact": "Дать ещё заход",
     "bad_outcome": "Дать ещё заход",
     "branch_busy": "Попробовать снова",
+    "no_worktree": "Попробовать снова",
+    "path_mismatch": "Поднять сессию заново",
 }
 
 
