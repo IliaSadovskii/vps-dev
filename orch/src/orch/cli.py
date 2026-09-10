@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import sqlite3
@@ -39,6 +40,24 @@ from .workspace import remove_worktree
 
 class Refused(Exception):
     """Команда отказала роли; текст — объяснение и подсказка."""
+
+
+def _refuse_if_agent(what: str) -> None:
+    """Кнопки владельца — не роли. `AOE_ARTIFACT_DIR` ставит сам общий ACP-раннер
+    AoE (`runner.rs`) в среду процесса при запуске — один на все провайдеры
+    (Claude, Codex, OpenCode), не только Claude Code: `CLAUDECODE` для
+    мультипровайдерного оркестратора не годится, он значащий только у Claude.
+    `AOE_INSTANCE_ID` тоже не подходит — он живёт в среде tmux-панели, а не в
+    среде самого агента (проверено на собственном окружении). Голый терминал
+    владельца на машине ни одну из переменных AoE не несёт; панель ходит в
+    движок напрямую и этой проверки вообще не видит (T26, 2026-09-09 — роль
+    сама вызвала `orch gate back`, приняв пересказ требования владельца за
+    согласие на переход)."""
+    if os.environ.get("AOE_ARTIFACT_DIR"):
+        raise Refused(
+            f"{what} — решение владельца, не роли: нажмите кнопку в панели "
+            "или наберите команду в своём терминале, не в среде агента."
+        )
 
 
 # ── команды ролей ────────────────────────────────────────────────────────
@@ -402,7 +421,13 @@ def cmd_stats(args: argparse.Namespace) -> int:
 
 
 def cmd_task_move(args: argparse.Namespace) -> int:
-    """Кнопка из терминала. Заявка в `inbox/`: писатель базы один — движок."""
+    """Кнопка из терминала. Заявка в `inbox/`: писатель базы один — движок.
+
+    `accept`/`back`/`again` — те же решения владельца, что и `orch gate`, тем
+    же путём в обход панели: роли сюда так же нельзя (`_refuse_if_agent`).
+    """
+    if args.action in ("accept", "back", "again"):
+        _refuse_if_agent(f"«orch task move … {args.action}»")
     conn = _ro_db()
     row = conn.execute("SELECT revision FROM task WHERE id = ?", (args.task,)).fetchone()
     if row is None:
@@ -452,7 +477,11 @@ def cmd_gate(args: argparse.Namespace) -> int:
     говорит «принято» или «вернись на разведку». Роль передаёт это сюда
     (`UX-PLAN.md`). Работает только когда задача действительно стоит на
     воротах: обычной фразой в разговоре задачу не сдвинуть.
+
+    Саму команду роль вызвать не может: `orch gate` исполняет решение
+    владельца, а не догадку о нём (см. `_refuse_if_agent`).
     """
+    _refuse_if_agent("«orch gate»")
     task = find_task()
     conn = _ro_db()
     row = conn.execute(
