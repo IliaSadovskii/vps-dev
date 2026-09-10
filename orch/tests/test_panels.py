@@ -590,6 +590,45 @@ def test_непринятая_заявка_видна_владельцу(engine,
     assert not [b for b in pane["blocks"] if b.get("title", "").startswith("Заявка не принята")]
 
 
+def test_сломанная_цепочка_не_запирает_задачу(engine, fake, repo):
+    """Закрыть и поставить на паузу можно и с нечитаемой цепочкой.
+
+    Все кнопки отказывали в одном месте — до обработчика, — потому что
+    движок сначала читал цепочку. Задача с битым `chain.yml` запиралась
+    наглухо: выйти можно было только из терминала.
+    """
+    from orch import panels
+
+    from tests.test_engine import start
+
+    task_id = start(engine, repo)
+    with engine.db.tx():
+        engine.db.bump(
+            task_id,
+            chain_yaml="{ это: не цепочка",
+            status="waiting",
+            wait_reason="chain_broken",
+        )
+
+    # Двигать по нечитаемой цепочке нельзя, и панель объясняет, что делать.
+    task = engine.db.task(task_id)
+    assert "цепочка задачи не читается" in engine.button(task_id, task["revision"], "again")
+    pane = panels.task_pane(engine.db, engine.db.task(task_id), "s1", "http://x")
+    текст = " ".join(str(b.get("detail") or "") for b in pane["blocks"])
+    assert "Закрыть задачу" in текст
+    кнопки = [
+        a["label"] for b in pane["blocks"] for a in (b.get("actions") or [])
+    ]
+    assert "Закрыть задачу" in кнопки, "выход из тупика не предложен кнопкой"
+
+    # А выход есть: пауза и закрытие цепочки не читают — она им не нужна.
+    task = engine.db.task(task_id)
+    assert "на паузе" in engine.button(task_id, task["revision"], "pause")
+    task = engine.db.task(task_id)
+    assert "закрыта" in engine.button(task_id, task["revision"], "close")
+    assert engine.db.task(task_id)["status"] == "closed"
+
+
 def test_панель_закрытой_задачи_рисуется_без_ворот(engine, fake, repo):
     """Панель рисуется толчком: перестанешь обновлять — в сессии навсегда
     застынет кадр с кнопкой «Принять» у принятой задачи."""

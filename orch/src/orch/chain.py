@@ -142,7 +142,15 @@ def apply_preset(sheet: dict[str, dict], preset: dict) -> dict[str, dict]:
 
 
 def parse(text: str, source: str = "") -> Chain:
-    raw = yaml.safe_load(text)
+    # Битый YAML — такая же непригодная цепочка, как цепочка без шагов, и
+    # звать её надо тем же именем. Голый `yaml.YAMLError` пролетал мимо всех
+    # `except ChainError`: задача с испорченной замороженной цепочкой
+    # застревала с `engine_error` вместо внятного «цепочка не читается», а
+    # кнопки владельца падали с трассировкой (2026-09-10).
+    try:
+        raw = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ChainError(f"{source or 'цепочка'}: не разобрал YAML: {exc}") from None
     if not isinstance(raw, dict):
         raise ChainError(f"{source or 'цепочка'}: ожидался словарь верхнего уровня")
     name = raw.get("name")

@@ -38,7 +38,18 @@ class ButtonsMixin:
             return "устаревшая кнопка, панель перерисована"
         chain = self.chain_of(task)
         if chain is None:
-            return "цепочка задачи не читается"
+            # Сломанная цепочка запирала задачу наглухо: все кнопки отказывали
+            # здесь, включая «Закрыть», и выйти можно было только из
+            # терминала. Закрытие и пауза цепочки не читают — им она не нужна.
+            if action in ("close", "pause"):
+                return {"close": self._btn_close, "pause": self._btn_pause}[action](
+                    task, None, target, comment
+                )
+            return (
+                "цепочка задачи не читается: двигать по ней нельзя. "
+                "Остаётся «Закрыть задачу» — или почините "
+                f"`.orch/{task['id']}/chain.yml` в рабочей копии."
+            )
         handler = {
             "stand": self._btn_stand,
             "accept": self._btn_accept,
@@ -282,7 +293,9 @@ class ButtonsMixin:
             )
         return "ещё заход" + (" (предел поднят)" if grant else "")
 
-    def _btn_close(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
+    def _btn_close(
+        self, task, chain: Chain | None, target: str | None, comment: str | None
+    ) -> str:
         """Закрыть задачу, не доводя до конца.
 
         Роли заводят заявки в бэклог сами, и часть из них никогда не поедет.
@@ -300,7 +313,9 @@ class ButtonsMixin:
         self.drop_stand(self.db.task(task["id"]))
         return "закрыта"
 
-    def _btn_pause(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
+    def _btn_pause(
+        self, task, chain: Chain | None, target: str | None, comment: str | None
+    ) -> str:
         """Пауза: задача стоит, пока владелец не скажет «Продолжить».
 
         Остановка руками в AoE паузой не была: движок видел `Idle`, считал
