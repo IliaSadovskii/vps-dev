@@ -25,15 +25,30 @@ from .naming import GROUP_ROOT, slug
 from .workspace import create_worktree
 
 
-def aside_title(spec: Aside, task_id: str | None) -> str:
-    """Титул сессии роли: `🔧 T35 · Наладчик`.
+def aside_title(spec: Aside, метка: str | None) -> str:
+    """Титул сессии роли: `🔧 T35 · Наладчик`, `📋 listate-crm · Менеджер`.
 
-    Порядок тот же, что у сессий шагов (`T35 · plan`): номер задачи первым,
+    Порядок тот же, что у сессий шагов (`T35 · plan`): чья это работа — первым,
     иначе строки роли и шагов читаются как из разных систем. Знак роли стоит
-    перед номером — по нему в общем списке видно наблюдателя, а не шаг.
+    перед меткой — по нему в общем списке видно наблюдателя, а не шаг.
     """
-    имя = f"{task_id or 'машина'} · {spec.title or spec.name}"
+    имя = f"{метка or 'машина'} · {spec.title or spec.name}"
     return f"{spec.icon} {имя}".strip()
+
+
+def aside_scope_label(spec: Aside, aside) -> str:
+    """Чья это переписка: задача, проект или машина целиком.
+
+    У роли с областью «проект» запись одна на весь проект и живёт дольше
+    любой задачи, а её поле `task_id` — это задача, на которой её впервые
+    завели. Показывать его в титуле нельзя: Менеджер, разбиравший T26,
+    назывался «T25 · Менеджер», потому что первой у него была T25.
+    """
+    if spec.scope == "project":
+        return Path(aside["scope_key"] or "").name or "проект"
+    if spec.scope == "machine":
+        return "машина"
+    return aside["task_id"] or "задача"
 
 
 # Сколько событий одна роль разбирает за проход: движок не должен зависать
@@ -240,7 +255,10 @@ class AsideMixin:
         # в занятую сессию AoE обрывает то, что в ней идёт, поэтому разбор и
         # разговор разведены по разным сессиям, а не по вежливости промпта.
         повод = self.wake_title(spec, event["kind"])
-        титул = aside_title(spec, event["task_id"])
+        # Ход всегда про задачу события; область роли — запасная метка для
+        # поводов без задачи (машина, проект).
+        метка = event["task_id"] or (aside_scope_label(spec, aside) if aside else None)
+        титул = aside_title(spec, метка)
         if свежая:
             титул = f"{титул} · {повод.lower()}"
         try:
@@ -319,7 +337,8 @@ class AsideMixin:
         if дом is None:
             # Роль, которая с владельцем не разговаривает: и заводить нечего.
             return
-        if not self.capacity(aside["task_id"], f"переписка роли {spec.name}"):
+        чья = task["id"] if task is not None else None
+        if not self.capacity(чья, f"переписка роли {spec.name}"):
             return
         try:
             session = self.aoe.create(
@@ -327,14 +346,14 @@ class AsideMixin:
                 agent=дом.agent,
                 model=дом.model,
                 effort=дом.effort,
-                title=aside_title(spec, aside["task_id"]),
+                title=aside_title(spec, aside_scope_label(spec, aside)),
                 group=(task["group_path"] if task is not None else None)
                 or f"{GROUP_ROOT}/побочные",
                 idempotency_key=f"aside/{spec.name}/{aside_id}",
             )
         except AoeError as exc:
             self.db.event(
-                aside["task_id"], "aside_failed",
+                чья, "aside_failed",
                 {"aside": spec.name, "why": "переписка", "error": str(exc)[:300]},
             )
             return
@@ -344,7 +363,7 @@ class AsideMixin:
             self.aoe.prompt(session.id, self.aside_home_prompt(spec, task))
         except AoeError as exc:
             self.db.event(
-                aside["task_id"], "aside_failed",
+                чья, "aside_failed",
                 {"aside": spec.name, "why": "переписка", "error": str(exc)[:300]},
             )
             return
@@ -354,7 +373,7 @@ class AsideMixin:
                 (session.id, now(), aside_id),
             )
             self.db.event(
-                aside["task_id"], "aside_home",
+                чья, "aside_home",
                 {"aside": spec.name, "session": session.id},
             )
         self.aoe.set_notify(session.id, False)
@@ -857,16 +876,18 @@ class AsideMixin:
             # застопорит.
             severity = "log"
         with self.db.tx():
+            задача = run["task_id"] or aside["task_id"]
             note_id = self.db.note_add(
-                int(run["aside_id"]), run_id, aside["task_id"], severity, title, body, options
+                int(run["aside_id"]), run_id, задача, severity, title, body, options
             )
             self.db.event(
-                aside["task_id"],
+                задача,
                 "aside_note",
                 {"aside": aside["name"], "note": note_id, "severity": severity},
             )
-        if severity == "hold" and aside["task_id"]:
-            self.stop(aside["task_id"], "aside_hold", urgent=True)
+        задача = run["task_id"] or aside["task_id"]
+        if severity == "hold" and задача:
+            self.stop(задача, "aside_hold", urgent=True)
         return f"находка записана (N{note_id})"
 
     def aside_done(self, run_id: int, outcome: str | None = None, token: str = "") -> str:
@@ -876,7 +897,9 @@ class AsideMixin:
         with self.db.tx():
             self.db.aside_run_end(run_id, outcome or "done")
             self.db.event(
-                aside["task_id"], "aside_done", {"aside": aside["name"], "run": run_id}
+                run["task_id"] or aside["task_id"],
+                "aside_done",
+                {"aside": aside["name"], "run": run_id},
             )
         return "ход принят"
 

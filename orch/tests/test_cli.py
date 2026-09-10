@@ -189,6 +189,29 @@ def test_task_start_кладёт_заявку_на_ту_же_задачу(task, 
     assert request["stand"] is None and request["notify"] is None
 
 
+def test_ворота_из_среды_агента_отказывают(task, capsys, tmp_path, monkeypatch):
+    """Роль не решает за владельца: в сессии AoE `gate` и кнопки отказывают.
+
+    Находка Наладчика на T26 (2026-09-09): роль приняла пересказ требования
+    за согласие и сама вызвала `orch gate back`.
+    """
+    import orch.cli as mod
+
+    monkeypatch.setattr(mod, "INBOX", tmp_path / "inbox")
+    _fake_db(tmp_path, monkeypatch)
+    monkeypatch.setenv("AOE_ARTIFACT_DIR", "/tmp/агент")
+
+    code, text = run(["gate", "accept"], capsys)
+    assert code == 1 and "решение владельца, не роли" in text
+    code, text = run(["task", "move", "T1", "back", "--target", "one"], capsys)
+    assert code == 1 and "решение владельца, не роли" in text
+
+    # Запрет только на кнопки владельца: остальные команды роли работают.
+    monkeypatch.setattr(mod, "INBOX", tmp_path / "inbox")
+    code, text = run(["task", "new", "мелкая задача", "--chain", "smoke"], capsys)
+    assert code == 0 and "в бэклог" in text
+
+
 def _fake_db(tmp_path, monkeypatch, **fields):
     """База только на чтение: одна задача с нужным статусом."""
     import sqlite3

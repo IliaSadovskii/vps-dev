@@ -18,6 +18,18 @@ from orch.engine import Engine, Settings
 
 
 @pytest.fixture(autouse=True)
+def _не_из_среды_агента(monkeypatch):
+    """Тесты идут как из терминала владельца, а не изнутри сессии AoE.
+
+    `orch gate` и кнопки `orch task move` отказывают, когда видят
+    `AOE_ARTIFACT_DIR`: это решение владельца, а не роли. Прогон тестов
+    внутри сессии AoE (а он там и идёт, когда правят изнутри) подхватывал эту
+    переменную и валил четверо ворот.
+    """
+    monkeypatch.delenv("AOE_ARTIFACT_DIR", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _не_трогаем_живой_inbox(tmp_path_factory, monkeypatch):
     """Ни один тест не читает настоящий `~/.local/share/orch/inbox`.
 
