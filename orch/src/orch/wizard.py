@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .aoe import AoeError, Session
 from .chain import catalog, prompts_dir
-from .naming import group_of, wizard_group
+from .naming import group_for, group_of, wizard_group
 from .workspace import projects_on_disk
 
 
@@ -248,7 +248,7 @@ class WizardMixin:
                 continue
             self.aoe.set_group(
                 session.id,
-                task["group_path"] or group_of(task["project_path"], task_id, task["title"]),
+                group_for(task),
             )
             self.aoe.set_title(session.id, f"{task_id} · постановка")
             self.aoe.archive(session.id)

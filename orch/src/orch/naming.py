@@ -25,6 +25,18 @@ def group_of(project_path: str, task_id: str, title: str) -> str:
     return f"{project_name(project_path)}/{task_id} · {title}"
 
 
+def group_for(task) -> str:
+    """Группа задачи по её нынешнему проекту и заголовку.
+
+    Считается каждый раз, а не читается из колонки `group_path`: колонка
+    пишется при заведении задачи и с тех пор не меняется, поэтому задача,
+    у которой поправили проект или заголовок, годами висела бы в чужой
+    группе (T37 стояла в группе рабочей копии T26). Колонка остаётся тем,
+    что сейчас проставлено в AoE, — по ней движок видит расхождение.
+    """
+    return group_of(task["project_path"], task["id"], task["title"])
+
+
 def wizard_group(project_path: str) -> str:
     """Группа мастера: рядом с задачами своего проекта, а не в общей куче."""
     return f"{project_name(project_path)}/мастер"

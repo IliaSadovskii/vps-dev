@@ -15,7 +15,7 @@ from . import stand as stands
 from .aoe import AoeError
 from .chain import prompts_dir
 from .db import WAITING as ST_WAITING, epoch, now
-from .naming import group_of
+from .naming import group_for
 
 # Знак служебной сессии в сайдбаре: строки стенда стоят вперемешку со
 # строками шагов, и по знаку видно, что это обслуга задачи, а не её работа.
@@ -99,9 +99,7 @@ class StandMixin:
                 model="sonnet",
                 effort=None,
                 title=f"{STAND_ICON} {task['id']} · стенд",
-                group=task["group_path"] or group_of(
-                    task["project_path"], task["id"], task["title"]
-                ),
+                group=group_for(task),
                 # Ключ детерминированный: падение между созданием сессии и
                 # записью в базу не должно оставлять вторую сессию. Номер
                 # попытки в ключе — стенд можно поднимать заново после отказа.
@@ -196,9 +194,7 @@ class StandMixin:
                 model=self.settings.cheap_model,
                 effort=None,
                 title=f"{STAND_ICON} {task['id']} · уборка стенда",
-                group=task["group_path"] or group_of(
-                    task["project_path"], task["id"], task["title"]
-                ),
+                group=group_for(task),
                 idempotency_key=f"{task['id']}@{task['created_at']}/teardown",
             )
             self.aoe.apply_model(session.id, self.settings.cheap_model)

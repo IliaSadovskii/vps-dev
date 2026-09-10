@@ -21,7 +21,7 @@ from .aoe import RUNNING, STARTING, WAITING, Aoe, AoeError, Session
 from .asides import Aside, Wake
 from .chain import prompts_dir
 from .db import LIVE, STATE_DIR, now
-from .naming import GROUP_ROOT, slug
+from .naming import GROUP_ROOT, group_for, slug
 from .workspace import create_worktree
 
 
@@ -268,7 +268,7 @@ class AsideMixin:
                 model=wake.model,
                 effort=wake.effort,
                 title=титул,
-                group=(task["group_path"] if task is not None else None) or f"{GROUP_ROOT}/побочные",
+                group=group_for(task) if task is not None else f"{GROUP_ROOT}/побочные",
                 # Номер хода в ключе: повтор после умершей сессии должен
                 # завести новую, а не получить обратно мёртвую по старому
                 # ключу. Внутри одного хода ключ постоянен — за это
@@ -347,8 +347,7 @@ class AsideMixin:
                 model=дом.model,
                 effort=дом.effort,
                 title=aside_title(spec, aside_scope_label(spec, aside)),
-                group=(task["group_path"] if task is not None else None)
-                or f"{GROUP_ROOT}/побочные",
+                group=group_for(task) if task is not None else f"{GROUP_ROOT}/побочные",
                 idempotency_key=f"aside/{spec.name}/{aside_id}",
             )
         except AoeError as exc:

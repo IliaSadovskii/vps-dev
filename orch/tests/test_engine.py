@@ -916,6 +916,26 @@ def test_группа_задачи_начинается_с_имени_проек
     assert fake.rows[session_of(engine, task_id)]["group_path"] == task["group_path"]
 
 
+def test_группа_догоняет_смену_проекта(engine, fake, repo):
+    """Проект задачи поправили — группа и все её сессии переезжают следом.
+
+    Группа писалась в базу один раз, при заведении, и задача, заведённая с
+    неверным проектом, навсегда оставалась в чужой группе (T37 стояла в
+    группе рабочей копии T26).
+    """
+    monkey_chain(engine)
+    task_id = start(engine, repo)
+    sid = session_of(engine, task_id)
+    with engine.db.tx():
+        engine.db.bump(task_id, project_path="/tmp/другой-проект")
+
+    engine.reconcile()
+
+    task = engine.db.task(task_id)
+    assert task["group_path"] == f"другой-проект/{task_id} · {task['title']}"
+    assert fake.rows[sid]["group_path"] == task["group_path"]
+
+
 def test_заявка_из_бэклога_едет_под_своим_номером(engine, fake, repo):
     """Номер задачи не меняется от бэклога до PR.
 

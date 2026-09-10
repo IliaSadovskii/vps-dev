@@ -53,7 +53,7 @@ from .db import (
 from .aside_role import AsideMixin
 from .buttons import ButtonsMixin
 from .inbox import InboxMixin
-from .naming import group_of, session_title, slug, title_from
+from .naming import group_for, group_of, session_title, slug, title_from
 from .promptctx import PromptContextMixin, artifact_sha
 from .stand_role import StandMixin
 from .wizard import WizardMixin
@@ -156,7 +156,32 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
         self.pump_notify()
         self.archive_old()
 
+    def sync_group(self, task) -> None:
+        """Догнать группу задачи, если проект или заголовок поменялись.
+
+        Группу видно в сайдбаре, и она должна читаться как «проект/задача»
+        всегда, а не только в день заведения. Сессии, уже стоящие в старой
+        группе, переставляем разом: иначе прогон оказывается разорван на две
+        группы, и владелец ищет шаги в двух местах (T37, 2026-09-10).
+        """
+        want = group_for(task)
+        if task["group_path"] == want:
+            return
+        for row in self.db.conn.execute(
+            "SELECT DISTINCT session_id FROM run WHERE task_id = ? AND session_id IS NOT NULL",
+            (task["id"],),
+        ):
+            self.aoe.set_group(row["session_id"], want)
+        if task["wizard_session"]:
+            self.aoe.set_group(task["wizard_session"], want)
+        with self.db.tx():
+            self.db.bump(task["id"], group_path=want)
+            self.db.event(
+                task["id"], "group_renamed", {"from": task["group_path"], "to": want}
+            )
+
     def step_task(self, task, sessions: dict[str, Session]) -> None:
+        self.sync_group(task)
         if task["status"] == QUEUED:
             return
         if task["status"] == ST_WAITING:
@@ -749,9 +774,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
                 title=session_title(
                     task["id"], step.id, run["n"], step.context in ("own", "continue")
                 ),
-                group=task["group_path"] or group_of(
-                    task["project_path"], task["id"], task["title"]
-                ),
+                group=group_for(task),
                 idempotency_key=key,
             )
         except AoeError as exc:
@@ -1322,10 +1345,7 @@ class Engine(InboxMixin, WizardMixin, ButtonsMixin, StandMixin, AsideMixin, Prom
             session_id,
             session_title(task["id"], step.id, run_n, step.context in ("own", "continue")),
         )
-        self.aoe.set_group(
-            session_id,
-            task["group_path"] or group_of(task["project_path"], task["id"], task["title"]),
-        )
+        self.aoe.set_group(session_id, group_for(task))
         self.aoe.set_color(session_id, "amber")
         self.aoe.set_urgent(session_id, False)
         # Уведомление ставим щедро: шаг, который может встать хоть на каком-то
