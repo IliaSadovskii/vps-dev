@@ -97,11 +97,19 @@ shopt -u nullglob
 # по HTTP-пробе: проба капризна (медленный Laravel под нагрузкой таймаутит и
 # уезжает в «внутренние»), а образ детерминирован. Слушатели tailscaled на
 # tailnet-адресе сюда не попадают — берём только 127.0.0.1 из docker ps.
-declare -A PORT_IMAGE
-while IFS=$'\t' read -r image ports; do
-  while read -r hp; do [[ -n "$hp" ]] && PORT_IMAGE[$hp]="$image"; done \
-    < <(grep -oE '127\.0\.0\.1:8[0-9][0-9][0-9]' <<<"$ports" | grep -oE '8[0-9][0-9][0-9]')
-done < <(docker ps --format '{{.Image}}\t{{.Ports}}' 2>/dev/null)
+declare -A PORT_IMAGE PORT_OWNER PORT_SERVICE
+while IFS=$'\t' read -r image ports workdir service; do
+  # Хозяин порта мимо реестра: каталог проекта из лейбла compose. Проект,
+  # поднятый руками (`make up`), реестра не знает, но лейблы у него есть —
+  # без них карточка была бы просто «?», и владелец шёл бы разбираться в
+  # `docker ps` (разбор 8090-8099 листейта, 2026-09-10).
+  while read -r hp; do
+    [[ -n "$hp" ]] || continue
+    PORT_IMAGE[$hp]="$image"
+    [[ -n "$workdir" ]] && PORT_OWNER[$hp]="$(basename "$workdir")"
+    [[ -n "$service" ]] && PORT_SERVICE[$hp]="$service"
+  done < <(grep -oE '127\.0\.0\.1:8[0-9][0-9][0-9]' <<<"$ports" | grep -oE '8[0-9][0-9][0-9]')
+done < <(docker ps --format '{{.Image}}\t{{.Ports}}\t{{.Label "com.docker.compose.project.working_dir"}}\t{{.Label "com.docker.compose.service"}}' 2>/dev/null)
 # Службы самого хоста (aoe — systemd, не docker): всё, что слушает
 # 127.0.0.1:8xxx и не нашлось среди docker-портов. Образа у них нет, значит
 # по DB_RE они не отсеются и попадут в веб — именно это и нужно.
@@ -123,6 +131,11 @@ for p in $(printf '%s\n' "${!PORT_IMAGE[@]}" | sort -un); do
   if [[ -n "${INFRA_LABEL[$p]:-}" ]]; then group="инфраструктура"; name="${INFRA_LABEL[$p]}"; desc="${INFRA_DESC[$p]:-}"
   elif [[ -n "$proj" ]];              then group="${proj%-t[0-9]*}"; name="${label:-сервис}"; desc=""
                                            stand="${proj#"${proj%-t[0-9]*}"}"; stand="${stand#-}"
+  elif [[ -n "${PORT_OWNER[$p]:-}" ]]; then
+    # Чьё это, видно из лейблов, но блок не застолблён: держим карточку в
+    # «без реестра» — иначе непорядок растворился бы в секции проекта.
+    group="без реестра"; name="${PORT_OWNER[$p]} · ${PORT_SERVICE[$p]:-сервис}"
+    desc="блок не застолблён: ports claim ${PORT_OWNER[$p]}"
   else                                     group="без реестра";     name="?"; desc="порт не застолблён (ports claim)"
   fi
   if grep -qiE "$DB_RE" <<<"$img"; then
