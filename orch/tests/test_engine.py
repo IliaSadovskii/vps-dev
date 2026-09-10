@@ -973,6 +973,53 @@ def test_после_возврата_начисто_путь_задачи_нач
     assert engine.db.last_run_of_step(task_id, "one") is None
 
 
+def test_откат_на_шаг_стирает_всё_включая_ветку(engine, fake, repo):
+    """Откат = «задача пришла на этот шаг впервые».
+
+    Забываются все заходы шага (а не только последний круг), файл самого
+    шага тоже уходит в историю, сессии уезжают в архив, а коммиты ветки
+    возвращаются к состоянию перед первым заходом. Работа не пропадает:
+    остаётся ветка-запаска.
+    """
+    import subprocess
+
+    monkey_chain(engine)
+    task_id = start(engine, repo)
+    первая = session_of(engine, task_id)
+    ws = engine.workspace(engine.db.task(task_id))
+    было = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ws.root, capture_output=True, text=True
+    ).stdout.strip()
+
+    turn(engine, fake, task_id, "one", 1, None)     # шаг сходил, едем на two
+    (ws.root / "написанное-ролью.txt").write_text("код", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=ws.root, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "работа шага"],
+        cwd=ws.root, check=True,
+    )
+    (ws.artifacts / "one.md").write_text("мой файл", encoding="utf-8")
+
+    task = engine.db.task(task_id)
+    ответ = engine.button(task_id, task["revision"], "rewind", target="one")
+
+    assert "откат на one" in ответ
+    задача = engine.db.task(task_id)
+    assert задача["step"] == "one" and задача["status"] == RUNNING
+    assert not [r for r in engine.db.runs_of_step(task_id, "one") if not r["void_at"]]
+    assert not (ws.artifacts / "one.md").exists(), "файл шага остался на месте"
+    assert первая in fake.archived, "сессия забытого захода висит в сайдбаре"
+    стало = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ws.root, capture_output=True, text=True
+    ).stdout.strip()
+    assert стало == было, "коммиты шага остались в ветке"
+    ветки = subprocess.run(
+        ["git", "branch", "--list", "orch/*"], cwd=ws.root, capture_output=True, text=True
+    ).stdout
+    assert task_id.lower() in ветки, "запаски нет — работа потеряна безвозвратно"
+    assert engine.db.path_steps(task_id) == ["one"]
+
+
 def test_заявка_из_бэклога_едет_под_своим_номером(engine, fake, repo):
     """Номер задачи не меняется от бэклога до PR.
 

@@ -17,6 +17,7 @@ from .db import (
     WAITING as ST_WAITING,
     now,
 )
+from .workspace import git, git_try
 
 
 class ButtonsMixin:
@@ -50,6 +51,7 @@ class ButtonsMixin:
             "close": self._btn_close,
             "pause": self._btn_pause,
             "restart_step": self._btn_restart_step,
+            "rewind": self._btn_rewind,
         }.get(action)
         if handler is None:
             return f"неизвестное действие {action}"
@@ -229,6 +231,7 @@ class ButtonsMixin:
                     "runs": [int(r["id"]) for r in doomed],
                     "artifacts": moved,
                     "notes": снято,
+                    "after_move": self.db.last_move_id(task["id"]),
                 },
             )
         return {"runs": [int(r["id"]) for r in doomed], "artifacts": moved}
@@ -304,20 +307,125 @@ class ButtonsMixin:
             return "нечего начинать заново: шаг не назван"
         forgotten = self.forget_after(task, chain, step)
         with self.db.tx():
+            self.db.event(
+                task["id"], "button", {"action": "restart_step", "to": step}
+            )
             revision = self.db.bump(
                 task["id"], status=ST_RUNNING, step=step, wait_reason=None
             )
             self.db.move(
                 task["id"], task["step"], step, "human", "button", revision, comment=comment
             )
-            self.db.event(
-                task["id"], "button", {"action": "restart_step", "to": step}
-            )
         файлы = ", ".join(forgotten.get("artifacts") or []) or "нечего"
         return (
             f"шаг {step} начинается заново; забыто заходов "
             f"{len(forgotten.get('runs') or [])}, убрано в историю: {файлы}"
         )
+
+    def _btn_rewind(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
+        """Откатить задачу на любой шаг так, будто она туда пришла впервые.
+
+        «Начать шаг заново» переигрывает последний круг: заходы шага
+        забываются с последнего входа в него. Откат — сильнее: шаг и всё,
+        что было после, стирается целиком, включая первый заход и файл
+        самого шага. Роль приходит на чистое место, без памяти, без своего
+        прошлого файла и без пути, из которого видно, что она тут уже была.
+
+        Коммиты ветки тоже откатываются — до состояния перед первым заходом
+        шага. Работа не пропадает: перед сбросом ставится ветка-запаска
+        `orch/<задача>-<время>`, с неё всё поднимается.
+        """
+        step = target or task["step"]
+        if not step or not chain.has(step):
+            return f"откатить можно на: {', '.join(s.id for s in chain.steps)}"
+
+        runs = [r for r in self.db.runs_of_step(task["id"], step) if not r["void_at"]]
+        первый = runs[0] if runs else None
+        doomed = list(
+            self.db.conn.execute(
+                "SELECT * FROM run WHERE task_id = ? AND void_at IS NULL "
+                "AND id >= ? ORDER BY id",
+                (task["id"], int(первый["id"]) if первый else 0),
+            )
+        ) if первый else []
+
+        # Файлы: свои у шага тоже уходят — он приходит сюда впервые.
+        names: list[str] = []
+        for step_id in {r["step"] for r in doomed} | {step}:
+            try:
+                names += chain.step(step_id).artifact
+            except ChainError:
+                continue
+        tag = now().replace(":", "-")
+        moved: list[str] = []
+        if task["worktree_path"]:
+            moved = self.workspace(task).clear_artifacts(sorted(set(names)), tag)
+
+        запаска = self.rewind_git(task, первый, tag)
+
+        with self.db.tx():
+            for run in doomed:
+                self.db.void_run(int(run["id"]))
+            for note in self.db.notes(task_id=task["id"]):
+                if note["state"] in ("open", "sent"):
+                    self.db.note_state(
+                        int(note["id"]), "dropped", decided_at=now(), decision="откат"
+                    )
+            # Отметка «начисто» идёт раньше движения: по ней обрезается путь
+            # задачи, и движение на целевой шаг должно остаться по эту
+            # сторону границы.
+            self.db.event(
+                task["id"],
+                "cleared",
+                {
+                    "to": step,
+                    "runs": [int(r["id"]) for r in doomed],
+                    "artifacts": moved,
+                    "backup": запаска,
+                    "after_move": self.db.last_move_id(task["id"]),
+                },
+            )
+            revision = self.db.bump(
+                task["id"], status=ST_RUNNING, step=step, wait_reason=None
+            )
+            self.db.move(
+                task["id"], task["step"], step, "human", "button", revision, comment=comment
+            )
+        self.archive_runs([r["session_id"] for r in doomed])
+        хвост = f"; ветка откачена, запаска {запаска}" if запаска else ""
+        return (
+            f"откат на {step}: забыто заходов {len(doomed)}, "
+            f"убрано в историю: {', '.join(moved) or 'нечего'}{хвост}"
+        )
+
+    def rewind_git(self, task, первый, tag: str) -> str | None:
+        """Вернуть ветку к состоянию перед первым заходом шага.
+
+        Без этого откат врёт: файлы ролей стёрты, а код, который они успели
+        написать, остался в ветке, и следующая роль строит поверх работы,
+        которой по документам не было.
+        """
+        if not первый or not первый["start_sha"] or not task["worktree_path"]:
+            return None
+        root = task["worktree_path"]
+        head = git(root, "rev-parse", "HEAD")
+        if not head or head == первый["start_sha"]:
+            return None
+        запаска = f"orch/{task['id'].lower()}-{tag}"
+        code, out = git_try(root, "branch", запаска, head)
+        if code != 0:
+            self.db.event(task["id"], "rewind_failed", {"error": out[:300]})
+            return None
+        code, out = git_try(root, "reset", "--hard", первый["start_sha"])
+        if code != 0:
+            self.db.event(task["id"], "rewind_failed", {"error": out[:300]})
+            return запаска
+        return запаска
+
+    def archive_runs(self, session_ids: list) -> None:
+        """Сессии забытых заходов уезжают в архив: в сайдбаре их больше нет."""
+        for sid in {s for s in session_ids if s}:
+            self.aoe.archive(sid)
 
     def _btn_start(self, task, chain: Chain, target: str | None, comment: str | None) -> str:
         if task["status"] not in (BACKLOG, QUEUED):

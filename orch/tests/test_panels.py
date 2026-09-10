@@ -514,7 +514,12 @@ def test_решения_под_рукой_всегда(engine, fake, repo):
     pane = panels.task_pane(engine.db, engine.db.task(task_id), "s1", "http://x")
     решения = next(b for b in pane["blocks"] if b.get("title") == "Решения")
     методы = [a["method"] for a in решения["children"]]
-    assert методы == ["orch.pause", "orch.restart_step", "orch.close"]
+    assert методы[:2] == ["orch.pause", "orch.restart_step"]
+    assert методы[-1] == "orch.close"
+    откаты = [a for a in решения["children"] if a["method"] == "orch.rewind"]
+    assert [a["params"]["target"] for a in откаты] == ["one", "two", "three"], (
+        "откатить можно на любой шаг цепочки, а не только на разрешённые возвраты"
+    )
 
     task = engine.db.task(task_id)
     assert "на паузе" in engine.button(task_id, task["revision"], "pause")

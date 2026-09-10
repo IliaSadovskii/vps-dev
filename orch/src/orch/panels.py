@@ -955,6 +955,22 @@ def _always_row(task) -> dict:
                 },
             }
         )
+    # Откат на любой шаг цепочки, а не только на разрешённые ей возвраты:
+    # это ход владельца, и он вправе отменить всё до начала задачи.
+    chain = _chain(task)
+    for step in (chain.steps if chain else []):
+        actions.append(
+            {
+                "kind": "action",
+                "label": f"Откатить на {step.id} — начисто, с веткой",
+                "method": "orch.rewind",
+                "params": {
+                    "task": task["id"],
+                    "revision": task["revision"],
+                    "target": step.id,
+                },
+            }
+        )
     actions.append(
         {
             "kind": "action",

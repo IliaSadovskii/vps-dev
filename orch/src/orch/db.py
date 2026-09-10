@@ -490,6 +490,13 @@ class Db:
         return int(row["s"] or 0)
 
     # ── движения и журнал ────────────────────────────────────────────────
+    def last_move_id(self, task_id: str) -> int:
+        """Номер последнего движения задачи: граница для «начисто»."""
+        row = self.conn.execute(
+            "SELECT id FROM move WHERE task_id = ? ORDER BY id DESC LIMIT 1", (task_id,)
+        ).fetchone()
+        return int(row["id"]) if row else 0
+
     def move(
         self,
         task_id: str,
@@ -542,12 +549,20 @@ class Db:
         # уже было, и уходила исходом `ready` мимо ревью (T37, 2026-09-10).
         moves = list(reversed(self.moves(task_id, limit=40)))
         начисто = self.conn.execute(
-            "SELECT at FROM event WHERE task_id = ? AND kind = 'cleared' "
+            "SELECT payload FROM event WHERE task_id = ? AND kind = 'cleared' "
             "ORDER BY seq DESC LIMIT 1",
             (task_id,),
         ).fetchone()
         if начисто:
-            moves = [m for m in moves if m["at"] >= начисто["at"]]
+            # Граница — номер движения, а не время: движение на целевой шаг
+            # пишется в ту же секунду, и по времени его не отличить от тех,
+            # что были до отката.
+            try:
+                after = int(json.loads(начисто["payload"] or "{}").get("after_move") or 0)
+            except (ValueError, TypeError, json.JSONDecodeError):
+                after = 0
+            if after:
+                moves = [m for m in moves if int(m["id"]) > after]
         steps = [
             m["to_step"] for m in moves if m["to_step"] and m["to_step"] != "done"
         ]
