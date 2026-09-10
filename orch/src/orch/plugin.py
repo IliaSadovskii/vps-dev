@@ -15,7 +15,7 @@ import threading
 import time
 
 from . import panels
-from .aoe import BASE, Aoe
+from .aoe import BASE, Aoe, AoeError, route_of
 from .db import Db, EngineLock
 from .engine import Engine, Settings
 from .rpc import Rpc, RpcError, log
@@ -87,7 +87,16 @@ class Worker:
         session_id = params.get("session_id") or ""
         log(f"orch-plugin: кнопка {action} {json.dumps(params, ensure_ascii=False)[:300]}")
         if getattr(self, f"btn_{action}", None) is None:
+            # Кнопка нарисована, а обработчика нет — это дефект сборки, и
+            # владелец должен увидеть его сразу, а не по тому, что «ничего
+            # не происходит»: так кнопки были мертвы сутки, а тесты с
+            # поддельным AoE этого не ловят.
             log(f"orch-plugin: кнопки {action} нет")
+            self.notify(
+                "orch: кнопка не подключена",
+                f"у панели есть «{action}», а у воркера нет обработчика btn_{action}",
+                tone="danger",
+            )
             return
         self.pending.put((action, session_id, params))
         self.wake.set()
@@ -124,7 +133,10 @@ class Worker:
     def btn_again(self, session_id, params): self._move(params, "again")
     def btn_back(self, session_id, params): self._move(params, "back")
     def btn_back_clean(self, session_id, params): self._move(params, "back_clean")
-    def btn_start(self, session_id, params): self._move(params, "start")
+    # `start` кнопкой не нажимается: из бэклога задачу отпускает мастер
+    # (`orch task start`), из очереди она едет сама. Обработчик без кнопки —
+    # мёртвый код, и сверка `test_у_каждой_кнопки_панели_есть_обработчик` его
+    # не пропустит.
     def btn_close(self, session_id, params): self._move(params, "close")
     def btn_pause(self, session_id, params): self._move(params, "pause")
     def btn_restart_step(self, session_id, params): self._move(params, "restart_step")
@@ -442,7 +454,24 @@ class Worker:
 
     def _new_engine(self) -> Engine:
         settings = self._settings_object()
-        return Engine(Db(), Aoe(self.base_url), settings)
+        return Engine(Db(), Aoe(self.base_url, on_quiet_error=self.aoe_quiet_failed), settings)
+
+    def aoe_quiet_failed(self, exc: AoeError) -> None:
+        """AoE отверг оформление сессии: титул, цвет, архив, отмена хода.
+
+        Такие вызовы не роняют проход, и без этого сигнала неверный маршрут
+        жил бы незамеченным: `POST /archive` отвечал 405, сессии не
+        архивировались, и заметили это по заросшему сайдбару. Зовётся из
+        потока движка (внутри прохода), поэтому базу трогать можно.
+        """
+        log(f"orch-plugin: AoE отверг {exc}")
+        if self.engine is not None:
+            self.engine.db.event(
+                None,
+                "aoe_call_failed",
+                {"route": route_of(exc.path), "status": exc.status, "body": exc.body[:200]},
+            )
+        self.notify("orch: AoE отверг вызов", str(exc)[:200], tone="warn")
 
     # Как часто перерисовывать панели целиком, даже если ничего не менялось.
     # Хост иногда теряет состояние плагина (переподключение клиента), и тогда

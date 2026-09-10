@@ -8,11 +8,13 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,6 +52,16 @@ class AoeError(Exception):
             return json.loads(self.body).get("error", "")
         except (json.JSONDecodeError, AttributeError):
             return ""
+
+    @property
+    def transient(self) -> bool:
+        """Стоит ли повторить тот же вызов через пару секунд.
+
+        503 у AoE — «воркер поднимается» или «нет места под воркер»
+        (`worker_not_ready`, `worker_capacity_full` в `api/acp.rs`), обе
+        проходят сами. `session_transient` — то же у терминального `/send`.
+        """
+        return self.status == 503 or self.error_code == "session_transient"
 
 
 @dataclass
@@ -98,10 +110,28 @@ class Session:
         return entered > sent
 
 
+# Как часто напоминать об одном и том же отвергнутом оформлении: раз в час на
+# маршрут. Чаще — шум в журнале, реже — можно сутки не заметить.
+QUIET_REPORT_S = 3600.0
+
+
 class Aoe:
-    def __init__(self, base: str = BASE, timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        base: str = BASE,
+        timeout: float = 30.0,
+        on_quiet_error: Callable[[AoeError], None] | None = None,
+    ) -> None:
         self.base = base.rstrip("/")
         self.timeout = timeout
+        # Отказы «безвредных» вызовов (`_quiet`): маршрут → последняя ошибка.
+        # Они не роняют проход, но и молчать о них нельзя: `POST` на
+        # `/archive` отвечал 405 и не архивировал ничего сутками, а по
+        # журналу этого было не видно. Хук зовётся на первом отказе маршрута
+        # и дальше не чаще `QUIET_REPORT_S`.
+        self.quiet_failures: dict[str, AoeError] = {}
+        self._quiet_reported: dict[str, float] = {}
+        self.on_quiet_error = on_quiet_error
 
     # ── транспорт ────────────────────────────────────────────────────────
     def call(self, method: str, path: str, body: dict | None = None, timeout: float | None = None):
@@ -114,12 +144,20 @@ class Aoe:
         )
         try:
             with urllib.request.urlopen(req, timeout=timeout or self.timeout) as resp:
-                raw = resp.read().decode()
+                raw = resp.read().decode(errors="replace")
         except urllib.error.HTTPError as exc:
-            raise AoeError(exc.code, exc.read().decode(), path) from None
+            raise AoeError(exc.code, exc.read().decode(errors="replace"), path) from None
         except urllib.error.URLError as exc:
             raise AoeError(0, str(exc.reason), path) from None
-        return json.loads(raw) if raw.strip() else {}
+        except (TimeoutError, OSError, http.client.HTTPException) as exc:
+            # `urlopen` заворачивает в `URLError` только ошибки соединения;
+            # обрыв и таймаут уже на чтении ответа вылетают голыми — и мимо
+            # всех `except AoeError` выше по стеку, роняя весь проход.
+            raise AoeError(0, f"{type(exc).__name__}: {exc}", path) from None
+        try:
+            return json.loads(raw) if raw.strip() else {}
+        except json.JSONDecodeError as exc:
+            raise AoeError(0, f"ответ не JSON: {raw[:200]!r} ({exc})", path) from None
 
     # ── чтение ───────────────────────────────────────────────────────────
     def sessions(self) -> dict[str, Session]:
@@ -128,17 +166,19 @@ class Aoe:
         return {s["id"]: Session.of(s) for s in data.get("sessions", [])}
 
     def session(self, sid: str) -> Session | None:
-        """Одна сессия, включая заархивированную.
+        """Одна сессия, включая заархивированную; `None` — её точно нет.
 
         Маршрута `GET /api/sessions/{id}` в AoE нет — только `PATCH` и
         `DELETE`. Поэтому ищем в полном списке: без `state=live` он отдаёт и
         архив, а именно там оказывается сессия предыдущего шага, когда её
         успели убрать из живых.
+
+        Отказ AoE здесь не глотается, а поднимается: `None` для движка значит
+        «сессии нет», и по нему живая задача уходит в `abandoned`, а её
+        рабочая копия — под нож (`archive_old`). Один таймаут на этом вызове
+        стоил бы задачи; `AoeError` откладывает решение до следующего прохода.
         """
-        try:
-            data = self.call("GET", "/api/sessions")
-        except AoeError:
-            return None
+        data = self.call("GET", "/api/sessions")
         for raw in data.get("sessions", []):
             if raw.get("id") == sid:
                 return Session.of(raw)
@@ -209,7 +249,15 @@ class Aoe:
         return Session.of(self.call("POST", "/api/sessions?wait=ready", body, timeout=180))
 
     def prompt(self, sid: str, text: str, attempts: int = 3) -> dict:
-        """Отправить промпт. `session_transient` — сессия ещё не готова, ждём."""
+        """Отправить промпт; воркер ещё поднимается — подождать и повторить.
+
+        Транзиентный отказ у `/acp/prompt` — это **503 с текстом**
+        `worker_not_ready: …` или `worker_capacity_full` (`api/acp.rs`), а не
+        JSON `{"error": "session_transient"}`: тот отдаёт терминальный
+        маршрут `/send`. Повтор по коду `session_transient` не срабатывал ни
+        разу, и промпт в сессию, у которой воркер не успел подняться, сразу
+        ронял заход с `prompt_failed`.
+        """
         last: AoeError | None = None
         for attempt in range(attempts):
             try:
@@ -218,7 +266,7 @@ class Aoe:
                 )
             except AoeError as exc:
                 last = exc
-                if exc.error_code != "session_transient":
+                if not exc.transient:
                     raise
                 time.sleep(2 * (attempt + 1))
         raise last  # type: ignore[misc]
@@ -256,10 +304,7 @@ class Aoe:
         return found
 
     def cancel(self, sid: str) -> None:
-        try:
-            self.call("POST", f"/api/sessions/{sid}/acp/cancel", {})
-        except AoeError:
-            pass
+        self._quiet("POST", f"/api/sessions/{sid}/acp/cancel", {})
 
     def set_model(self, sid: str, model: str) -> bool:
         """Сменить модель живой сессии. Отказ — едем на прежней."""
@@ -408,26 +453,60 @@ class Aoe:
             return False
 
     def pending_question(self, sid: str) -> dict | None:
-        """Висящий вопрос роли: нонс и варианты, чтобы ответить автоматом."""
+        """Висящий вопрос роли: нонс и варианты, чтобы ответить автоматом.
+
+        Лента отдаёт `{"frames": [{"event": {...}}]}` — тот же ключ, что и у
+        `usage`; по выдуманному `events` вопрос не находился никогда. Вопрос
+        висит, пока не пришёл `ElicitationResolved` с тем же нонсом.
+        """
         try:
             data = self.call("GET", f"/api/sessions/{sid}/acp/replay?view=raw&limit=200")
         except AoeError:
             return None
-        events = data if isinstance(data, list) else data.get("events", [])
-        pending: dict | None = None
-        for ev in events:
-            blob = json.dumps(ev, ensure_ascii=False)
-            if "ElicitationRequested" in blob:
-                pending = ev
-            elif "ElicitationResolved" in blob:
-                pending = None
-        return pending
+        frames = data.get("frames") or [] if isinstance(data, dict) else data
+        pending: dict[str, dict] = {}
+        for frame in frames or []:
+            event = (frame.get("event") if isinstance(frame, dict) else None) or {}
+            asked = event.get("ElicitationRequested")
+            if isinstance(asked, dict):
+                question = asked.get("elicitation") or asked
+                pending[str(question.get("nonce", ""))] = question
+                continue
+            resolved = event.get("ElicitationResolved")
+            if isinstance(resolved, dict):
+                pending.pop(str(resolved.get("nonce", "")), None)
+        return next(reversed(pending.values()), None) if pending else None
 
     def _quiet(self, method: str, path: str, body: dict) -> None:
+        """Оформление: отказ не роняет проход, но и не пропадает без следа.
+
+        Ошибка запоминается по маршруту (без id сессии) и уходит в хук
+        `on_quiet_error` — на первом отказе, потом не чаще `QUIET_REPORT_S`.
+        Так неверный метод или снятый хостом маршрут виден в первые секунды,
+        а не когда сайдбар зарос неархивированными сессиями.
+        """
         try:
             self.call(method, path, body)
-        except AoeError:
-            pass
+        except AoeError as exc:
+            key = f"{method} {route_of(path)}"
+            self.quiet_failures[key] = exc
+            last = self._quiet_reported.get(key)
+            if last is not None and time.time() - last < QUIET_REPORT_S:
+                return
+            self._quiet_reported[key] = time.time()
+            if self.on_quiet_error is not None:
+                try:
+                    self.on_quiet_error(exc)
+                except Exception:  # noqa: BLE001 — хук не должен ронять оформление
+                    pass
+
+
+def route_of(path: str) -> str:
+    """Маршрут без id сессии: `/api/sessions/abc/archive` → `/api/sessions/{id}/archive`."""
+    parts = path.split("?", 1)[0].split("/")
+    if len(parts) > 3 and parts[1:3] == ["api", "sessions"] and parts[3]:
+        parts[3] = "{id}"
+    return "/".join(parts)
 
 
 def hooks_dir() -> Path:

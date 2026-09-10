@@ -82,3 +82,55 @@ def test_смена_настроек_и_состояние_не_трогают_�
     w.tick()
     assert not w.settings_dirty.is_set()
     assert any(m == "config.get" for m, _ in w.rpc.calls)
+
+
+def test_у_каждой_кнопки_панели_есть_обработчик_и_наоборот():
+    """Кнопки были мертвы сутки: панель звала метод, которого у воркера нет,
+    а тесты идут против поддельного AoE и клика хоста не видят. Сверка
+    источников — единственное, что ловит это без живого хоста."""
+    import inspect
+    import re
+
+    from orch import panels
+
+    source = inspect.getsource(panels)
+    в_панели = set(re.findall(r'"orch\.([a-z_]+)"', source))
+    # Кнопки остановок собираются как `f"orch.{action}"` по словарю причин.
+    в_панели |= {a for actions in panels.BUTTONS_BY_REASON.values() for a in actions}
+    assert {"accept", "again", "sheet_step", "note", "wizard"} <= в_панели, в_панели
+    у_воркера = {name[4:] for name in dir(Worker) if name.startswith("btn_")}
+    assert в_панели <= у_воркера, f"кнопки без обработчика: {sorted(в_панели - у_воркера)}"
+    assert у_воркера <= в_панели, f"обработчики без кнопки: {sorted(у_воркера - в_панели)}"
+
+
+def test_кнопка_без_обработчика_кричит_владельцу(tmp_path, repo):
+    """Раньше — строка в stderr воркера, которого никто не читает."""
+    w, fake = worker_with_engine(tmp_path, repo)
+    w.on_action("teleport", {"task": "T1"})
+    assert not w.drain_actions()
+    notices = [p for m, p in w.rpc.calls if m == "ui.notify"]
+    assert notices and notices[-1]["tone"] == "danger" and "teleport" in notices[-1]["body"]
+
+
+def test_отказ_aoe_на_оформлении_попадает_в_журнал_и_к_владельцу(tmp_path, repo):
+    from orch.aoe import AoeError
+
+    w, fake = worker_with_engine(tmp_path, repo)
+    w.aoe_quiet_failed(AoeError(405, "Method Not Allowed", "/api/sessions/abc/archive"))
+    событие = w.engine.db.events(limit=1)[0]
+    assert событие["kind"] == "aoe_call_failed"
+    assert "/api/sessions/{id}/archive" in событие["payload"] and "405" in событие["payload"]
+    notices = [p for m, p in w.rpc.calls if m == "ui.notify"]
+    assert notices and notices[-1]["tone"] == "warn"
+
+
+def test_движок_воркера_подписан_на_тихие_отказы(tmp_path, monkeypatch):
+    """Хук в клиенте ничего не стоит, если воркер его не подключил."""
+    import orch.plugin as mod
+
+    monkeypatch.setattr(mod, "Db", lambda: Db(tmp_path / "orch.db"))
+    w = Worker()
+    w.rpc = FakeRpc()
+    w.read_settings()
+    engine = w._new_engine()
+    assert engine.aoe.on_quiet_error == w.aoe_quiet_failed

@@ -23,12 +23,14 @@ import uuid
 from pathlib import Path
 
 from . import artifacts, signals
-from .aoe import hooks_dir
+from . import asides as aside_mod
+from .aoe import BASE as AOE_BASE, hooks_dir
 from .chain import (
     ChainError,
     catalog,
     chains_dir,
     load as load_chain,
+    missing_files as chain_gaps,
     names as chain_names,
     path_of as chain_path,
 )
@@ -689,6 +691,15 @@ def cmd_aside(args: argparse.Namespace) -> int:
         raise Refused("назовите свой ход: --id A17 (номер напечатан в промпте)")
     if not (args.pass_token or "").strip():
         raise Refused("нужен пропуск хода: --pass <из промпта>")
+    # Флаги одной команды у другой молча пропадали: `done --hold --title …`
+    # закрывал ход, а находки не оставлял, и роль считала, что сказала.
+    if args.action == "done" and (args.title or args.body or args.hold or args.option):
+        raise Refused(
+            "`orch aside done` только закрывает ход и находку не пишет: "
+            "сначала `orch aside note --title … [--hold] [--option …]`, потом `done`."
+        )
+    if args.action == "note" and args.outcome:
+        raise Refused("`--outcome` — это про `orch aside done`; у находки исхода нет.")
     request = {
         "id": uuid.uuid4().hex[:12],
         "kind": "aside",
@@ -830,11 +841,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         path = shutil.which(name, path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin")
         check(f"{name} в PATH демона", bool(path), path or "нет симлинка в /usr/local/bin")
     try:
-        with urllib.request.urlopen("http://127.0.0.1:8065/api/sessions?state=live", timeout=5) as r:
+        with urllib.request.urlopen(f"{AOE_BASE}/api/sessions?state=live", timeout=5) as r:
             live = len(json.loads(r.read().decode()).get("sessions", []))
-        check("демон AoE", True, f"живых сессий {live}")
+        check("демон AoE", True, f"{AOE_BASE}, живых сессий {live}")
     except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
-        check("демон AoE", False, str(exc))
+        check("демон AoE", False, f"{AOE_BASE}: {exc}")
     # Флаг «срочно» едет к хосту файлом в его каталоге — договорённость из
     # исходников AoE, не из документации. Проверяем, что каталог пишется.
     hooks = hooks_dir()
@@ -850,10 +861,23 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         path = chain_path(name)
         note = "правленая владельцем" if path.parent != chains_dir() else ""
         try:
-            load_chain(path)
-            check(f"цепочка {name}", True, note)
+            chain = load_chain(path)
         except ChainError as exc:
             check(f"цепочка {name}", False, str(exc))
+            continue
+        # Линтер файлов ролей не видит: без этой проверки роль без файла
+        # получала бы строку «файл не найден» вместо задания.
+        gaps = chain_gaps(chain)
+        check(f"цепочка {name}", not gaps, "; ".join(gaps) or note)
+    for name in aside_mod.names():
+        try:
+            spec = aside_mod.load_by_name(name)
+        except (ChainError, OSError) as exc:
+            check(f"роль {name}", False, str(exc))
+            continue
+        gaps = aside_mod.missing_files(spec)
+        state = "включена" if spec.enabled else "выключена"
+        check(f"роль {name}", not gaps, "; ".join(gaps) or state)
     return 0 if ok else 1
 
 
@@ -934,7 +958,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="решение владельца, сказанное словами в чате (только на воротах)",
     )
     p.add_argument("action", choices=["accept", "back", "again"])
-    p.add_argument("target", nargs="?", help="шаг для «back»")
+    p.add_argument(
+        "target", nargs="?",
+        help="шаг для «back»; для «accept» — исход, если роль его не назвала",
+    )
     p.add_argument(
         "--clean",
         action="store_true",

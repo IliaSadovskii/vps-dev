@@ -349,6 +349,29 @@ def catalog() -> list[dict]:
     return out
 
 
+def missing_files(chain: Chain) -> list[str]:
+    """Чего цепочке не хватает на диске: файлы ролей и общих правил.
+
+    В линтер это не входит нарочно: он гоняется на замороженных копиях и на
+    синтетических цепочках тестов, где ролей нет. А заводским файлам и
+    `orch doctor` проверка нужна: роль без файла получает вместо текста
+    строку «файл не найден» (`promptbuild._role`), ход идёт впустую, и по
+    журналу это не видно.
+    """
+    prompts = prompts_dir()
+    problems: list[str] = []
+    for name in chain.includes:
+        if not (prompts / f"{name}.md").exists():
+            problems.append(f"нет общего файла {name}.md")
+    for step in chain.steps:
+        if not (prompts / f"{step.prompt_file}.md").exists():
+            problems.append(f"шаг {step.id}: нет файла роли {step.prompt_file}.md")
+        for name in step.includes:
+            if not (prompts / f"{name}.md").exists():
+                problems.append(f"шаг {step.id}: нет общего файла {name}.md")
+    return problems
+
+
 def gates_on(after: bool | list[str], outcome: str | None) -> bool:
     """Ждать ли владельца: одно правило для цепочки и для листа автономии."""
     if isinstance(after, bool):

@@ -292,3 +292,25 @@ def test_владение_тестами_подключено_тем_же_шаг
     эталон = с_владением("deep")
     assert эталон, "в deep владение тестами не подключено ни одному шагу"
     assert с_владением(имя) == эталон
+
+
+def test_у_каждой_цепочки_есть_файлы_ролей_и_общих_правил():
+    """Роль без файла получает вместо задания строку «файл не найден»
+    (`promptbuild._role`), ход идёт впустую, и линтер этого не видит."""
+    from orch.chain import missing_files
+
+    for path in sorted(chains_dir().glob("*.yml")):
+        assert missing_files(load(path)) == [], path.name
+
+
+def test_проверка_файлов_видит_пропажу():
+    from orch.chain import missing_files
+
+    chain = parse(
+        "name: t\nincludes: [common-nope]\nsteps:\n  - id: a\n"
+        "    includes: [common-tоже-нет]\n    run: {agent: claude, model: s}\n    next: done\n"
+    )
+    gaps = missing_files(chain)
+    assert any("common-nope" in g for g in gaps)
+    assert any("role-a" in g for g in gaps)
+    assert any("common-tоже-нет" in g for g in gaps)
