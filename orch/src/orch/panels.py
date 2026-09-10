@@ -167,6 +167,8 @@ def home_pane(
     waiting = _sorted_waiting(db)
     backlog = db.tasks((BACKLOG,))
 
+    blocks.extend(_rejected_blocks(db))
+
     if waiting:
         blocks.append(
             {
@@ -309,6 +311,66 @@ def home_pane(
         "blocks": blocks,
         "footer": _footer(db, waiting),
     }
+
+
+def _rejected_blocks(db: Db) -> list[dict]:
+    """Заявки, которые движок не принял: иначе они исчезают молча.
+
+    Заявку заводят из терминала или ролью, и она разбирается на следующем
+    проходе — уже без того, кто её писал. Отказ («в цепочке conventions нет
+    пресета auto») уезжал в журнал без задачи, а владелец видел только, что
+    задачи нет, и не знал почему (прогон 2026-09-10).
+    """
+    свежие = [
+        e for e in db.events(None, limit=60)
+        if e["kind"] == "inbox_rejected" and not _rejection_seen(db, e)
+    ]
+    out = []
+    for event in свежие[:3]:
+        try:
+            payload = json.loads(event["payload"] or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        out.append(
+            {
+                "kind": "callout",
+                "tone": "warn",
+                "icon": "info",
+                "title": "Заявка не принята — задачи не будет",
+                "detail": (
+                    f"{payload.get('error', 'причина не записана')}\n\n"
+                    "Заведите заново, поправив то, на что ругается движок."
+                ),
+                "actions": [
+                    {
+                        "kind": "action",
+                        "label": "Понятно, убрать",
+                        "method": "orch.rejection_seen",
+                        "params": {"file": payload.get("file", "")},
+                    }
+                ],
+            }
+        )
+    return out
+
+
+def _rejection_seen(db: Db, event) -> bool:
+    """Владелец уже сказал «понятно» про эту заявку."""
+    try:
+        файл = json.loads(event["payload"] or "{}").get("file")
+    except json.JSONDecodeError:
+        return False
+    if not файл:
+        return True
+    for e in db.events(None, limit=60):
+        if e["kind"] != "rejection_seen":
+            continue
+        try:
+            if json.loads(e["payload"] or "{}").get("file") == файл:
+                return True
+        except json.JSONDecodeError:
+            continue
+    return False
 
 
 def _new_task_blocks(projects: list[str]) -> list[dict]:

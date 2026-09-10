@@ -10,6 +10,26 @@
 name: blueprint
 includes: [common-protocol, common-git-safety, common-knowledge-shape]
 
+# Листы автономии: см. `chains/quick.yml`. Короткой цепочке пресеты нужны не
+# меньше длинной — без них `--preset auto` отвергал заявку молча.
+presets:
+  default:
+    when: >-
+      как записано в шагах: вопросы автору чертежа и приёмка итога.
+      Выбор по умолчанию, когда нет причин иначе
+    set: {}
+
+  auto:
+    when: >-
+      участвую только в итоге: ни вопросов, ни ворот до готового чертежа
+    set: { "*.after": false, "*.ask": false, blueprint-check.after: true }
+
+  step-by-step:
+    when: >-
+      участвую на каждом шаге: ворота после каждого и вопросы разрешены
+    set: { "*.after": true, "*.ask": true }
+
+
 steps:
   - id: blueprint
     run: { agent: claude, model: "opus[1m]", effort: medium }

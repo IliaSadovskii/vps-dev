@@ -160,6 +160,16 @@ class Worker:
             db.bump(task["id"], human_sheet=json.dumps(sheet, ensure_ascii=False))
             db.event(task["id"], "sheet_edited", {"step": params["step"], **knobs})
 
+    def btn_rejection_seen(self, session_id, params) -> None:
+        """«Понятно, убрать» под непринятой заявкой: она уходит с обзора."""
+        if self.engine is None:
+            self.notify("orch", "движок ведёт другой процесс", tone="warn")
+            return
+        with self.engine.db.tx():
+            self.engine.db.event(
+                None, "rejection_seen", {"file": str(params.get("file") or "")}
+            )
+
     def btn_note(self, session_id, params) -> None:
         """Решение владельца под находкой побочной роли."""
         if self.engine is None:

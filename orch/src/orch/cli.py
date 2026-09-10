@@ -194,6 +194,10 @@ def cmd_task_new(args: argparse.Namespace) -> int:
     if not text:
         raise Refused("текст задачи пуст")
     check_text(text)
+    # Цепочку и пресет проверяем здесь, а не в движке: заявка разбирается
+    # следующим проходом, и отказ уезжал в журнал без задачи — тот, кто
+    # заводил, видел только, что задачи нет (прогон 2026-09-10).
+    _check_chain(args.chain, args.preset)
     sheet_edits = {}
     for item in args.after or []:
         key, _, value = item.partition("=")
@@ -229,6 +233,25 @@ def cmd_task_new(args: argparse.Namespace) -> int:
     where = "в очередь" if getattr(args, "start", False) else "в бэклог"
     print(f"заявка {where}: {path}")
     return 0
+
+
+def _check_chain(name: str | None, preset: str | None) -> None:
+    """Есть ли такая цепочка и такой пресет в ней. Отказ — сразу, в лицо."""
+    from .chain import ChainError, load, names, path_of
+
+    if not name:
+        return
+    if name not in names():
+        raise Refused(f"нет цепочки {name!r}; есть: {', '.join(names())}")
+    try:
+        chain = load(path_of(name))
+    except ChainError as exc:
+        raise Refused(str(exc)) from None
+    if preset and preset not in chain.presets:
+        raise Refused(
+            f"в цепочке {name} нет пресета {preset!r}; "
+            f"есть: {', '.join(sorted(chain.presets)) or '—'}"
+        )
 
 
 def cmd_task_start(args: argparse.Namespace) -> int:

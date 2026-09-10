@@ -560,6 +560,36 @@ def test_подпись_кнопки_зависит_от_остановки(engi
     assert [a["label"] for a in callout["actions"]] == ["Продолжить"]
 
 
+def test_непринятая_заявка_видна_владельцу(engine, fake, repo):
+    """Заявка, которую движок отверг, не должна исчезать молча.
+
+    Заявку заводят из терминала или ролью, разбирается она следующим
+    проходом — уже без того, кто её писал. Отказ уезжал в журнал без задачи,
+    и владелец видел только, что задачи нет (прогон 2026-09-10).
+    """
+    from orch import panels
+
+    with engine.db.tx():
+        engine.db.event(
+            None, "inbox_rejected",
+            {"file": "abc.json", "error": "в цепочке conventions нет пресета 'auto'"},
+        )
+
+    pane = panels.home_pane(engine.db, [str(repo)])
+    callout = next(
+        (b for b in pane["blocks"] if b.get("title") == "Заявка не принята — задачи не будет"),
+        None,
+    )
+    assert callout, "непринятая заявка не показана на обзоре"
+    assert "нет пресета" in callout["detail"], "причину отказа владелец не увидит"
+
+    # «Понятно, убрать» снимает её с обзора и не трогает остальные.
+    with engine.db.tx():
+        engine.db.event(None, "rejection_seen", {"file": "abc.json"})
+    pane = panels.home_pane(engine.db, [str(repo)])
+    assert not [b for b in pane["blocks"] if b.get("title", "").startswith("Заявка не принята")]
+
+
 def test_панель_закрытой_задачи_рисуется_без_ворот(engine, fake, repo):
     """Панель рисуется толчком: перестанешь обновлять — в сессии навсегда
     застынет кадр с кнопкой «Принять» у принятой задачи."""
