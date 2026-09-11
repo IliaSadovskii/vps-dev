@@ -52,7 +52,7 @@ done <<< "$rows"
 # значит он дрейфует молча. Второй образец — отдельная строка заботы.
 while IFS= read -r row; do
     concern=$(printf '%s' "$row" | awk -F'|' '{ gsub(/^ +| +$/, "", $2); print $2 }')
-    hidden=$(printf '%s' "$row" | awk -F'|' '{ print $4 }' | grep -oE '`[^`]*/[^`]*\.(php|vue|ts|js|sh|md)`' | head -1)
+    hidden=$(printf '%s' "$row" | awk -F'|' '{ print $4 }' | grep -oE '`[^`]*/[^`]*\.(php|vue|ts|js|sh|md)`' | head -1 || true)
     if [ -n "$hidden" ]; then
         echo "✖ каркас «$concern»: путь в колонке «Правило» — $hidden; второй образец — отдельная строка" >&2
         status=1
