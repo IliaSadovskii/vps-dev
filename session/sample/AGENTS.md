@@ -44,7 +44,7 @@
 | Права | `app/Domain/Bookings/Policies/BookingPolicy.php` | решает политика; кнопка скрыта по той же политике | `tests/Feature/Bookings/BookingPolicyTest.php` |
 | Пересечения и транзакции | `app/Domain/Bookings/Actions/SaveBooking.php` | пересечение слотов запрещает база, код переводит ошибку в текст | `tests/Feature/Bookings/OverlapTest.php` |
 | Время и пояс | `app/Domain/Shared/Values/Slot.php` | хранение в UTC, показ в поясе компании | `tests/Unit/SlotTest.php` |
-| Экспорт | — | решить при первой задаче с выгрузкой | — |
+| Экспорт | — | решить при первой задаче, которая потребует выгрузки | — |
 | Письма | `app/Domain/Bookings/Listeners/SendBookingCreated.php` | письмо — из события домена, не из контроллера | `tests/Feature/Bookings/NotificationTest.php` |
 
 Перед кодом, в предложении решения, назови задетые строки каркаса.
