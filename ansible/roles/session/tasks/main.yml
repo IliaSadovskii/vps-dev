@@ -1,0 +1,72 @@
+# Скиллы одной сессии: два каталога CLI — ссылки на session/skills
+# в клоне репозитория. См. defaults/main.yml — зачем так.
+
+- name: Есть ли session/skills в клоне
+  ansible.builtin.stat:
+    path: "{{ session_src }}/skills"
+  register: session_skills_dir
+
+- name: Клона нет — скиллы не подключаю
+  ansible.builtin.debug:
+    msg: "{{ session_src }}/skills не найден — ссылки на скиллы не ставлю. Клон репозитория появляется после роли pull."
+  when: not session_skills_dir.stat.exists
+
+- name: Ссылки на скиллы
+  when: session_skills_dir.stat.exists
+  block:
+
+    - name: Каталоги CLI, куда ведут ссылки  # noqa: risky-file-permissions
+      # Права не задаём: у существующих каталогов они свои.
+      ansible.builtin.file:
+        path: "/home/{{ session_user }}/{{ item.path | dirname }}"
+        state: directory
+        owner: "{{ session_user }}"
+        group: "{{ session_user }}"
+      loop: "{{ session_links }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Что сейчас на месте ссылок
+      ansible.builtin.stat:
+        path: "/home/{{ session_user }}/{{ item.path }}"
+      loop: "{{ session_links }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: session_present
+
+    - name: Обычный каталог на месте ссылки — отложить рядом
+      # Человек мог завести свои скиллы до этой роли. Не стираем.
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "-n"
+          - "/home/{{ session_user }}/{{ item.item.path }}"
+          - "/home/{{ session_user }}/{{ item.item.path }}.before-session"
+      loop: "{{ session_present.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when:
+        - item.stat.exists
+        - not item.stat.islnk
+      changed_when: true
+
+    - name: Ссылки на session/skills
+      ansible.builtin.file:
+        src: "{{ session_src }}/skills"
+        dest: "/home/{{ session_user }}/{{ item.path }}"
+        state: link
+        owner: "{{ session_user }}"
+        group: "{{ session_user }}"
+        force: true
+      loop: "{{ session_links }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Куда смотреть
+      ansible.builtin.debug:
+        msg: >-
+          Скиллы одной сессии: {{ session_src }}/skills, ссылки
+          {{ session_links | map(attribute='path') | join(', ') }}.
+          Образец пяти файлов: {{ session_src }}/sample.
+          {% set moved = session_present.results | selectattr('stat.exists') | rejectattr('stat.islnk') | map(attribute='item.path') | list %}
+          {% if moved %}Прежние каталоги отложены с суффиксом .before-session: {{ moved | join(', ') }}.{% endif %}
