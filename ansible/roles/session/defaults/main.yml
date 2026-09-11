@@ -1,0 +1,27 @@
+---
+# Скиллы разработки в одной сессии: три скилла и образец пяти файлов
+# проекта (session/ в этом репозитории, план — session/PLAN.md).
+#
+# Зачем. У каждого CLI агента есть каталог пользовательских скиллов:
+# Claude Code — ~/.claude/skills, Codex, Gemini и OpenCode — ~/.agents/skills.
+# Два каталога с одним содержимым разъедутся, поэтому оба — ссылки на
+# каталог в клоне репозитория на машине, как orch берёт свой код из
+# orch_src. Скилл ссылается на образец как ../sample/, значит рядом со
+# skills/ должен лежать sample/ — так и есть в session/.
+
+# Клон репозитория на машине; тот же путь, что у orch_src.
+session_src: /home/{{ base_deploy_user }}/projects/vps-dev/session
+
+# Кому принадлежат ссылки: пользователь, под которым запускаются агенты.
+session_user: "{{ base_deploy_user }}"
+
+# Каталоги скиллов CLI, пути от домашнего каталога. Подтверждено
+# документацией 2026-09-10: Claude читает только .claude/skills;
+# Codex, Gemini, OpenCode — .agents/skills (OpenCode ещё и .claude/skills).
+# Обычный каталог на этом месте роль не стирает — откладывает рядом
+# с суффиксом .before-session.
+session_links:
+  - name: Claude Code
+    path: .claude/skills
+  - name: Codex, Gemini, OpenCode
+    path: .agents/skills
