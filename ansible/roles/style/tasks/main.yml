@@ -29,7 +29,7 @@
     mode: '0755'
 
 - name: Справки по машине — по одной на тему
-  # Роль browser кладёт сюда же свою, browser.md.
+  # Роли browser и context7 кладут сюда же свои, browser.md и context7.md.
   ansible.builtin.template:
     src: "machine-{{ item }}.md.j2"
     dest: "{{ style_machine_dir }}/{{ item }}.md"

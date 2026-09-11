@@ -1,0 +1,141 @@
+# Справочник чужих библиотек для агентов. См. defaults/main.yml — зачем.
+
+- name: Есть ли уже npm
+  ansible.builtin.stat:
+    path: /usr/bin/npm
+  register: context7_npm_bin
+  check_mode: false
+  when: ansible_check_mode
+
+- name: Пакет посредника (Context7 MCP)
+  community.general.npm:
+    name: "{{ context7_mcp_package.rpartition('@')[0] }}"
+    version: "{{ context7_mcp_package.rpartition('@')[2] }}"
+    global: true
+    state: present
+  when: not (ansible_check_mode and not (context7_npm_bin.stat.exists | default(false)))
+
+# ═══ Настройка агентов ═══════════════════════════════════════════════
+#
+# Форма у каждого CLI своя, смысл один: инструмент с именем
+# {{ context7_mcp_name }} запускает посредника. Настройки на уровне
+# пользователя — справочник нужен в любом проекте.
+
+- name: Что уже прописано у Claude Code
+  ansible.builtin.command:
+    argv: [claude, mcp, list]
+  become: true
+  become_user: "{{ context7_user }}"
+  register: context7_claude_now
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Справочник в Claude Code
+  ansible.builtin.command:
+    argv: [claude, mcp, add, --scope, user, "{{ context7_mcp_name }}", --, "{{ context7_mcp_command }}"]
+  become: true
+  become_user: "{{ context7_user }}"
+  when: context7_mcp_name ~ ':' not in (context7_claude_now.stdout | default(''))
+  changed_when: true
+
+- name: Что уже прописано у Codex
+  ansible.builtin.command:
+    argv: [codex, mcp, list]
+  become: true
+  become_user: "{{ context7_user }}"
+  register: context7_codex_now
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Справочник в Codex
+  ansible.builtin.command:
+    argv: [codex, mcp, add, "{{ context7_mcp_name }}", --, "{{ context7_mcp_command }}"]
+  become: true
+  become_user: "{{ context7_user }}"
+  when: context7_mcp_name not in (context7_codex_now.stdout | default(''))
+  changed_when: true
+
+# Gemini и OpenCode настраиваются файлом: читаем, добавляем свой ключ
+# и пишем обратно, а не подменяем целиком — файлы их собственные.
+
+- name: Есть ли настройки Gemini
+  ansible.builtin.stat:
+    path: "/home/{{ context7_user }}/.gemini/settings.json"
+  register: context7_gemini_file
+
+- name: Прочитать настройки Gemini
+  ansible.builtin.slurp:
+    src: "/home/{{ context7_user }}/.gemini/settings.json"
+  register: context7_gemini_raw
+  when: context7_gemini_file.stat.exists
+
+- name: Настройки Gemini сейчас
+  ansible.builtin.set_fact:
+    context7_gemini_have: "{{ (context7_gemini_raw.content | b64decode | from_json) if context7_gemini_file.stat.exists else {} }}"
+    context7_gemini_entry:
+      command: "{{ context7_mcp_command }}"
+
+- name: Справочник в Gemini
+  ansible.builtin.copy:
+    dest: "/home/{{ context7_user }}/.gemini/settings.json"
+    owner: "{{ context7_user }}"
+    group: "{{ context7_user }}"
+    mode: '0644'
+    content: >-
+      {{ context7_gemini_have
+         | combine({'mcpServers': (context7_gemini_have.mcpServers | default({}))
+                    | combine({context7_mcp_name: context7_gemini_entry})})
+         | to_nice_json }}
+  when: (context7_gemini_have.mcpServers | default({})).get(context7_mcp_name) != context7_gemini_entry
+
+- name: Есть ли настройки OpenCode
+  ansible.builtin.stat:
+    path: "/home/{{ context7_user }}/.config/opencode/opencode.json"
+  register: context7_opencode_file
+
+- name: Прочитать настройки OpenCode
+  ansible.builtin.slurp:
+    src: "/home/{{ context7_user }}/.config/opencode/opencode.json"
+  register: context7_opencode_raw
+  when: context7_opencode_file.stat.exists
+
+- name: Настройки OpenCode сейчас
+  # У OpenCode команда одним списком и нужен признак «локальный»:
+  # форма другая, смысл тот же.
+  ansible.builtin.set_fact:
+    context7_opencode_have: "{{ (context7_opencode_raw.content | b64decode | from_json) if context7_opencode_file.stat.exists else {} }}"
+    context7_opencode_entry:
+      type: local
+      command: ["{{ context7_mcp_command }}"]
+      enabled: true
+
+- name: Справочник в OpenCode
+  ansible.builtin.copy:
+    dest: "/home/{{ context7_user }}/.config/opencode/opencode.json"
+    owner: "{{ context7_user }}"
+    group: "{{ context7_user }}"
+    mode: '0644'
+    content: >-
+      {{ context7_opencode_have
+         | combine({'mcp': (context7_opencode_have.mcp | default({}))
+                    | combine({context7_mcp_name: context7_opencode_entry})})
+         | to_nice_json }}
+  when: (context7_opencode_have.mcp | default({})).get(context7_mcp_name) != context7_opencode_entry
+
+# ═══ Что агенты об этом знают ════════════════════════════════════════
+
+- name: Справка про документацию библиотек
+  ansible.builtin.template:
+    src: help.md.j2
+    dest: "{{ context7_help_file }}"
+    owner: "{{ context7_user }}"
+    group: "{{ context7_user }}"
+    mode: '0644'
+
+- name: Куда смотреть
+  ansible.builtin.debug:
+    msg: >-
+      Справочник библиотек: инструмент «{{ context7_mcp_name }}» у Claude Code,
+      Codex, Gemini и OpenCode, посредник {{ context7_mcp_command }}.
