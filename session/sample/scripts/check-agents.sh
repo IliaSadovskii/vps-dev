@@ -48,11 +48,13 @@ while IFS= read -r row; do
     fi
 done <<< "$rows"
 
-# Путь в колонке «Правило» — спрятанный образец: сторож его не проверяет,
-# значит он дрейфует молча. Второй образец — отдельная строка заботы.
+# Путь к коду или класс в колонке «Правило» — спрятанный образец: сторож его
+# не проверяет, значит он дрейфует молча. Второй образец — отдельная строка
+# заботы. Ссылки на `docs/decisions/*` и `docs/rules/*` в «Правиле» законны.
 while IFS= read -r row; do
     concern=$(printf '%s' "$row" | awk -F'|' '{ gsub(/^ +| +$/, "", $2); print $2 }')
-    hidden=$(printf '%s' "$row" | awk -F'|' '{ print $4 }' | grep -oE '`[^`]*/[^`]*\.(php|vue|ts|js|sh|md)`' | head -1 || true)
+    hidden=$(printf '%s' "$row" | awk -F'|' '{ print $4 }' \
+        | grep -oE '`(app|resources|database|tests|scripts|routes|config)/[^`]*`|`App\\[A-Za-z\\]+`' | head -1 || true)
     if [ -n "$hidden" ]; then
         echo "✖ каркас «$concern»: путь в колонке «Правило» — $hidden; второй образец — отдельная строка" >&2
         status=1
