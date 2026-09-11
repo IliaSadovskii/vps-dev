@@ -67,7 +67,7 @@ Arch, Unit, Feature (настоящий PostgreSQL), Browser (Playwright) — е
 
 ## Git
 
-PR до 400 строк диффа; коммиты по-русски; форма PR из пяти заголовков;
+PR — один срез, числом строк не мерить; коммиты по-русски; форма PR из пяти заголовков;
 никогда: `reset --hard`, `checkout -- .`, `clean -fd`, `push --force`,
 `git add .`; агент не сливает PR.
 
