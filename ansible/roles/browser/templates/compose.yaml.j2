@@ -13,6 +13,12 @@
 #                         контейнера нет; изоляцию здесь даёт сам контейнер
 #   --disable-dev-shm-usage вместе с shm_size ниже: без этого Chromium
 #                         падает на страницах с картинками
+#   --enable-unsafe-swiftshader  --disable-gpu не убирает WebGL из
+#                         собственного UI нового headless-режима (попап
+#                         адресной строки, тулбар); без этого флага софтверный
+#                         фоллбэк на WebGL отключён, и браузер виснет и падает
+#                         сам на себе даже в одиночной сессии, без единой
+#                         открытой страницы с картинками
 name: vps-browser
 
 services:
@@ -37,6 +43,7 @@ services:
         --no-sandbox
         --disable-dev-shm-usage
         --disable-gpu
+        --enable-unsafe-swiftshader
         --remote-debugging-address={{ browser_cdp_host }}
         --remote-debugging-port={{ browser_cdp_port }}
         --user-data-dir=/home/pwuser/profile
