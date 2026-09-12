@@ -1,0 +1,24 @@
+# Управляется Ansible: roles/paseo/templates/paseo.service.j2
+[Unit]
+Description=Paseo — веб/мобильный клиент к CLI агентов
+After=network-online.target
+
+[Service]
+Type=simple
+# Тот же пользователь, что логинится в CLI агентов (roles/agents): paseo
+# находит claude/codex/opencode на его $PATH и их логин, без своей копии.
+User={{ base_deploy_user }}
+WorkingDirectory={{ base_projects_dir }}
+# Только loopback: в частную сеть отдаёт ports-web через общий прокси, как
+# и остальные службы машины (см. roles/aoe).
+#
+# Пароля нет — границу держит Tailscale, как у Dozzle, DbGate и aoe.
+# --hostnames — защита от DNS rebinding: без имени машины в tailnet демон
+# отверг бы запрос через прокси по чужому для него заголовку Host.
+ExecStart=/usr/bin/paseo start --listen 127.0.0.1:{{ paseo_port }} --home {{ paseo_home }} --web-ui --no-relay{% if paseo_tailnet_host | default('') | length > 0 %} --hostnames {{ paseo_tailnet_host }}{% endif %}
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

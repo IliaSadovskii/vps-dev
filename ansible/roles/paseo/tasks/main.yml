@@ -1,0 +1,91 @@
+# Paseo — веб/мобильный клиент к тем же CLI агентов, что и aoe: ставим
+# npm-пакетом, поднимаем демоном на хосте от того же пользователя. Он
+# находит claude/codex/opencode на $PATH и их логин сам (roles/agents),
+# досогласовывать нечего.
+
+- name: Есть ли уже npm
+  ansible.builtin.stat:
+    path: /usr/bin/npm
+  register: paseo_npm_bin
+  check_mode: false
+  when: ansible_check_mode
+
+- name: Пакет paseo {{ paseo_version }}
+  community.general.npm:
+    name: "@getpaseo/cli"
+    version: "{{ paseo_version }}"
+    global: true
+    state: present
+  when: not (ansible_check_mode and not (paseo_npm_bin.stat.exists | default(false)))
+  register: paseo_installed
+
+- name: Каталог состояния paseo
+  ansible.builtin.file:
+    path: "{{ paseo_home }}"
+    state: directory
+    owner: "{{ base_deploy_user }}"
+    group: "{{ base_deploy_user }}"
+    mode: '0700'
+
+- name: Узнать имя машины в частной сети
+  # Демон принимает запросы только с заголовком Host из своего списка
+  # (--hostnames, защита от DNS rebinding) — как и у aoe, имя в tailnet
+  # нужно передать явно.
+  ansible.builtin.shell:
+    cmd: set -o pipefail; tailscale status --json | jq -r '.Self.DNSName // empty' | sed 's/\.$//'
+    executable: /bin/bash
+  register: paseo_dnsname
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Предупредить, если частной сети нет
+  ansible.builtin.debug:
+    msg:
+      - "Машина не в частной сети — демон paseo поднимаю только на 127.0.0.1."
+      - "Подними Tailscale и прогони настройку заново: клиент станет доступен из сети."
+  when: paseo_dnsname.rc != 0 or (paseo_dnsname.stdout | trim | length == 0)
+
+- name: Запомнить имя
+  ansible.builtin.set_fact:
+    paseo_tailnet_host: "{{ paseo_dnsname.stdout | trim if paseo_dnsname.rc == 0 else '' }}"
+
+- name: Служба демона
+  ansible.builtin.template:
+    src: paseo.service.j2
+    dest: /etc/systemd/system/paseo.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: paseo_unit
+
+# Намеренно не обработчик: службу поднимает следующая задача, обработчик опоздал бы.
+- name: Перечитать systemd, если юнит изменился  # noqa: no-handler
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: paseo_unit.changed
+
+- name: Есть ли уже юнит демона
+  # Сухой прогон файл юнита не создаёт, а systemd не умеет включать то,
+  # чего нет. На настроенной машине юнит на месте.
+  ansible.builtin.stat:
+    path: /etc/systemd/system/paseo.service
+  register: paseo_unit_exists
+  check_mode: false
+  when: ansible_check_mode
+
+- name: Демон включён и работает
+  # restarted — если сменился пакет или юнит, иначе просто started: рестарт
+  # ради рестарта на каждом прогоне оборвал бы текущие сессии агентов.
+  ansible.builtin.systemd:
+    name: paseo
+    enabled: true
+    state: "{{ 'restarted' if (paseo_installed.changed | default(false) or paseo_unit.changed) else 'started' }}"
+  when: not (ansible_check_mode and not (paseo_unit_exists.stat.exists | default(false)))
+
+- name: Куда смотреть
+  ansible.builtin.debug:
+    msg: >-
+      Paseo: https://{{ paseo_tailnet_host | default('<машина>.ts.net', true) }}:{{ paseo_port }}
+      — только из частной сети, второй вкладкой рядом с aoe. Пароля нет:
+      границу держит Tailscale, как и у остальных служб машины.
