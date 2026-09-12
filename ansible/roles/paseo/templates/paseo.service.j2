@@ -15,7 +15,13 @@ WorkingDirectory={{ base_projects_dir }}
 # Пароля нет — границу держит Tailscale, как у Dozzle, DbGate и aoe.
 # --hostnames — защита от DNS rebinding: без имени машины в tailnet демон
 # отверг бы запрос через прокси по чужому для него заголовку Host.
-ExecStart=/usr/bin/paseo start --listen 127.0.0.1:{{ paseo_port }} --home {{ paseo_home }} --web-ui --no-relay{% if paseo_tailnet_host | default('') | length > 0 %} --hostnames {{ paseo_tailnet_host }}{% endif %}
+#
+# --foreground обязателен: без него `paseo start` форкает воркера в фон
+# и сам выходит с кодом 0 — systemd (Type=simple) читает это как «служба
+# остановилась» и убивает всю cgroup вместе с только что запущенным
+# воркером (проверено: без флага служба висела «inactive (dead)», а
+# демон оставался жить осиротевшим считанные секунды до убийства).
+ExecStart=/usr/bin/paseo start --listen 127.0.0.1:{{ paseo_port }} --home {{ paseo_home }} --web-ui --no-relay --foreground{% if paseo_tailnet_host | default('') | length > 0 %} --hostnames {{ paseo_tailnet_host }}{% endif %}
 
 Restart=on-failure
 RestartSec=5

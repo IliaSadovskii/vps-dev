@@ -8,9 +8,11 @@
 paseo_version: "0.8.0"
 
 # Порт — из общего реестра инфраструктурных портов машины (см. README
-# vps-dev и roles/ports/files/ports): 8073, между обновлениями (8072) и
-# herdr (8074).
-paseo_port: 8073
+# vps-dev и roles/ports/files/ports): 8075, первый живой свободный после
+# herdr (8074) — 8073 в RESERVED_NOTE выглядел свободным, но занят
+# orch-chains, который в заметке не упомянут (проверено `ss -ltnp`, не
+# только чтением заметки).
+paseo_port: 8075
 
 # Каталог состояния демона: конфиг, ключи пары устройств, реестр агентов.
 paseo_home: "/home/{{ base_deploy_user }}/.paseo"
