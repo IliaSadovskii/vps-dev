@@ -410,6 +410,7 @@ cat <<HEAD
     десять карточек 3×N вытесняли со страницы всё остальное. Строка — тот же
     прямоугольник во всю ширину, попасть пальцем не сложнее. */
  .rows{display:flex;flex-direction:column;gap:.3rem}
+ .rows[hidden]{display:none}
  .stand{margin:.9rem 0 .35rem;font-size:.72rem;letter-spacing:.04em;text-transform:uppercase;opacity:.5}
  .stand:first-child{margin-top:0}
  .row{display:flex;align-items:center;gap:.6rem;padding:.5rem .7rem;border-radius:10px;
