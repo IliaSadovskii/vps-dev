@@ -179,7 +179,7 @@ rows+="$(printf '%s\x1f%s\x1f%s\x1f%s\x1f%s' "$DASH_PORT" "инфраструк�
 # остаются скрытыми, пока человек не добавит их в настройках вкладки.
 declare -A PROJECT_ACTIVE
 while IFS=$'\x1f' read -r p group name desc web stand; do
-  [[ -n "${PROJECT_PATH[$group]:-}" ]] && PROJECT_ACTIVE[$group]=1
+  [[ -n "$group" && -n "${PROJECT_PATH[$group]:-}" ]] && PROJECT_ACTIVE[$group]=1
 done <<<"$rows"
 
 [[ -n "${DEBUG:-}" ]] && { echo "=== ROWS ===" >&2; printf '%s' "$rows" >&2; }
