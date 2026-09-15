@@ -153,7 +153,7 @@ def render(text, note=None, saved=False, error=None):
     stamp = f"сохранён {esc(human_ago(when))}" if when else "файла нет"
     return f"""<!doctype html><html lang="ru"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Общий промпт для всех агентов</title>
+<title>Настройки — общий промпт</title>
 <style>
  /* Тот же язык, что у дашборда (:8062) и лимитов (:8070): цвет темы из
     системной, страница самодостаточна — без внешних запросов. */
@@ -182,9 +182,30 @@ def render(text, note=None, saved=False, error=None):
  li.bad .hint{{opacity:.85;color:#dc2626}}
  code{{font:12.5px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;opacity:.8}}
  .note{{opacity:.6;font-size:.85rem;margin-top:1rem}}
+ /* Вкладки: эта страница и «Обновления» — одна шестерёнка настроек на
+    дашборде, две страницы на соседних портах, оформленные как вкладки одного
+    целого. Ссылка получает порт через JS — сама страница не знает, под каким
+    именем/адресом её открыли (localhost, tailnet-имя, IP — неважно). */
+ .tabs{{display:flex;gap:.4rem;margin:0 0 1.25rem}}
+ .tabs a{{font-size:.85rem;font-weight:600;padding:.4rem .9rem;border-radius:10px;text-decoration:none;
+   color:inherit;border:1px solid var(--line);opacity:.6}}
+ .tabs a:hover{{opacity:1}}
+ .tabs a.on{{opacity:1;border-color:color-mix(in srgb,var(--accent) 55%,transparent);
+   background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent)}}
+ .back{{display:inline-block;font-size:.85rem;margin:0 0 1rem;text-decoration:none;opacity:.6}}
+ .back:hover{{opacity:1}}
  @media(prefers-color-scheme:dark){{:root{{--accent:#7aa7ff}} li.bad .hint,.flash.bad{{color:#f87171}}}}
 </style></head><body>
-<h1>Общий промпт для всех агентов</h1>
+<a class="back" data-home href="#">← Сервисы VPS</a>
+<h1>Настройки</h1>
+<nav class="tabs">
+<a class="tab on" data-port="8071" href="#">🗣️ Общий промпт</a>
+<a class="tab" data-port="8072" href="#">⬆️ Обновления</a>
+</nav>
+<script>
+document.querySelectorAll('.tab').forEach(function(a){{a.href=location.protocol+'//'+location.hostname+':'+a.dataset.port+'/';}});
+document.querySelectorAll('[data-home]').forEach(function(a){{a.href=location.protocol+'//'+location.hostname+':8062/';}});
+</script>
 <div class="sub">один текст, который Claude Code, Codex, Gemini и OpenCode читают перед любым разговором в любом проекте:
 как отвечать владельцу, а дальше всё, что должно быть верно везде · {stamp}</div>
 {flash}
