@@ -433,17 +433,18 @@ cat <<HEAD
     background:color-mix(in srgb,var(--accent) 7%,transparent);border-radius:9px;padding:.35rem .55rem;cursor:pointer}
  .bookmark-toggle{font-size:.8rem;white-space:nowrap}
  .bookmark-toggle:hover,.bookmark-action:hover{background:color-mix(in srgb,var(--accent) 16%,transparent)}
- .bookmark-panel{margin-top:.15rem;padding:.7rem;border:1px solid color-mix(in srgb,var(--accent) 28%,var(--line));
-    border-radius:12px;background:color-mix(in srgb,var(--accent) 4%,transparent)}
+ .bookmark-panel{margin-top:.15rem;padding:0;border:0;background:none}
  .bookmark-panel[hidden]{display:none}
- .bookmark-panel-head{display:flex;align-items:center;justify-content:space-between;margin:0 0 .5rem}
+ .bookmark-panel-head{display:flex;align-items:center;justify-content:space-between;margin:0 0 .5rem;padding:0 .1rem}
  .bookmark-panel-head strong{font-size:.82rem}
  .bookmark-add{font:inherit;font-size:1.2rem;line-height:1;padding:.12rem .45rem;border:1px solid color-mix(in srgb,var(--accent) 35%,var(--line));border-radius:8px;background:transparent;color:inherit;cursor:pointer}
  .bookmark-add:hover{background:color-mix(in srgb,var(--accent) 16%,transparent)}
  .bookmark-groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem 1rem}
  @media(max-width:560px){.bookmark-groups{grid-template-columns:1fr;gap:.5rem}}
  .bookmark-tag{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;opacity:.55;margin:0 0 .28rem}
- .bookmark-line{display:flex;align-items:center;gap:.35rem;padding:.42rem .45rem;border:1px solid color-mix(in srgb,var(--accent) 16%,var(--line));border-radius:9px;background:color-mix(in srgb,var(--accent) 3%,transparent)}
+ .bookmark-line{display:flex;align-items:center;gap:.6rem;padding:.5rem .7rem;border:1px solid color-mix(in srgb,var(--accent) 20%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--accent) 4%,transparent)}
+ .bookmark-line::before{content:"↗";font-size:1rem;line-height:1;color:var(--accent);flex:none}
+ .bookmark-line:hover{border-color:color-mix(in srgb,var(--accent) 60%,transparent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
  .bookmark-link{display:flex;flex-direction:column;align-items:flex-start;gap:.05rem;min-width:0;flex:1 1 auto;color:var(--accent);text-decoration:none}
  .bookmark-link span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
  .bookmark-host{font-size:.72rem;opacity:.55;color:inherit}
