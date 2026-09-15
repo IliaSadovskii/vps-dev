@@ -648,6 +648,7 @@ cat <<'BOOKMARKS_SCRIPT'
     return payload;
   };
   const selectTab = (name) => {
+    sessionStorage.setItem('vps-dev-dashboard-tab', name);
     document.querySelectorAll('.tab').forEach((button) => {
       const selected = button.dataset.tab === name;
       button.setAttribute('aria-selected', String(selected));
@@ -821,6 +822,7 @@ cat <<'BOOKMARKS_SCRIPT'
   document.querySelectorAll('.tab').forEach((button) => {
     button.addEventListener('click', () => selectTab(button.dataset.tab));
   });
+  selectTab(sessionStorage.getItem('vps-dev-dashboard-tab') === 'projects' ? 'projects' : 'infra');
   const projectConfigToggle = document.querySelector('#project-config-toggle');
   if (projectConfigToggle) projectConfigToggle.addEventListener('click', () => {
     selectTab('projects');
