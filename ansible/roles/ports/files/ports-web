@@ -24,6 +24,7 @@ set -uo pipefail
 
 PORTS_DIR="${PORTS_DIR:-/var/lib/vps-dev/ports}"
 STATE_DIR="${STATE_DIR:-/var/lib/vps-dev/ports-web}"
+PROJECTS_DIR="${PROJECTS_DIR:-/projects}"
 DASH_PORT=8062
 PROXY_NAME="${PROXY_NAME:-vps-proxy}"
 PROXY_DIR="${PROXY_DIR:-/var/lib/vps-dev/vps-proxy}"
@@ -37,7 +38,7 @@ dnsname="$(tailscale status --json 2>/dev/null | grep -m1 '"DNSName"' | cut -d'"
 # --- инфра-сервисы (не в реестре проектов) ---
 declare -A INFRA_LABEL=( [8060]="Dozzle" [8061]="DbGate" [$DASH_PORT]="Дашборд" [8063]="VS Code" [8065]="Agent of Empires"
                          [8066]="Терминал" [8068]="Мониторинг" [8069]="Почта" [8070]="Лимиты"
-                         [8071]="Общий промпт" [8072]="Обновления" [8073]="Цепочки orch" [8075]="Paseo" )
+                         [8071]="Общий промпт" [8072]="Обновления" [8073]="Цепочки orch" [8074]="Закладки проектов" [8075]="Paseo" )
 # $DASH_PORT остаётся в трёх массивах ниже (карточки самого дашборда), хотя
 # своей карточки в сетке он не получает (см. INFRA_NOCARD) — так строка
 # "rows" для него собирается тем же путём, что и для остальной инфры, без
@@ -52,12 +53,13 @@ declare -A INFRA_DESC=( [8060]="журналы контейнеров, толь�
                         [8071]="что все агенты знают до первого слова: как отвечать и что есть на машине"
                         [8072]="что стоит и что вышло у служб машины, обновление кнопкой"
                         [8073]="настройка цепочек оркестратора, открывается шестерёнкой на карточке AoE"
+                        [8074]="API закладок на дашборде"
                         [8075]="второй клиент к тем же CLI агентов, что и AoE: веб и телефон" )
 # Значок службы на дашборде. Юникод, а не файлы значков: страница остаётся
 # одним самодостаточным файлом без внешних запросов.
 declare -A INFRA_ICON=( [8060]="📜" [8061]="🗃️" [$DASH_PORT]="🧭" [8063]="💻" [8065]="💬"
                         [8066]="⌨️" [8068]="📊" [8069]="✉️" [8070]="⏳" [8071]="🗣️" [8072]="⬆️"
-                        [8073]="⚙️" [8075]="📲" )
+                        [8073]="⚙️" [8074]="☆" [8075]="📲" )
 # Страница настройки чужой карточки: наружу отдаётся (иначе шестерёнка вела бы
 # в никуда), но своей карточки не получает — на дашборде это шестерёнка в углу
 # той службы, которую страница настраивает.
@@ -66,7 +68,7 @@ declare -A INFRA_GEAR=( [8065]=8073 )
 # нужна), Цепочки orch (своя шестерёнка на карточке AoE) и Общий промпт с
 # Обновлениями — эти двое теперь одна шестерёнка в углу страницы, две
 # вкладки внутри (см. блок $corner_gear ниже).
-declare -A INFRA_NOCARD=( [8073]=1 [8071]=1 [8072]=1 [$DASH_PORT]=1 )
+declare -A INFRA_NOCARD=( [8073]=1 [8071]=1 [8072]=1 [8074]=1 [$DASH_PORT]=1 )
 # Куда ведёт ссылка, если не в корень службы. Сейчас пусто — File Browser
 # был единственным, кому нужен был путь глубже корня.
 declare -A INFRA_PATH=()
@@ -100,6 +102,19 @@ for f in "$PORTS_DIR"/*.env; do
   done < "$f"
 done
 shopt -u nullglob
+
+# Карточка проекта не должна зависеть от docker ps: корень репозитория в
+# /projects остаётся местом его закладок, даже когда все контейнеры выключены.
+# Worktree задач не пролезает сюда — у него .git файл, а не каталог.
+declare -A PROJECT_PATH
+if [[ -d "$PROJECTS_DIR" ]]; then
+  shopt -s nullglob
+  for project_dir in "$PROJECTS_DIR"/*; do
+    [[ -d "$project_dir" && -d "$project_dir/.git" ]] || continue
+    PROJECT_PATH["$(basename "$project_dir")"]="$project_dir"
+  done
+  shopt -u nullglob
+fi
 
 # --- живые сервисы: docker-порты на 127.0.0.1 → образ контейнера -------------
 # Веб или внутренний решаем по ОБРАЗУ (postgres/mysql/redis… → внутренний), а не
@@ -159,6 +174,13 @@ for p in $(printf '%s\n' "${!PORT_IMAGE[@]}" | sort -un); do
 done
 # дашборд не docker-порт (его отдаёт tailscaled) — добавляем строку явно
 rows+="$(printf '%s\x1f%s\x1f%s\x1f%s\x1f%s' "$DASH_PORT" "инфраструктура" "${INFRA_LABEL[$DASH_PORT]}" "${INFRA_DESC[$DASH_PORT]}" 1)"$'\n'
+
+# Активный контейнер сам показывает проект; остальные каталоги /projects
+# остаются скрытыми, пока человек не добавит их в настройках вкладки.
+declare -A PROJECT_ACTIVE
+while IFS=$'\x1f' read -r p group name desc web stand; do
+  [[ -n "${PROJECT_PATH[$group]:-}" ]] && PROJECT_ACTIVE[$group]=1
+done <<<"$rows"
 
 [[ -n "${DEBUG:-}" ]] && { echo "=== ROWS ===" >&2; printf '%s' "$rows" >&2; }
 
@@ -402,6 +424,33 @@ cat <<HEAD
  .row .port{font-variant-numeric:tabular-nums;opacity:.45;font-size:.78rem;flex:none}
  .row.int{opacity:.55;border-style:dashed;background:none}
  @media(max-width:430px){.row .desc{display:none}}
+ /* Заголовок проекта остаётся, когда контейнеров нет; рядом — спойлер его
+    закладок. Кнопка широкая ровно настолько, чтобы на неё попасть пальцем. */
+ .projecthead{display:flex;align-items:center;justify-content:space-between;gap:.6rem;margin:0 0 .75rem}
+ .projecthead h2{margin:0}
+ .bookmark-toggle,.bookmark-action{font:inherit;color:inherit;border:1px solid color-mix(in srgb,var(--accent) 35%,var(--line));
+    background:color-mix(in srgb,var(--accent) 7%,transparent);border-radius:9px;padding:.35rem .55rem;cursor:pointer}
+ .bookmark-toggle{font-size:.8rem;white-space:nowrap}
+ .bookmark-toggle:hover,.bookmark-action:hover{background:color-mix(in srgb,var(--accent) 16%,transparent)}
+ .bookmark-panel{margin-top:.55rem;padding:.75rem;border:1px solid color-mix(in srgb,var(--accent) 28%,var(--line));
+    border-radius:12px;background:color-mix(in srgb,var(--accent) 4%,transparent)}
+ .bookmark-panel[hidden]{display:none}
+ .bookmark-groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem 1rem}
+ @media(max-width:560px){.bookmark-groups{grid-template-columns:1fr}}
+ .bookmark-tag{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;opacity:.55;margin:0 0 .28rem}
+ .bookmark-line{display:flex;align-items:center;gap:.35rem}
+ .bookmark-link{display:flex;align-items:center;gap:.35rem;min-width:0;flex:1 1 auto;padding:.2rem 0;color:var(--accent);text-decoration:none}
+ .bookmark-link span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ .bookmark-host{font-size:.75rem;opacity:.5;color:inherit}
+ .bookmark-tools{display:flex;gap:.2rem;margin-left:auto}
+ .bookmark-tools button{font:inherit;font-size:.75rem;padding:.1rem .3rem;border:0;border-radius:6px;background:transparent;color:inherit;opacity:.5;cursor:pointer}
+ .bookmark-tools button:hover{opacity:1;background:color-mix(in srgb,var(--accent) 16%,transparent)}
+ .bookmark-form{display:grid;grid-template-columns:1fr 1.4fr .8fr auto auto;gap:.4rem;margin-top:.8rem}
+ .bookmark-form input{min-width:0;font:inherit;padding:.35rem .45rem;border:1px solid var(--line);border-radius:8px;background:Canvas;color:CanvasText}
+ .bookmark-form .bookmark-action{white-space:nowrap}
+ .bookmark-status{grid-column:1/-1;min-height:1.2em;margin:.05rem 0 0;font-size:.8rem;opacity:.65}
+ .empty-project{margin:.1rem 0 0;font-size:.82rem;opacity:.55}
+ @media(max-width:700px){.bookmark-form{grid-template-columns:1fr 1fr}.bookmark-form input:nth-child(3){grid-column:1/2}}
  .infra{--accent:#2563eb}
  .proj{--accent:#0d9488}
  .nores{--accent:#f59e0b}
@@ -416,11 +465,29 @@ cat <<HEAD
  .topgear{font-size:1.3rem;line-height:1;text-decoration:none;color:inherit;opacity:.5;
           padding:.4rem .55rem;border-radius:10px;flex:none}
  .topgear:hover{opacity:1;background:color-mix(in srgb,var(--accent,currentColor) 14%,transparent)}
+ .tabs{display:flex;gap:.4rem;margin:1.2rem 0 1rem;border-bottom:1px solid var(--line)}
+ .tab{font:inherit;color:inherit;background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;padding:.45rem .65rem;cursor:pointer;opacity:.6}
+ .tab[aria-selected="true"]{border-color:#0d9488;opacity:1;font-weight:600}
+ .tab-panel[hidden]{display:none}
+ .projects-toolbar{display:flex;align-items:center;justify-content:space-between;gap:.6rem;margin:0 0 .75rem}
+ .projects-toolbar h2{margin:0}
+ .project-config{margin:0 0 1rem;padding:.75rem;border:1px solid color-mix(in srgb,#0d9488 28%,var(--line));border-radius:12px;background:color-mix(in srgb,#0d9488 4%,transparent)}
+ .project-config[hidden]{display:none}
+ .project-choice{display:flex;align-items:center;gap:.45rem;padding:.25rem 0}
+ .project-choice label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ .project-choice small{opacity:.55}
+ .project-choice button{font:inherit;padding:.08rem .35rem;border:0;border-radius:6px;background:transparent;cursor:pointer;color:inherit;opacity:.65}
+ .project-choice button:hover:not(:disabled){background:color-mix(in srgb,#0d9488 14%,transparent);opacity:1}
+ .project-choice button:disabled{opacity:.2;cursor:default}
 </style></head><body>
 <div class="topbar">
 <div><h1>Сервисы VPS</h1>
 <div class="sub">$dnsname · обновляется автоматически · порт = его же адрес в tailnet</div></div>
 <a class="topgear" href="https://$dnsname:8071/" target="_blank" rel="noopener" title="Настройки: общий промпт и обновления служб">⚙️</a>
+</div>
+<div class="tabs" role="tablist" aria-label="Сервисы VPS">
+<button class="tab" type="button" role="tab" aria-selected="true" data-tab="infra">Инфраструктура</button>
+<button class="tab" type="button" role="tab" aria-selected="false" data-tab="projects">Проекты</button>
 </div>
 HEAD
 # Машина просит перезагрузки после обновления ядра — сказать здесь, где
@@ -431,10 +498,15 @@ if [[ -f /var/run/reboot-required ]]; then
 WARN
 fi
 
-# порядок групп: инфраструктура первой, потом проекты по алфавиту, «без реестра» в конце
-groups="$(cut -d$'\x1f' -f2 <<<"$rows" | sort -u)"
-ordered="$( { grep -x 'инфраструктура' <<<"$groups"; grep -vx 'инфраструктура' <<<"$groups" | grep -vx 'без реестра' | sort; grep -x 'без реестра' <<<"$groups"; } 2>/dev/null )"
+printf '<div id="infra-panel" class="tab-panel">\n'
 
+# порядок групп: инфраструктура первой, потом проекты по алфавиту, «без реестра» в конце.
+# К живым группам добавляем каталоги главных репозиториев, поэтому выключенный
+# проект не исчезает вместе с последним контейнером.
+groups="$( { cut -d$'\x1f' -f2 <<<"$rows"; printf '%s\n' "${!PROJECT_PATH[@]}"; } | sed '/^$/d' | sort -u)"
+ordered="$( { grep -x 'инфраструктура' <<<"$groups"; grep -x 'без реестра' <<<"$groups"; grep -vx 'инфраструктура' <<<"$groups" | grep -vx 'без реестра' | sort; } 2>/dev/null )"
+
+projects_open=0
 while IFS= read -r g; do
   [[ -n "$g" ]] || continue
   case "$g" in
@@ -442,14 +514,30 @@ while IFS= read -r g; do
     "без реестра")    gclass=nores ;;
     *)                gclass=proj ;;
   esac
+  if [[ "$gclass" == "proj" && "$projects_open" == 0 ]]; then
+    printf '%s\n' '</div><div id="projects-panel" class="tab-panel" hidden><div class="projects-toolbar"><h2>Проекты</h2><button class="bookmark-toggle" id="project-config-toggle" type="button" aria-expanded="false">Настроить проекты</button></div><div id="project-config" class="project-config" hidden></div><div id="projects-list">'
+    projects_open=1
+  fi
   # Инфраструктура — карточками (их дюжина, они разные и нужны глазами),
   # сервисы проекта — строками: их до десяти на проект, и десять карточек
   # вытесняли со страницы всё остальное.
   if [[ "$gclass" == "proj" ]]; then
-    printf '<section class="%s"><h2>%s</h2><div class="rows">\n' "$gclass" "$(esc <<<"$g")"
+    project_path="${PROJECT_PATH[$g]:-}"
+    project_hidden=""
+    [[ -n "$project_path" && -z "${PROJECT_ACTIVE[$g]:-}" ]] && project_hidden=" hidden"
+    printf '<section class="%s" data-project="%s" data-active="%s"%s><div class="projecthead"><h2>%s</h2>' \
+      "$gclass" "$(printf '%s' "$project_path" | esc)" "${PROJECT_ACTIVE[$g]:-0}" "$project_hidden" "$(esc <<<"$g")"
+    # Группа от живого старого контейнера может пережить каталог после rm -rf.
+    # Для неё не рисуем редактор: API принимает только существующий корень.
+    if [[ -n "$project_path" ]]; then
+      printf '<button class="bookmark-toggle" type="button" aria-expanded="false">☆ Закладки</button>'
+    fi
+    printf '</div><div class="rows">\n'
     last_stand="__нет__"
+    project_has_rows=0
     while IFS=$'\x1f' read -r p group name desc web stand; do
       [[ "$group" == "$g" ]] || continue
+      project_has_rows=1
       if [[ "$stand" != "$last_stand" ]]; then
         if [[ -n "$stand" ]]; then
           printf '  <div class="stand">задача %s</div>\n' "$(printf '%s' "$stand" | esc)"
@@ -468,7 +556,17 @@ while IFS= read -r g; do
           "$eicon" "$ename" "$edesc" "$p"
       fi
     done < <(ordered_rows | sort -t$'\x1f' -k6,6 -k1,1n)
-    printf '</div></section>\n'
+    printf '</div>\n'
+    # Даже чистый репозиторий — полезная секция: в ней живёт список сред и
+    # админок. Сообщение отличает его от ошибки загрузки страницы.
+    if [[ "$project_has_rows" == 0 ]]; then
+      printf '<p class="empty-project">Сервисы не запущены</p>\n'
+    fi
+    if [[ -n "$project_path" ]]; then
+      printf '<div class="bookmark-panel" hidden data-project="%s"><div class="bookmark-loading">Загружаю закладки…</div></div>\n' \
+        "$(printf '%s' "$project_path" | esc)"
+    fi
+    printf '</section>\n'
     continue
   fi
 
@@ -497,6 +595,223 @@ while IFS= read -r g; do
   done < <(ordered_rows)
   printf '</div></section>\n'
 done <<<"$ordered"
+
+if [[ "$projects_open" == 1 ]]; then
+  printf '%s\n' '</div></div>'
+else
+  # На пустой машине всё равно оставляем путь выбрать первый проект.
+  printf '%s\n' '</div><div id="projects-panel" class="tab-panel" hidden><div class="projects-toolbar"><h2>Проекты</h2></div><p class="empty-project">Проектов пока нет</p></div>'
+fi
+
+cat <<'BOOKMARKS_SCRIPT'
+<script>
+/* Закладки живут отдельно от сгенерированной страницы: сохранение не ждёт
+   минутного таймера ports-web и не заставляет перегенерировать HTML. */
+(() => {
+  const api = `${location.protocol}//${location.hostname}:8074/api/bookmarks`;
+  const panels = [...document.querySelectorAll('.bookmark-panel')];
+  const projectPanels = [...document.querySelectorAll('#projects-list > section[data-project]')];
+  const projectsList = document.querySelector('#projects-list');
+  const projectConfig = document.querySelector('#project-config');
+  let all = {};
+  let selectedProjects = [];
+  const node = (name, className, value) => {
+    const element = document.createElement(name);
+    if (className) element.className = className;
+    if (value !== undefined) element.textContent = value;
+    return element;
+  };
+  const shortHost = (value) => {
+    try { return new URL(value).host; } catch (_) { return value; }
+  };
+  const setStatus = (panel, value) => {
+    const status = panel.querySelector('.bookmark-status');
+    if (status) status.textContent = value || '';
+  };
+  const request = async (body) => {
+    const response = await fetch(api, {
+      method: body ? 'POST' : 'GET',
+      headers: body ? {'Content-Type': 'application/json'} : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'сервис закладок не ответил');
+    return payload;
+  };
+  const selectTab = (name) => {
+    document.querySelectorAll('.tab').forEach((button) => {
+      const selected = button.dataset.tab === name;
+      button.setAttribute('aria-selected', String(selected));
+    });
+    document.querySelector('#infra-panel').hidden = name !== 'infra';
+    document.querySelector('#projects-panel').hidden = name !== 'projects';
+  };
+  const applyProjects = () => {
+    if (!projectsList) return;
+    const selected = new Map(selectedProjects.map((path, index) => [path, index]));
+    for (const panel of projectPanels) {
+      panel.hidden = panel.dataset.active !== '1' && !selected.has(panel.dataset.project);
+    }
+    [...projectPanels]
+      .sort((left, right) => {
+        const leftRank = selected.get(left.dataset.project);
+        const rightRank = selected.get(right.dataset.project);
+        if (leftRank !== undefined || rightRank !== undefined) return (leftRank ?? Infinity) - (rightRank ?? Infinity);
+        return left.querySelector('h2').textContent.localeCompare(right.querySelector('h2').textContent, 'ru');
+      })
+      .forEach((panel) => projectsList.append(panel));
+  };
+  const saveProjects = async (next) => {
+    const status = projectConfig.querySelector('.bookmark-status');
+    status.textContent = 'Сохраняю…';
+    try {
+      const result = await request({action: 'projects', projects: next});
+      selectedProjects = result.projects || [];
+      applyProjects(); renderProjectConfig();
+    } catch (error) { status.textContent = error.message; }
+  };
+  const renderProjectConfig = () => {
+    if (!projectConfig) return;
+    projectConfig.replaceChildren();
+    projectConfig.append(node('div', 'bookmark-tag', 'Показывать также, когда контейнеры выключены'));
+    const selected = new Map(selectedProjects.map((path, index) => [path, index]));
+    const ordered = [...projectPanels].sort((left, right) => {
+      const leftRank = selected.get(left.dataset.project);
+      const rightRank = selected.get(right.dataset.project);
+      if (leftRank !== undefined || rightRank !== undefined) return (leftRank ?? Infinity) - (rightRank ?? Infinity);
+      return left.querySelector('h2').textContent.localeCompare(right.querySelector('h2').textContent, 'ru');
+    });
+    for (const panel of ordered) {
+      const path = panel.dataset.project;
+      const isSelected = selected.has(path);
+      const row = node('div', 'project-choice');
+      const checkbox = node('input'); checkbox.type = 'checkbox'; checkbox.checked = isSelected;
+      checkbox.setAttribute('aria-label', `Показывать ${panel.querySelector('h2').textContent}`);
+      const label = node('label', '', panel.querySelector('h2').textContent);
+      if (panel.dataset.active === '1') label.append(node('small', '', ' · запущен'));
+      checkbox.addEventListener('change', () => {
+        const next = selectedProjects.filter((item) => item !== path);
+        if (checkbox.checked) next.push(path);
+        saveProjects(next);
+      });
+      const up = node('button', '', '↑'); up.type = 'button'; up.title = 'Выше'; up.disabled = !isSelected || selected.get(path) === 0;
+      const down = node('button', '', '↓'); down.type = 'button'; down.title = 'Ниже'; down.disabled = !isSelected || selected.get(path) === selectedProjects.length - 1;
+      up.addEventListener('click', () => {
+        const index = selectedProjects.indexOf(path); const next = [...selectedProjects];
+        [next[index - 1], next[index]] = [next[index], next[index - 1]]; saveProjects(next);
+      });
+      down.addEventListener('click', () => {
+        const index = selectedProjects.indexOf(path); const next = [...selectedProjects];
+        [next[index], next[index + 1]] = [next[index + 1], next[index]]; saveProjects(next);
+      });
+      row.append(checkbox, label, up, down); projectConfig.append(row);
+    }
+    projectConfig.append(node('div', 'bookmark-status'));
+  };
+  const render = (panel) => {
+    const project = panel.dataset.project;
+    const items = all[project] || [];
+    panel.replaceChildren();
+    const groups = new Map();
+    for (const item of items) {
+      const tag = item.tag || '';
+      if (!groups.has(tag)) groups.set(tag, []);
+      groups.get(tag).push(item);
+    }
+    const grid = node('div', 'bookmark-groups');
+    [...groups.entries()]
+      .sort(([left], [right]) => (left || '\uffff').localeCompare(right || '\uffff', 'ru'))
+      .forEach(([tag, group]) => {
+        const block = node('div', 'bookmark-group');
+        block.append(node('div', 'bookmark-tag', tag || 'Без тега'));
+        for (const item of group) {
+          const line = node('div', 'bookmark-line');
+          const link = node('a', 'bookmark-link');
+          link.href = item.url; link.target = '_blank'; link.rel = 'noopener';
+          link.append(node('span', '', item.label), node('span', 'bookmark-host', shortHost(item.url)));
+          const tools = node('span', 'bookmark-tools');
+          const edit = node('button', '', 'Изменить'); edit.type = 'button';
+          edit.addEventListener('click', () => fillForm(panel, item));
+          const remove = node('button', '', 'Удалить'); remove.type = 'button';
+          remove.addEventListener('click', async () => {
+            if (!confirm(`Удалить «${item.label}»?`)) return;
+            try {
+              const result = await request({action: 'delete', project, id: item.id});
+              all[project] = result.bookmarks; render(panel);
+            } catch (error) { setStatus(panel, error.message); }
+          });
+          tools.append(edit, remove); line.append(link, tools); block.append(line);
+        }
+        grid.append(block);
+      });
+    if (!items.length) grid.append(node('div', 'bookmark-empty', 'Пока нет закладок.'));
+    panel.append(grid, form(panel));
+  };
+  const fillForm = (panel, item) => {
+    const current = panel.querySelector('.bookmark-form');
+    current.elements.id.value = item.id;
+    current.elements.label.value = item.label;
+    current.elements.url.value = item.url;
+    current.elements.tag.value = item.tag;
+    current.querySelector('[type=submit]').textContent = 'Сохранить';
+    current.querySelector('[type=button]').hidden = false;
+    current.querySelector('[name=label]').focus();
+  };
+  const form = (panel) => {
+    const project = panel.dataset.project;
+    const element = node('form', 'bookmark-form');
+    element.noValidate = true;
+    const hidden = node('input'); hidden.name = 'id'; hidden.type = 'hidden';
+    const label = node('input'); label.name = 'label'; label.placeholder = 'Название'; label.setAttribute('aria-label', 'Название'); label.required = true;
+    const url = node('input'); url.name = 'url'; url.placeholder = 'https://…'; url.setAttribute('aria-label', 'Адрес'); url.required = true;
+    const tag = node('input'); tag.name = 'tag'; tag.placeholder = 'Тег'; tag.setAttribute('aria-label', 'Тег');
+    const save = node('button', 'bookmark-action', 'Добавить'); save.type = 'submit';
+    const cancel = node('button', 'bookmark-action', 'Отмена'); cancel.type = 'button'; cancel.hidden = true;
+    const status = node('div', 'bookmark-status');
+    cancel.addEventListener('click', () => render(panel));
+    element.addEventListener('input', () => { cancel.hidden = !element.elements.id.value; });
+    element.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      setStatus(panel, 'Сохраняю…');
+      try {
+        const data = new FormData(element);
+        const result = await request({
+          action: 'save', project, id: data.get('id'), label: data.get('label'),
+          url: data.get('url'), tag: data.get('tag'),
+        });
+        all[project] = result.bookmarks; render(panel);
+      } catch (error) { setStatus(panel, error.message); }
+    });
+    element.append(hidden, label, url, tag, save, cancel, status);
+    return element;
+  };
+  document.querySelectorAll('.bookmark-toggle').forEach((button) => {
+    if (button.id === 'project-config-toggle') return;
+    const panel = button.closest('section').querySelector('.bookmark-panel');
+    button.addEventListener('click', () => {
+      panel.hidden = !panel.hidden;
+      button.setAttribute('aria-expanded', String(!panel.hidden));
+    });
+  });
+  document.querySelectorAll('.tab').forEach((button) => {
+    button.addEventListener('click', () => selectTab(button.dataset.tab));
+  });
+  const projectConfigToggle = document.querySelector('#project-config-toggle');
+  if (projectConfigToggle) projectConfigToggle.addEventListener('click', () => {
+    projectConfig.hidden = !projectConfig.hidden;
+    projectConfigToggle.setAttribute('aria-expanded', String(!projectConfig.hidden));
+  });
+  request().then((payload) => {
+    all = payload.bookmarks || {};
+    selectedProjects = payload.projects || [];
+    applyProjects(); renderProjectConfig();
+    panels.forEach(render);
+  }).catch((error) => panels.forEach((panel) => {
+    panel.replaceChildren(node('div', 'bookmark-status', `Закладки недоступны: ${error.message}`));
+  }));
+})();
+</script>
+BOOKMARKS_SCRIPT
 
 echo '</body></html>'
 } > "$html"

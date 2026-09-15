@@ -1,0 +1,57 @@
+---
+- name: Каталог закладок проектов
+  ansible.builtin.file:
+    path: "{{ bookmarks_state_dir }}"
+    state: directory
+    owner: "{{ bookmarks_user }}"
+    group: "{{ bookmarks_user }}"
+    mode: '0700'
+
+- name: Пустое хранилище закладок — один раз
+  # Пользователь меняет файл через дашборд. Повторная выкладка не должна
+  # стирать его ссылки.
+  ansible.builtin.copy:
+    content: |
+      {"version":2,"bookmarks":{},"projects":[]}
+    dest: "{{ bookmarks_file }}"
+    owner: "{{ bookmarks_user }}"
+    group: "{{ bookmarks_user }}"
+    mode: '0600'
+    force: false
+
+- name: Служба закладок
+  ansible.builtin.copy:
+    src: vps-dev-bookmarks
+    dest: "{{ bookmarks_install_dir }}/vps-dev-bookmarks"
+    owner: root
+    group: root
+    mode: '0755'
+  register: bookmarks_script
+
+- name: Юнит службы закладок
+  ansible.builtin.template:
+    src: vps-dev-bookmarks.service.j2
+    dest: /etc/systemd/system/vps-dev-bookmarks.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: bookmarks_unit
+
+- name: Перечитать systemd после изменения юнита  # noqa: no-handler
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: bookmarks_unit.changed
+
+- name: Есть ли уже юнит закладок
+  ansible.builtin.stat:
+    path: /etc/systemd/system/vps-dev-bookmarks.service
+  register: bookmarks_unit_exists
+  check_mode: false
+  when: ansible_check_mode
+
+- name: Служба закладок включена и работает
+  ansible.builtin.systemd:
+    name: vps-dev-bookmarks
+    enabled: true
+    state: "{{ 'restarted' if (bookmarks_script.changed or bookmarks_unit.changed) else 'started' }}"
+  when: not (ansible_check_mode and not (bookmarks_unit_exists.stat.exists | default(false)))

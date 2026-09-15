@@ -1,0 +1,10 @@
+---
+# Закладки — состояние конкретной машины, а не репозитория: среди них бывают
+# адреса прода и админок. Поэтому один файл живёт рядом с остальным состоянием
+# vps-dev, не попадает в git и доступен только пользователю машины.
+bookmarks_port: 8074
+bookmarks_state_dir: /var/lib/vps-dev/bookmarks
+bookmarks_file: "{{ bookmarks_state_dir }}/project-bookmarks.json"
+bookmarks_projects_dir: /projects
+bookmarks_user: "{{ base_deploy_user }}"
+bookmarks_install_dir: /usr/local/bin

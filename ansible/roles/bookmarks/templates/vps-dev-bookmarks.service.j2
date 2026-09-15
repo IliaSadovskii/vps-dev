@@ -1,0 +1,28 @@
+# Управляется Ansible: roles/bookmarks/templates/vps-dev-bookmarks.service.j2
+[Unit]
+Description=Закладки проектов для дашборда VPS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ bookmarks_user }}
+WorkingDirectory={{ bookmarks_state_dir }}
+Environment=BOOKMARKS_PORT={{ bookmarks_port }}
+Environment=BOOKMARKS_FILE={{ bookmarks_file }}
+Environment=BOOKMARKS_PROJECTS_DIR={{ bookmarks_projects_dir }}
+ExecStart={{ bookmarks_install_dir }}/vps-dev-bookmarks
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths={{ bookmarks_state_dir }}
+
+[Install]
+WantedBy=multi-user.target
