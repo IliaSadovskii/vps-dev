@@ -1,0 +1,10 @@
+# Управляется Ansible: roles/dockergc/templates/dockergc.timer.j2
+[Unit]
+Description=Ежедневная уборка Docker
+
+[Timer]
+OnCalendar={{ dockergc_oncalendar }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

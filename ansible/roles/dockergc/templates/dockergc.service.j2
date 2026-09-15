@@ -1,0 +1,18 @@
+# Управляется Ansible: roles/dockergc/templates/dockergc.service.j2
+[Unit]
+Description=Уборка Docker: осиротевшие проекты, старые контейнеры, старые образы, кэш сборки
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# root: снимать чужие контейнеры/образы можно только через сокет Docker,
+# доступ к которому и так требует либо root, либо группы docker — root
+# здесь честнее, чем дописывать пользователя в docker (это равнозначно
+# root на всей машине, см. roles/dockerd).
+User=root
+Environment=DOCKERGC_LOG_FILE={{ dockergc_log_file }}
+Environment=DOCKERGC_EXITED_GRACE_HOURS={{ dockergc_exited_grace_hours }}
+Environment=DOCKERGC_IMAGE_GRACE_HOURS={{ dockergc_image_grace_hours }}
+Environment=DOCKERGC_BUILDCACHE_MAX_AGE_HOURS={{ dockergc_buildcache_max_age_hours }}
+ExecStart={{ dockergc_install_dir }}/vps-dev-docker-gc

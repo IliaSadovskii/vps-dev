@@ -91,13 +91,6 @@ updates_services:
     source: github
     ref: xichan96/dinotty
     strip_v: true
-  - id: files
-    name: Файлы
-    var: files_version
-    tags: [files]
-    source: github
-    ref: filebrowser/filebrowser
-    strip_v: true
   - id: monitor
     name: Мониторинг
     var: monitor_version

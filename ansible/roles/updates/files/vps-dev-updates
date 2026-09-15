@@ -294,7 +294,7 @@ def render(view, flash=""):
     refresh = '<meta http-equiv="refresh" content="5">' if running else ""
     return f"""<!doctype html><html lang="ru"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">{refresh}
-<title>Обновления служб</title>
+<title>Настройки — обновления</title>
 <style>
  /* Тот же язык, что у дашборда и остальных страниц машины. */
  :root{{color-scheme:light dark;--line:color-mix(in srgb,currentColor 14%,transparent);--accent:#2563eb}}
@@ -327,9 +327,30 @@ def render(view, flash=""):
  pre{{font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:color-mix(in srgb,currentColor 6%,transparent);
    padding:.8rem;border-radius:10px;max-height:26rem;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}}
  .reset{{margin-top:2rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;font-size:.85rem}}
+ /* Вкладки: эта страница и «Общий промпт» — одна шестерёнка настроек на
+    дашборде, две страницы на соседних портах, оформленные как вкладки одного
+    целого. Ссылка получает порт через JS — сама страница не знает, под каким
+    именем/адресом её открыли (localhost, tailnet-имя, IP — неважно). */
+ .tabs{{display:flex;gap:.4rem;margin:0 0 1.25rem}}
+ .tabs a{{font-size:.85rem;font-weight:600;padding:.4rem .9rem;border-radius:10px;text-decoration:none;
+   color:inherit;border:1px solid var(--line);opacity:.6}}
+ .tabs a:hover{{opacity:1}}
+ .tabs a.on{{opacity:1;border-color:color-mix(in srgb,var(--accent) 55%,transparent);
+   background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent)}}
+ .back{{display:inline-block;font-size:.85rem;margin:0 0 1rem;text-decoration:none;opacity:.6}}
+ .back:hover{{opacity:1}}
  @media(prefers-color-scheme:dark){{:root{{--accent:#7aa7ff}} .warn.bad{{color:#f87171}}}}
 </style></head><body>
-<h1>Обновления служб</h1>
+<a class="back" data-home href="#">← Сервисы VPS</a>
+<h1>Настройки</h1>
+<nav class="tabs">
+<a class="tab" data-port="8071" href="#">🗣️ Общий промпт</a>
+<a class="tab on" data-port="8072" href="#">⬆️ Обновления</a>
+</nav>
+<script>
+document.querySelectorAll('.tab').forEach(function(a){{a.href=location.protocol+'//'+location.hostname+':'+a.dataset.port+'/';}});
+document.querySelectorAll('[data-home]').forEach(function(a){{a.href=location.protocol+'//'+location.hostname+':8062/';}});
+</script>
 <div class="sub">версия, выбранная здесь, переживает выкатку: она пишется на машине, а не в репозиторий</div>
 {flash}
 <table><tr><th>Служба</th><th>Стоит</th><th>Вышло</th><th></th></tr>

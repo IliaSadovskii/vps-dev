@@ -1,0 +1,13 @@
+# Управляется Ansible: roles/dockergc/templates/cachegc.service.j2
+[Unit]
+Description=Еженедельная уборка кэшей (npm, apt, systemd journal)
+
+[Service]
+Type=oneshot
+# root: apt-get clean и journalctl --vacuum-time требуют root; npm-кэш
+# скрипт сам чистит от имени {{ base_deploy_user }} через runuser.
+User=root
+Environment=CACHEGC_DEPLOY_USER={{ base_deploy_user }}
+Environment=CACHEGC_LOG_FILE={{ cachegc_log_file }}
+Environment=CACHEGC_JOURNAL_KEEP_DAYS={{ cachegc_journal_keep_days }}
+ExecStart={{ dockergc_install_dir }}/vps-dev-cache-gc

@@ -735,8 +735,14 @@ def render(payload):
  .msg{{font-size:.82rem;opacity:.7;overflow-wrap:anywhere}}
  .msg.bad{{color:#dc2626;opacity:.85}}
  .foot{{margin-top:.2rem;padding-top:.5rem;border-top:1px solid var(--line);font-size:.72rem;opacity:.45;overflow-wrap:anywhere}}
+ /* Страница на своём порту, без «назад» браузера — обратная ссылка на
+    дашборд считается от текущего адреса, чтобы не знать имени машины. */
+ .back{{display:inline-block;font-size:.85rem;margin:0 0 1.25rem;text-decoration:none;opacity:.6}}
+ .back:hover{{opacity:1}}
  @media(prefers-color-scheme:dark){{:root{{--accent:#7aa7ff}} .msg.bad{{color:#f87171}}}}
 </style></head><body>
+<a class="back" data-home href="#">← Сервисы VPS</a>
+<script>document.querySelectorAll('[data-home]').forEach(function(a){{a.href=location.protocol+'//'+location.hostname+':8062/';}});</script>
 <h1>Лимиты подписок</h1>
 <div class="sub">обновляется раз в {POLL_SECONDS} с · страница сама перечитывается · {esc(human_ago(payload['generated_at']))} последний круг</div>
 <div class="grid">"""]
