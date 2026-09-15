@@ -1,0 +1,51 @@
+---
+# Автоматическая уборка Docker — таймер, не веб-страница: смотреть на неё
+# незачем, только журнал в dockergc_log_file на случай вопроса «а что
+# вчера снесло». Подробности критериев — в самом скрипте.
+
+- name: Каталог состояния и журнала уборки Docker
+  ansible.builtin.file:
+    path: "{{ dockergc_state_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Скрипты уборки
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ dockergc_install_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - vps-dev-docker-gc
+    - vps-dev-cache-gc
+
+- name: Службы и таймеры
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - dockergc.service
+    - dockergc.timer
+    - cachegc.service
+    - cachegc.timer
+  register: dockergc_units
+
+- name: Перечитать systemd, если юнит изменился  # noqa: no-handler
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: dockergc_units.changed
+
+- name: Таймеры уборки включены
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - dockergc.timer
+    - cachegc.timer

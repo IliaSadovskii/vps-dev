@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+# vps-dev-cache-gc — еженедельная уборка кэшей, которые Docker-уборка
+# (vps-dev-docker-gc) не трогает: они не про Docker и не про осиротевшие
+# проекты, а про накопленный кэш инструментов на самой машине.
+#
+# Раз в неделю, не каждый день: npm-кэш выгоднее не трогать лишний раз —
+# сегодняшняя установка использует то, что скачала вчерашняя, и ежедневный
+# снос обнулял бы эту экономию без всякой выгоды по месту (кэш не растёт
+# настолько быстро). Раз в неделю — баланс между «не копится месяцами» и
+# «не грузим сеть заново каждый день».
+#
+# Что чистим и почему это безопасно:
+#
+#  1. `npm cache clean --force` от имени владельца — npm сам перекачает
+#     недостающее при следующей установке, это именно кэш, а не состояние.
+#     От root это не имеет смысла: кэш лежит в домашнем каталоге дев-
+#     пользователя, чужой владелец только всё запутает.
+#  2. `apt-get clean` — скачанные .deb остаются в /var/cache/apt/archives
+#     даже после установки; `apt-get install` их перекачает при надобности.
+#  3. `journalctl --vacuum-time=` — системный журнал старше срока. Активные
+#     журналы служб (aoe, paseo, ...) читаются через их же `journalctl -u`,
+#     это не трогает.
+#
+# Ничего из этого не тексты разговоров, не БД проектов, не рабочие копии —
+# только то, что любой из инструментов создаст заново сам, без участия
+# человека, при следующей надобности.
+
+import os
+import subprocess
+import sys
+from datetime import datetime, timezone
+
+DEPLOY_USER = os.environ.get("CACHEGC_DEPLOY_USER", "dev")
+JOURNAL_KEEP_DAYS = int(os.environ.get("CACHEGC_JOURNAL_KEEP_DAYS", "14"))
+LOG_FILE = os.environ.get("CACHEGC_LOG_FILE", "/var/lib/vps-dev/dockergc/cachegc.log")
+DRY_RUN = "--dry-run" in sys.argv or os.environ.get("CACHEGC_DRY_RUN") == "1"
+
+
+def run(*args):
+    return subprocess.run(list(args), capture_output=True, text=True)
+
+
+def mutate(*args):
+    if DRY_RUN:
+        print("(dry-run) " + " ".join(args))
+        return subprocess.CompletedProcess(args, 0, "", "")
+    return run(*args)
+
+
+def du(path):
+    res = run("du", "-sb", path)
+    try:
+        return int(res.stdout.split()[0])
+    except (IndexError, ValueError):
+        return None
+
+
+def human(bytes_before, bytes_after):
+    if bytes_before is None or bytes_after is None:
+        return ""
+    freed = max(0, bytes_before - bytes_after)
+    return f"{freed / 1024 / 1024:.0f} МБ"
+
+
+def main():
+    report = []
+
+    npm_dir = f"/home/{DEPLOY_USER}/.npm"
+    if os.path.isdir(npm_dir):
+        before = du(npm_dir)
+        mutate("runuser", "-u", DEPLOY_USER, "--", "npm", "cache", "clean", "--force")
+        after = du(npm_dir)
+        freed = human(before, after)
+        if freed:
+            report.append(f"npm-кэш {DEPLOY_USER}: освобождено {freed}")
+
+    apt_dir = "/var/cache/apt"
+    before = du(apt_dir)
+    mutate("apt-get", "clean")
+    after = du(apt_dir)
+    freed = human(before, after)
+    if freed:
+        report.append(f"apt-кэш: освобождено {freed}")
+
+    res = mutate("journalctl", f"--vacuum-time={JOURNAL_KEEP_DAYS}d")
+    for line in (res.stdout + res.stderr).splitlines():
+        if "freed" in line.lower() or "vacuuming" in line.lower():
+            report.append(f"журнал systemd: {line.strip()}")
+
+    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(f"=== {stamp} ===\n")
+        f.write("\n".join(report) if report else "нечего убирать")
+        f.write("\n")
+
+
+if __name__ == "__main__":
+    main()

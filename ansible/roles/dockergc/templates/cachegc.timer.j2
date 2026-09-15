@@ -1,0 +1,10 @@
+# Управляется Ansible: roles/dockergc/templates/cachegc.timer.j2
+[Unit]
+Description=Еженедельная уборка кэшей
+
+[Timer]
+OnCalendar={{ cachegc_oncalendar }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

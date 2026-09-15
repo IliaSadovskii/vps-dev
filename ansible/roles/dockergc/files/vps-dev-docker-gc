@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+# vps-dev-docker-gc — автоматическая уборка Docker: то, что раньше делали
+# руками разбором docker system df.
+#
+# ПОЧЕМУ ИМЕННО ЭТО, А НЕ `docker system prune -a`. Прошлый разбор диска
+# показал: место съедают не работающие проекты, а хвосты от закрытых задач
+# (worktree снесён, а контейнеры/образы остались) и упавшие контейнеры,
+# на которые никто не посмотрел. Слепой `prune -a` снёс бы и образ,
+# который просто ждёт следующего `docker compose up` того же проекта.
+# Поэтому три отдельных, каждое — по своему точному признаку:
+#
+#  1. Контейнер осиротевшего проекта: рабочий каталог compose-проекта
+#     (`com.docker.compose.project.working_dir`) физически исчез — это и
+#     есть «worktree задачи снесли». Контейнер и его тома снимаются сразу,
+#     без выдержки: раз каталога нет, вернуться к работе с ним нельзя.
+#  2. Любой другой остановленный контейнер — раз каталог проекта на месте,
+#     удаление откладывается на `DOCKERGC_EXITED_GRACE_HOURS`: время
+#     заметить неожиданное падение и посмотреть логи, прежде чем контейнер
+#     исчезнет.
+#  3. Образ, собранный compose (`com.docker.compose.project` в его же
+#     Labels — у образов, просто скачанных с Docker Hub, такой метки нет),
+#     на который прямо сейчас не смотрит ни один контейнер (ни рабочий, ни
+#     остановленный) дольше `DOCKERGC_IMAGE_GRACE_HOURS`. Это ровно тот
+#     случай, который и запустил разбор: контейнеры задачи давно снесли
+#     руками, а шесть версий образа остались лежать на диске.
+#
+# Кэш сборки (`docker builder prune`) убирается отдельно, тоже по возрасту:
+# он ничей, воссоздаётся сам на следующей сборке, трогать его безопаснее
+# всего.
+#
+# Ничего не трогает: работающие контейнеры, образы младше выдержки, тома
+# без метки compose-проекта, образы без метки compose (postgres, redis,
+# node и прочие с Docker Hub) — `docker rmi` в любом случае откажется
+# снести образ, на который смотрит хоть один контейнер, так что вторая
+# метка того же образа под другим тегом не пострадает.
+#
+# ЛОГ. Каждый прогон дописывает строку в DOCKERGC_LOG_FILE — что снесено и
+# сколько освобождено; прогон, где сносить нечего, тоже пишет строку,
+# чтобы по пустому журналу было видно, что таймер вообще ходит.
+
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime, timezone
+
+EXITED_GRACE_H = float(os.environ.get("DOCKERGC_EXITED_GRACE_HOURS", "24"))
+IMAGE_GRACE_H = float(os.environ.get("DOCKERGC_IMAGE_GRACE_HOURS", "72"))
+BUILDCACHE_MAX_AGE_H = float(os.environ.get("DOCKERGC_BUILDCACHE_MAX_AGE_HOURS", "168"))
+LOG_FILE = os.environ.get("DOCKERGC_LOG_FILE", "/var/lib/vps-dev/dockergc/dockergc.log")
+# --dry-run (или DOCKERGC_DRY_RUN=1): показать, что снесётся, ничего не
+# трогая. Таймер его не передаёт; только руками, когда меняешь пороги.
+DRY_RUN = "--dry-run" in sys.argv or os.environ.get("DOCKERGC_DRY_RUN") == "1"
+
+
+def run(*args, check=False):
+    return subprocess.run(["docker", *args], capture_output=True, text=True, check=check)
+
+
+def mutate(*args):
+    """Снести/убрать. В --dry-run печатает команду и подделывает успех."""
+    if DRY_RUN:
+        print("(dry-run) docker " + " ".join(args))
+        return subprocess.CompletedProcess(args, 0, "", "")
+    return run(*args)
+
+
+def docker_ps_all():
+    out = run("ps", "-a", "-q").stdout.split()
+    if not out:
+        return []
+    return json.loads(run("inspect", *out).stdout)
+
+
+def docker_images_with_label(label):
+    out = run("images", "-a", "-q", "--no-trunc").stdout.split()
+    if not out:
+        return []
+    ids = sorted(set(out))
+    data = json.loads(run("inspect", *ids).stdout)
+    return [img for img in data if label in (img.get("Config", {}).get("Labels") or {})]
+
+
+def age_hours(iso_stamp):
+    if not iso_stamp or iso_stamp.startswith("0001-01-01"):
+        return None
+    try:
+        # Docker пишет наносекунды и иногда без двоеточия в поясе — обрезаем
+        # до секунд, этого достаточно для часов выдержки.
+        stamp = iso_stamp.split(".")[0].replace("Z", "+00:00")
+        if "+" not in stamp and stamp.count("-") <= 2:
+            stamp += "+00:00"
+        dt = datetime.fromisoformat(stamp)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - dt).total_seconds() / 3600
+    except ValueError:
+        return None
+
+
+def main():
+    report = []
+    containers = docker_ps_all()
+
+    # 1) Осиротевшие проекты: рабочего каталога compose-проекта уже нет.
+    orphan_ids = set()
+    orphan_projects = {}
+    for c in containers:
+        labels = (c.get("Config", {}).get("Labels") or {})
+        workdir = labels.get("com.docker.compose.project.working_dir")
+        project = labels.get("com.docker.compose.project")
+        if workdir and project and not os.path.isdir(workdir):
+            orphan_ids.add(c["Id"])
+            orphan_projects.setdefault(project, {"workdir": workdir, "n": 0})
+            orphan_projects[project]["n"] += 1
+
+    for cid in orphan_ids:
+        mutate("rm", "-f", cid)
+    for project, info in orphan_projects.items():
+        vols = run("volume", "ls", "-q", "--filter", f"label=com.docker.compose.project={project}").stdout.split()
+        for v in vols:
+            mutate("volume", "rm", v)
+        report.append(
+            f"проект «{project}»: папки {info['workdir']} больше нет — "
+            f"контейнеров {info['n']}, томов {len(vols)}"
+        )
+
+    # 2) Остальные остановленные контейнеры — по выдержке.
+    grace_removed = []
+    for c in containers:
+        if c["Id"] in orphan_ids:
+            continue
+        state = c.get("State", {})
+        if state.get("Status") != "exited":
+            continue
+        hours = age_hours(state.get("FinishedAt"))
+        if hours is not None and hours >= EXITED_GRACE_H:
+            name = (c.get("Name") or c["Id"][:12]).lstrip("/")
+            mutate("rm", c["Id"])
+            grace_removed.append(name)
+    if grace_removed:
+        report.append(
+            f"остановленные контейнеры старше {EXITED_GRACE_H:.0f} ч: {', '.join(grace_removed)}"
+        )
+
+    # 3) Образы compose-проектов без единого контейнера — по своей выдержке.
+    live_image_ids = {c["Image"] for c in containers if c["Id"] not in orphan_ids}
+    image_removed = []
+    for img in docker_images_with_label("com.docker.compose.project"):
+        iid = img["Id"]
+        if iid in live_image_ids:
+            continue
+        hours = age_hours(img.get("Created"))
+        if hours is None or hours < IMAGE_GRACE_H:
+            continue
+        tags = img.get("RepoTags") or [iid[:19]]
+        res = mutate("rmi", iid)
+        if res.returncode == 0:
+            image_removed.extend(tags)
+    if image_removed:
+        report.append(f"образы без контейнеров старше {IMAGE_GRACE_H:.0f} ч: {', '.join(image_removed)}")
+
+    # 4) Кэш сборки старше недели — свой, воссоздаётся сам.
+    cache_res = mutate("builder", "prune", "-af", f"--filter=until={int(BUILDCACHE_MAX_AGE_H)}h")
+    reclaimed = ""
+    for line in cache_res.stdout.splitlines():
+        if "Total:" in line:
+            reclaimed = line.split("Total:")[-1].strip()
+    if reclaimed and reclaimed not in ("0B", "0 B"):
+        report.append(f"кэш сборки старше {BUILDCACHE_MAX_AGE_H:.0f} ч: освобождено {reclaimed}")
+
+    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(f"=== {stamp} ===\n")
+        f.write("\n".join(report) if report else "нечего убирать")
+        f.write("\n")
+
+
+if __name__ == "__main__":
+    main()
