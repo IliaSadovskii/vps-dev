@@ -432,24 +432,30 @@ cat <<HEAD
     background:color-mix(in srgb,var(--accent) 7%,transparent);border-radius:9px;padding:.35rem .55rem;cursor:pointer}
  .bookmark-toggle{font-size:.8rem;white-space:nowrap}
  .bookmark-toggle:hover,.bookmark-action:hover{background:color-mix(in srgb,var(--accent) 16%,transparent)}
- .bookmark-panel{margin-top:.55rem;padding:.75rem;border:1px solid color-mix(in srgb,var(--accent) 28%,var(--line));
+ .bookmark-panel{margin-top:.15rem;padding:.7rem;border:1px solid color-mix(in srgb,var(--accent) 28%,var(--line));
     border-radius:12px;background:color-mix(in srgb,var(--accent) 4%,transparent)}
  .bookmark-panel[hidden]{display:none}
+ .bookmark-panel-head{display:flex;align-items:center;justify-content:space-between;margin:0 0 .5rem}
+ .bookmark-panel-head strong{font-size:.82rem}
+ .bookmark-add{font:inherit;font-size:1.2rem;line-height:1;padding:.12rem .45rem;border:1px solid color-mix(in srgb,var(--accent) 35%,var(--line));border-radius:8px;background:transparent;color:inherit;cursor:pointer}
+ .bookmark-add:hover{background:color-mix(in srgb,var(--accent) 16%,transparent)}
  .bookmark-groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem 1rem}
- @media(max-width:560px){.bookmark-groups{grid-template-columns:1fr}}
- .bookmark-tag{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;opacity:.55;margin:0 0 .28rem}
- .bookmark-line{display:flex;align-items:center;gap:.35rem}
- .bookmark-link{display:flex;align-items:center;gap:.35rem;min-width:0;flex:1 1 auto;padding:.2rem 0;color:var(--accent);text-decoration:none}
- .bookmark-link span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
- .bookmark-host{font-size:.75rem;opacity:.5;color:inherit}
- .bookmark-tools{display:flex;gap:.2rem;margin-left:auto}
- .bookmark-tools button{font:inherit;font-size:.75rem;padding:.1rem .3rem;border:0;border-radius:6px;background:transparent;color:inherit;opacity:.5;cursor:pointer}
+ @media(max-width:560px){.bookmark-groups{grid-template-columns:1fr;gap:.5rem}}
+ .bookmark-tag{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;opacity:.55;margin:0 0 .28rem}
+ .bookmark-line{display:flex;align-items:center;gap:.35rem;padding:.42rem .45rem;border:1px solid color-mix(in srgb,var(--accent) 16%,var(--line));border-radius:9px;background:color-mix(in srgb,var(--accent) 3%,transparent)}
+ .bookmark-link{display:flex;flex-direction:column;align-items:flex-start;gap:.05rem;min-width:0;flex:1 1 auto;color:var(--accent);text-decoration:none}
+ .bookmark-link span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+ .bookmark-host{font-size:.72rem;opacity:.55;color:inherit}
+ .bookmark-tools{display:flex;gap:.1rem;margin-left:auto}
+ .bookmark-tools button{font:inherit;font-size:.85rem;padding:.18rem .32rem;border:0;border-radius:6px;background:transparent;color:inherit;opacity:.55;cursor:pointer}
  .bookmark-tools button:hover{opacity:1;background:color-mix(in srgb,var(--accent) 16%,transparent)}
- .bookmark-form{display:grid;grid-template-columns:1fr 1.4fr .8fr auto auto;gap:.4rem;margin-top:.8rem}
+ .bookmark-form-wrap[hidden]{display:none}
+ .bookmark-form{display:grid;grid-template-columns:1fr 1.4fr .8fr auto auto;gap:.4rem;margin-top:.65rem}
  .bookmark-form input{min-width:0;font:inherit;padding:.35rem .45rem;border:1px solid var(--line);border-radius:8px;background:Canvas;color:CanvasText}
  .bookmark-form .bookmark-action{white-space:nowrap}
  .bookmark-status{grid-column:1/-1;min-height:1.2em;margin:.05rem 0 0;font-size:.8rem;opacity:.65}
  .empty-project{margin:.1rem 0 0;font-size:.82rem;opacity:.55}
+ .empty-project[hidden]{display:none}
  @media(max-width:700px){.bookmark-form{grid-template-columns:1fr 1fr}.bookmark-form input:nth-child(3){grid-column:1/2}}
  .infra{--accent:#2563eb}
  .proj{--accent:#0d9488}
@@ -465,12 +471,13 @@ cat <<HEAD
  .topgear{font-size:1.3rem;line-height:1;text-decoration:none;color:inherit;opacity:.5;
           padding:.4rem .55rem;border-radius:10px;flex:none}
  .topgear:hover{opacity:1;background:color-mix(in srgb,var(--accent,currentColor) 14%,transparent)}
- .tabs{display:flex;gap:.4rem;margin:1.2rem 0 1rem;border-bottom:1px solid var(--line)}
+ .tabs{display:flex;gap:.15rem;margin:1.2rem 0 1rem;border-bottom:1px solid var(--line)}
  .tab{font:inherit;color:inherit;background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;padding:.45rem .65rem;cursor:pointer;opacity:.6}
  .tab[aria-selected="true"]{border-color:#0d9488;opacity:1;font-weight:600}
+ .tab-project{display:flex;align-items:center}
+ .tab-gear{font:inherit;font-size:1rem;color:inherit;border:0;background:none;opacity:.55;padding:.35rem .45rem;margin-bottom:-1px;cursor:pointer}
+ .tab-gear:hover{opacity:1}
  .tab-panel[hidden]{display:none}
- .projects-toolbar{display:flex;align-items:center;justify-content:space-between;gap:.6rem;margin:0 0 .75rem}
- .projects-toolbar h2{margin:0}
  .project-config{margin:0 0 1rem;padding:.75rem;border:1px solid color-mix(in srgb,#0d9488 28%,var(--line));border-radius:12px;background:color-mix(in srgb,#0d9488 4%,transparent)}
  .project-config[hidden]{display:none}
  .project-choice{display:flex;align-items:center;gap:.45rem;padding:.25rem 0}
@@ -487,7 +494,7 @@ cat <<HEAD
 </div>
 <div class="tabs" role="tablist" aria-label="Сервисы VPS">
 <button class="tab" type="button" role="tab" aria-selected="true" data-tab="infra">Инфраструктура</button>
-<button class="tab" type="button" role="tab" aria-selected="false" data-tab="projects">Проекты</button>
+<div class="tab-project"><button class="tab" type="button" role="tab" aria-selected="false" data-tab="projects">Проекты</button><button class="tab-gear" id="project-config-toggle" type="button" title="Настроить проекты" aria-label="Настроить проекты" aria-expanded="false">⚙</button></div>
 </div>
 HEAD
 # Машина просит перезагрузки после обновления ядра — сказать здесь, где
@@ -515,7 +522,7 @@ while IFS= read -r g; do
     *)                gclass=proj ;;
   esac
   if [[ "$gclass" == "proj" && "$projects_open" == 0 ]]; then
-    printf '%s\n' '</div><div id="projects-panel" class="tab-panel" hidden><div class="projects-toolbar"><h2>Проекты</h2><button class="bookmark-toggle" id="project-config-toggle" type="button" aria-expanded="false">Настроить проекты</button></div><div id="project-config" class="project-config" hidden></div><div id="projects-list">'
+    printf '%s\n' '</div><div id="projects-panel" class="tab-panel" hidden><div id="project-config" class="project-config" hidden></div><div id="projects-list">'
     projects_open=1
   fi
   # Инфраструктура — карточками (их дюжина, они разные и нужны глазами),
@@ -600,7 +607,7 @@ if [[ "$projects_open" == 1 ]]; then
   printf '%s\n' '</div></div>'
 else
   # На пустой машине всё равно оставляем путь выбрать первый проект.
-  printf '%s\n' '</div><div id="projects-panel" class="tab-panel" hidden><div class="projects-toolbar"><h2>Проекты</h2></div><p class="empty-project">Проектов пока нет</p></div>'
+  printf '%s\n' '</div><div id="projects-panel" class="tab-panel" hidden><div id="project-config" class="project-config" hidden></div><p class="empty-project">Проектов пока нет</p></div>'
 fi
 
 cat <<'BOOKMARKS_SCRIPT'
@@ -730,9 +737,9 @@ cat <<'BOOKMARKS_SCRIPT'
           link.href = item.url; link.target = '_blank'; link.rel = 'noopener';
           link.append(node('span', '', item.label), node('span', 'bookmark-host', shortHost(item.url)));
           const tools = node('span', 'bookmark-tools');
-          const edit = node('button', '', 'Изменить'); edit.type = 'button';
+          const edit = node('button', '', '✎'); edit.type = 'button'; edit.title = 'Изменить'; edit.setAttribute('aria-label', 'Изменить');
           edit.addEventListener('click', () => fillForm(panel, item));
-          const remove = node('button', '', 'Удалить'); remove.type = 'button';
+          const remove = node('button', '', '×'); remove.type = 'button'; remove.title = 'Удалить'; remove.setAttribute('aria-label', 'Удалить');
           remove.addEventListener('click', async () => {
             if (!confirm(`Удалить «${item.label}»?`)) return;
             try {
@@ -745,7 +752,16 @@ cat <<'BOOKMARKS_SCRIPT'
         grid.append(block);
       });
     if (!items.length) grid.append(node('div', 'bookmark-empty', 'Пока нет закладок.'));
-    panel.append(grid, form(panel));
+    const head = node('div', 'bookmark-panel-head');
+    head.append(node('strong', '', 'Закладки'));
+    const add = node('button', 'bookmark-add', '＋'); add.type = 'button'; add.title = 'Добавить закладку'; add.setAttribute('aria-label', 'Добавить закладку');
+    const formWrap = node('div', 'bookmark-form-wrap'); formWrap.hidden = true;
+    formWrap.append(form(panel));
+    add.addEventListener('click', () => {
+      formWrap.hidden = !formWrap.hidden;
+      if (!formWrap.hidden) formWrap.querySelector('[name=label]').focus();
+    });
+    head.append(add); panel.append(head, grid, formWrap);
   };
   const fillForm = (panel, item) => {
     const current = panel.querySelector('.bookmark-form');
@@ -755,6 +771,7 @@ cat <<'BOOKMARKS_SCRIPT'
     current.elements.tag.value = item.tag;
     current.querySelector('[type=submit]').textContent = 'Сохранить';
     current.querySelector('[type=button]').hidden = false;
+    current.closest('.bookmark-form-wrap').hidden = false;
     current.querySelector('[name=label]').focus();
   };
   const form = (panel) => {
@@ -786,11 +803,17 @@ cat <<'BOOKMARKS_SCRIPT'
     return element;
   };
   document.querySelectorAll('.bookmark-toggle').forEach((button) => {
-    if (button.id === 'project-config-toggle') return;
-    const panel = button.closest('section').querySelector('.bookmark-panel');
+    const section = button.closest('section');
+    const panel = section.querySelector('.bookmark-panel');
+    const rows = section.querySelector('.rows');
+    const empty = section.querySelector('.empty-project');
     button.addEventListener('click', () => {
-      panel.hidden = !panel.hidden;
-      button.setAttribute('aria-expanded', String(!panel.hidden));
+      const bookmarks = panel.hidden;
+      panel.hidden = !bookmarks;
+      rows.hidden = bookmarks;
+      if (empty) empty.hidden = bookmarks;
+      button.textContent = bookmarks ? '▦ Контейнеры' : '☆ Закладки';
+      button.setAttribute('aria-expanded', String(bookmarks));
     });
   });
   document.querySelectorAll('.tab').forEach((button) => {
@@ -798,6 +821,7 @@ cat <<'BOOKMARKS_SCRIPT'
   });
   const projectConfigToggle = document.querySelector('#project-config-toggle');
   if (projectConfigToggle) projectConfigToggle.addEventListener('click', () => {
+    selectTab('projects');
     projectConfig.hidden = !projectConfig.hidden;
     projectConfigToggle.setAttribute('aria-expanded', String(!projectConfig.hidden));
   });
