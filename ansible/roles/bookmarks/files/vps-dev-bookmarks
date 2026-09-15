@@ -111,7 +111,7 @@ def normal_projects(items: object) -> list[str]:
 
 
 def dashboard_origin() -> str:
-    """Точный Origin дашборда, не Host после Tailscale reverse proxy."""
+    """Имя дашборда, не Host после Tailscale reverse proxy."""
     global DASHBOARD_ORIGIN
     if DASHBOARD_ORIGIN:
         return DASHBOARD_ORIGIN
@@ -121,7 +121,7 @@ def dashboard_origin() -> str:
         ).stdout
         dns_name = str(json.loads(raw).get("Self", {}).get("DNSName", "")).rstrip(".")
         if dns_name:
-            DASHBOARD_ORIGIN = f"https://{dns_name}:8062"
+            DASHBOARD_ORIGIN = f"https://{dns_name}"
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
         pass
     return DASHBOARD_ORIGIN
@@ -143,7 +143,11 @@ class Handler(BaseHTTPRequestHandler):
         # Tailscale передаёт API уже с локальным Host, поэтому сравнивать его
         # с Origin нельзя. Имя берём у tailscaled: это именно эта машина, а
         # не произвольная страница :8062 в общей tailnet.
-        return self.headers.get("Origin", "") == dashboard_origin()
+        origin = self.headers.get("Origin", "")
+        dashboard = dashboard_origin()
+        # Дашборд открыт обычно на стандартном :443 (так он выглядит в
+        # браузере телефона), но :8062 остаётся совместимым прямым адресом.
+        return origin in {dashboard, f"{dashboard}:8062"}
 
     def reply(self, status: HTTPStatus, body: dict) -> None:
         raw = json.dumps(body, ensure_ascii=False).encode("utf-8")
