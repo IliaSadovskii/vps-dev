@@ -360,7 +360,6 @@ html="$STATE_DIR/index.html.tmp"
 cat <<HEAD
 <!doctype html><html lang="ru"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="30">
 <title>Сервисы VPS</title>
 <style>
  /* Карточки, а не строки: попасть пальцем в ячейку 3×N на телефоне легче,
@@ -647,6 +646,19 @@ cat <<'BOOKMARKS_SCRIPT'
     if (!response.ok) throw new Error(payload.error || 'сервис закладок не ответил');
     return payload;
   };
+  const bookmarkViewKey = (project) => `vps-dev-project-view:${project}`;
+  const setProjectView = (section, bookmarks, remember = true) => {
+    const panel = section.querySelector('.bookmark-panel');
+    const rows = section.querySelector('.rows');
+    const empty = section.querySelector('.empty-project');
+    const button = section.querySelector('.bookmark-toggle');
+    panel.hidden = !bookmarks;
+    rows.hidden = bookmarks;
+    if (empty) empty.hidden = bookmarks;
+    button.textContent = bookmarks ? '▦ Контейнеры' : '☆ Закладки';
+    button.setAttribute('aria-expanded', String(bookmarks));
+    if (remember) sessionStorage.setItem(bookmarkViewKey(panel.dataset.project), bookmarks ? 'bookmarks' : 'containers');
+  };
   const selectTab = (name) => {
     sessionStorage.setItem('vps-dev-dashboard-tab', name);
     document.querySelectorAll('.tab').forEach((button) => {
@@ -807,16 +819,8 @@ cat <<'BOOKMARKS_SCRIPT'
   };
   document.querySelectorAll('.bookmark-toggle').forEach((button) => {
     const section = button.closest('section');
-    const panel = section.querySelector('.bookmark-panel');
-    const rows = section.querySelector('.rows');
-    const empty = section.querySelector('.empty-project');
     button.addEventListener('click', () => {
-      const bookmarks = panel.hidden;
-      panel.hidden = !bookmarks;
-      rows.hidden = bookmarks;
-      if (empty) empty.hidden = bookmarks;
-      button.textContent = bookmarks ? '▦ Контейнеры' : '☆ Закладки';
-      button.setAttribute('aria-expanded', String(bookmarks));
+      setProjectView(section, section.querySelector('.bookmark-panel').hidden);
     });
   });
   document.querySelectorAll('.tab').forEach((button) => {
@@ -834,9 +838,19 @@ cat <<'BOOKMARKS_SCRIPT'
     selectedProjects = payload.projects || [];
     applyProjects(); renderProjectConfig();
     panels.forEach(render);
+    document.querySelectorAll('section[data-project]').forEach((section) => {
+      const panel = section.querySelector('.bookmark-panel');
+      if (panel && sessionStorage.getItem(bookmarkViewKey(panel.dataset.project)) === 'bookmarks') setProjectView(section, true, false);
+    });
   }).catch((error) => panels.forEach((panel) => {
     panel.replaceChildren(node('div', 'bookmark-status', `Закладки недоступны: ${error.message}`));
   }));
+  // Страница обновляет живые контейнеры, но не рвёт форму, в которую человек
+  // прямо сейчас вводит новую ссылку. Закрыли форму — следующее обновление
+  // снова подхватит изменения сервисов автоматически.
+  setInterval(() => {
+    if (!document.querySelector('.bookmark-form-wrap:not([hidden])')) location.reload();
+  }, 30000);
 })();
 </script>
 BOOKMARKS_SCRIPT
