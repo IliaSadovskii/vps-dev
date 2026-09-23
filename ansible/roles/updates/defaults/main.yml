@@ -122,6 +122,16 @@ updates_services:
     ref: dbgate/dbgate
     strip_v: true
     image: "dbgate/dbgate:{tag}"
+  - id: paseo
+    name: Paseo
+    var: paseo_version
+    tags: [paseo]
+    source: npm
+    ref: "@getpaseo/cli"
+    strip_v: false
+    warn: >-
+      Второй клиент к тем же агентам, что и aoe; смена версии
+      перезапускает демон, и открытые в нём сессии оборвутся.
 
 # Как часто спрашивать источники, что вышло. Релизы выходят не чаще
 # нескольких раз в неделю, поэтому раз в час — с запасом.
