@@ -83,6 +83,17 @@
     state: "{{ 'restarted' if (paseo_installed.changed | default(false) or paseo_unit.changed) else 'started' }}"
   when: not (ansible_check_mode and not (paseo_unit_exists.stat.exists | default(false)))
 
+- name: Демон слушает порт
+  # systemd считает службу запущенной сразу после exec: если новая версия
+  # не приняла командную строку, модуль выше всё равно вернёт успех, а
+  # демон уйдёт в цикл перезапусков. Страница обновлений судит по коду
+  # выкатки — без этой проверки она покажет «успешно» над мёртвой службой.
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ paseo_port }}"
+    timeout: 120
+  when: not ansible_check_mode
+
 - name: Куда смотреть
   ansible.builtin.debug:
     msg: >-
