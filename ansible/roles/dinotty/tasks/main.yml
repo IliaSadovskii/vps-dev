@@ -9,6 +9,10 @@
   ansible.builtin.set_fact:
     dinotty_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
 
+- name: Имя файла релиза
+  ansible.builtin.set_fact:
+    dinotty_asset: "dinotty-server_{{ dinotty_version }}-1_{{ dinotty_arch }}.deb"
+
 # --- ttyd, на чьё место пришёл этот терминал --------------------------------
 # Роль terminal из репозитория удалена, но с уже настроенной машины службу
 # должен убрать кто-то: удалённая роль не выполняется и ничего не сносит.
@@ -184,11 +188,43 @@
 - name: Поставить dinotty {{ dinotty_version }}
   when: dinotty_needs_install and not ansible_check_mode
   block:
+    - name: Сумма из репозитория, если эта версия там записана
+      ansible.builtin.set_fact:
+        dinotty_sha256: "{{ (dinotty_deb_sha256[dinotty_version] | default({}))[dinotty_arch] | default('', true) }}"
+
+    - name: Версия выбрана на машине — спросить сумму у релиза
+      # Версию поднимают кнопкой на :8072, и в репозиторий она не попадает
+      # (см. defaults). Сумму тогда берём у самого релиза: GitHub считает её
+      # для вложения сам и отдаёт полем digest.
+      when: not dinotty_sha256
+      block:
+        - name: Вложения релиза v{{ dinotty_version }}
+          ansible.builtin.uri:
+            url: "https://api.github.com/repos/xichan96/dinotty/releases/tags/v{{ dinotty_version }}"
+            headers:
+              Accept: application/vnd.github+json
+          register: dinotty_release
+
+        - name: Взять сумму нужного вложения
+          ansible.builtin.set_fact:
+            dinotty_sha256: "{{ (dinotty_release.json.assets | selectattr('name', 'equalto', dinotty_asset) | map(attribute='digest') | first | default('', true)) | replace('sha256:', '') }}"
+
+        - name: Без суммы пакет не ставим
+          # Чаще всего это значит, что вложения под эту архитектуру у релиза
+          # просто нет: у v0.28.0, например, опубликован только amd64.
+          ansible.builtin.assert:
+            that: dinotty_sha256 | length == 64
+            fail_msg: >-
+              У релиза dinotty v{{ dinotty_version }} нет вложения
+              {{ dinotty_asset }} с контрольной суммой. Выберите другую
+              версию на странице обновлений (:8072) или верните прежнюю
+              кнопкой «вернуть».
+
     - name: Скачать пакет с проверкой контрольной суммы
       ansible.builtin.get_url:
-        url: "https://github.com/xichan96/dinotty/releases/download/v{{ dinotty_version }}/dinotty-server_{{ dinotty_version }}-1_{{ dinotty_arch }}.deb"
+        url: "https://github.com/xichan96/dinotty/releases/download/v{{ dinotty_version }}/{{ dinotty_asset }}"
         dest: "/tmp/dinotty-server-{{ dinotty_version }}-{{ dinotty_arch }}.deb"
-        checksum: "sha256:{{ dinotty_deb_sha256[dinotty_arch] }}"
+        checksum: "sha256:{{ dinotty_sha256 }}"
         mode: '0644'
       register: dinotty_download
 
