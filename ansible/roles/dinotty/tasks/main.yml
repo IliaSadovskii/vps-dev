@@ -207,7 +207,11 @@
 
         - name: Взять сумму нужного вложения
           ansible.builtin.set_fact:
-            dinotty_sha256: "{{ (dinotty_release.json.assets | selectattr('name', 'equalto', dinotty_asset) | map(attribute='digest') | first | default('', true)) | replace('sha256:', '') }}"
+            dinotty_sha256: >-
+              {{ dinotty_release.json.assets
+              | selectattr('name', 'equalto', dinotty_asset)
+              | map(attribute='digest') | first | default('', true)
+              | replace('sha256:', '') }}
 
         - name: Без суммы пакет не ставим
           # Чаще всего это значит, что вложения под эту архитектуру у релиза
