@@ -138,7 +138,9 @@ jobs:
         with:
           oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
-          tags: tag:ci
+          # Свой тег, если сеть общая с продом и tag:ci отдан его выкатке
+          # (переменная репозитория TAILSCALE_CI_TAG, например tag:ci-dev).
+          tags: ${{ vars.TAILSCALE_CI_TAG || 'tag:ci' }}
 
       # Образ с Ansible собирается минуту, а меняется редко — кэшируем
       # по содержимому runner/. Попал в кэш — загрузка за секунды.
