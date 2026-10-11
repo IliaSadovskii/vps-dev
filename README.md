@@ -58,6 +58,10 @@ VS Code, терминал и файлы в браузере, Docker для пр�
 ```
 
 `tag:server` — сервер, `tag:ci` — раннер GitHub на время прогона.
+Сеть общая с продом и `tag:ci` уже отдан его выкатке — заведи раннеру свой
+тег (например `tag:ci-dev` с доступом только к SSH этой машины) и впиши его
+в переменную репозитория `TAILSCALE_CI_TAG` (`Settings → Secrets and
+variables → Actions → Variables`); клиенту раннера — тот же тег.
 
 **OAuth-клиенты** (`Settings → OAuth clients → Generate OAuth client`).
 Два, чтобы отзывались независимо:
