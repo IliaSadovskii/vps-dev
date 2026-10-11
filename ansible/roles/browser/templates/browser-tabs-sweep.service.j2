@@ -1,0 +1,10 @@
+# Управляется Ansible: roles/browser/templates/browser-tabs-sweep.service.j2
+[Unit]
+Description=Уборка вкладок общего браузера
+
+[Service]
+Type=oneshot
+Environment=BROWSER_SWEEP_CDP=http://{{ browser_cdp_host }}:{{ browser_cdp_port }}
+Environment=BROWSER_SWEEP_STATE={{ browser_state_dir }}/tabs-seen.json
+Environment=BROWSER_SWEEP_MAX_AGE={{ browser_sweep_max_age }}
+ExecStart=/usr/local/sbin/browser-tabs-sweep

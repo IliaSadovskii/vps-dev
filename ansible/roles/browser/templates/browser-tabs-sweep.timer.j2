@@ -1,0 +1,10 @@
+# Управляется Ansible: roles/browser/templates/browser-tabs-sweep.timer.j2
+[Unit]
+Description=Уборка вкладок общего браузера, раз в {{ browser_sweep_every }}
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec={{ browser_sweep_every }}
+
+[Install]
+WantedBy=timers.target

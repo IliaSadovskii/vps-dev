@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""Уборка вкладок общего браузера: агенты забывают их закрывать, и Chromium
+упирается в потолок памяти и перестаёт отвечать всем (2026-10-11 — 19 вкладок).
+
+Закрывает вкладку, если её адрес — 127.0.0.1:<порт>, где никто не слушает
+(стенд погашен), или если она открыта дольше BROWSER_SWEEP_MAX_AGE секунд.
+Возраст — с первого раза, как уборка её увидела: протокол его не сообщает.
+Одна вкладка остаётся всегда — без вкладок посредник агента теряет браузер.
+"""
+import json
+import os
+import socket
+import sys
+import time
+import urllib.parse
+import urllib.request
+
+CDP = os.environ.get("BROWSER_SWEEP_CDP", "http://127.0.0.1:9222")
+STATE = os.environ.get("BROWSER_SWEEP_STATE", "/var/lib/vps-dev/browser/tabs-seen.json")
+MAX_AGE = int(os.environ.get("BROWSER_SWEEP_MAX_AGE", "3600"))
+
+
+def cdp(path, method="GET"):
+    request = urllib.request.Request(CDP + path, method=method)
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return response.read()
+
+
+def stand_is_down(url):
+    parts = urllib.parse.urlsplit(url)
+    if parts.hostname not in ("127.0.0.1", "localhost") or parts.port is None:
+        return False
+    try:
+        socket.create_connection(("127.0.0.1", parts.port), timeout=2).close()
+        return False
+    except OSError:
+        return True
+
+
+def main():
+    try:
+        pages = [p for p in json.loads(cdp("/json/list")) if p.get("type") == "page"]
+    except OSError as error:
+        print(f"браузер не ответил: {error}", file=sys.stderr)
+        return 1
+
+    try:
+        with open(STATE) as handle:
+            seen = json.load(handle)
+    except (OSError, ValueError):
+        seen = {}
+
+    now = int(time.time())
+    seen = {p["id"]: seen.get(p["id"], now) for p in pages}
+    doomed = [p for p in pages if stand_is_down(p["url"]) or now - seen[p["id"]] > MAX_AGE]
+
+    if doomed and len(doomed) == len(pages):
+        cdp("/json/new?about:blank", method="PUT")
+
+    for page in doomed:
+        why = "стенд погашен" if stand_is_down(page["url"]) else "старше срока"
+        try:
+            cdp("/json/close/" + page["id"], method="PUT")
+            print(f"закрыта ({why}): {page['url'][:120]}")
+        except OSError as error:
+            print(f"не закрылась {page['url'][:120]}: {error}", file=sys.stderr)
+        seen.pop(page["id"], None)
+
+    with open(STATE + ".tmp", "w") as handle:
+        json.dump(seen, handle)
+    os.replace(STATE + ".tmp", STATE)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

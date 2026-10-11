@@ -62,3 +62,9 @@ browser_mcp_name: browser
 # промпте и пишется ролью style; в промпт сам браузер не попадает, там
 # только строка «нужен браузер — открой этот файл».
 browser_help_file: /var/lib/vps-dev/style/machine/browser.md
+
+# Уборка вкладок (files/browser-tabs-sweep): агенты забывают закрывать их,
+# и браузер упирается в потолок памяти. Вкладку погашенного стенда — сразу,
+# любую — через час после того, как уборка её увидела.
+browser_sweep_every: 10min
+browser_sweep_max_age: 3600
