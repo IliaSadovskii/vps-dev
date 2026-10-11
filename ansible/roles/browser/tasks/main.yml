@@ -52,6 +52,39 @@
     pull: missing
   when: not (ansible_check_mode and not browser_compose_exists.stat.exists)
 
+- name: Скрипт уборки вкладок
+  ansible.builtin.copy:
+    src: browser-tabs-sweep
+    dest: /usr/local/sbin/browser-tabs-sweep
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Служба и таймер уборки вкладок
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - browser-tabs-sweep.service
+    - browser-tabs-sweep.timer
+  register: browser_sweep_units
+
+- name: Перечитать systemd, если юнит изменился  # noqa: no-handler
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: browser_sweep_units.changed
+
+- name: Таймер уборки вкладок включён
+  ansible.builtin.systemd:
+    name: browser-tabs-sweep.timer
+    enabled: true
+    state: started
+  # На свежей машине в сухом прогоне юнита ещё нет.
+  ignore_errors: "{{ ansible_check_mode }}"
+
 # ═══ Посредник ═══════════════════════════════════════════════════════
 
 - name: Есть ли уже npm
