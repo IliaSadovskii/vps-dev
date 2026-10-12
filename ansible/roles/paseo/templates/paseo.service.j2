@@ -9,6 +9,9 @@ Type=simple
 # находит claude/codex/opencode на его $PATH и их логин, без своей копии.
 User={{ base_deploy_user }}
 WorkingDirectory={{ base_projects_dir }}
+# ~/.local/bin первым, как у входа по SSH (~/.profile): systemd его не
+# добавляет, и агенты с панелью PR звали бы /usr/bin/gh мимо личных обёрток.
+Environment=PATH=/home/{{ base_deploy_user }}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin
 # Только loopback: в частную сеть отдаёт ports-web через общий прокси, как
 # и остальные службы машины (см. roles/aoe).
 #
