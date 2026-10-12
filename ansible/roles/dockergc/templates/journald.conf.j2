@@ -1,0 +1,4 @@
+# Управляется Ansible: roles/dockergc/templates/journald.conf.j2
+# Потолок журнала systemd — см. journald_system_max_use в defaults роли.
+[Journal]
+SystemMaxUse={{ journald_system_max_use }}

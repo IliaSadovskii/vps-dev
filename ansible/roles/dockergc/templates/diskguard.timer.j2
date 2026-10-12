@@ -1,0 +1,11 @@
+# Управляется Ansible: roles/dockergc/templates/diskguard.timer.j2
+[Unit]
+Description=Сторож диска, раз в час
+
+[Timer]
+OnCalendar={{ diskguard_oncalendar }}
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

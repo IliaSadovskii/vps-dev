@@ -7,12 +7,15 @@
 # (worktree снесён, а контейнеры/образы остались) и упавшие контейнеры,
 # на которые никто не посмотрел. Слепой `prune -a` снёс бы и образ,
 # который просто ждёт следующего `docker compose up` того же проекта.
-# Поэтому три отдельных, каждое — по своему точному признаку:
+# Поэтому несколько отдельных правил, каждое — по своему точному признаку:
 #
 #  1. Контейнер осиротевшего проекта: рабочий каталог compose-проекта
 #     (`com.docker.compose.project.working_dir`) физически исчез — это и
-#     есть «worktree задачи снесли». Контейнер и его тома снимаются сразу,
-#     без выдержки: раз каталога нет, вернуться к работе с ним нельзя.
+#     есть «worktree задачи снесли». Контейнер снимается сразу, без
+#     выдержки: раз каталога нет, вернуться к работе с ним нельзя. Тома
+#     проекта — тоже, но только если у проекта не осталось ни одного
+#     контейнера с живым каталогом и проект не в списке защищённых: копия
+#     стенда может носить то же имя проекта, что и живой стенд.
 #  2. Любой другой остановленный контейнер — раз каталог проекта на месте,
 #     удаление откладывается на `DOCKERGC_EXITED_GRACE_HOURS`: время
 #     заметить неожиданное падение и посмотреть логи, прежде чем контейнер
@@ -23,34 +26,62 @@
 #     остановленный) дольше `DOCKERGC_IMAGE_GRACE_HOURS`. Это ровно тот
 #     случай, который и запустил разбор: контейнеры задачи давно снесли
 #     руками, а шесть версий образа остались лежать на диске.
+#  4. Скачанный образ, вытесненный другой версией того же образа: dozzle
+#     v10 без контейнера, когда работает dozzle v11. Остаётся после каждого
+#     обновления службы со страницы :8072. Плюс висячие слои без имени.
+#  5. Том, на который не смотрит ни один контейнер, у проекта без единого
+#     контейнера, — дольше `DOCKERGC_VOLUME_GRACE_HOURS` подряд. Это
+#     `docker compose down` без `-v` у второго стенда и безымянные тома
+#     `docker run` без `--rm`. Когда том перестал использоваться, Docker не
+#     помнит, поэтому скрипт ведёт свой учёт (volumes-seen.json): первое
+#     наблюдение только записывается, снос — через выдержку после него.
+#     НЕ трогает: тома защищённых проектов (`DOCKERGC_PROTECTED_PROJECTS` —
+#     живые стенды, данные которых нужны, даже когда они погашены), тома с
+#     меткой `vps-dev.keep`, именованные тома без метки compose (их кто-то
+#     создал руками и намеренно).
 #
-# Кэш сборки (`docker builder prune`) убирается отдельно, тоже по возрасту:
-# он ничей, воссоздаётся сам на следующей сборке, трогать его безопаснее
-# всего.
+# Кэш сборки (`docker builder prune`) убирается по возрасту и по потолку
+# размера: он ничей, воссоздаётся сам на следующей сборке, трогать его
+# безопаснее всего. Потолок дублирует builder.gc из daemon.json — тот
+# действует только с перезапуска движка, а этот — с первого прогона.
 #
-# Ничего не трогает: работающие контейнеры, образы младше выдержки, тома
-# без метки compose-проекта, образы без метки compose (postgres, redis,
-# node и прочие с Docker Hub) — `docker rmi` в любом случае откажется
-# снести образ, на который смотрит хоть один контейнер, так что вторая
-# метка того же образа под другим тегом не пострадает.
+# --hard: жёсткий проход, его зовёт сторож диска (vps-dev-disk-guard), когда
+# диск заполнен выше порога. Весь кэш сборки и все образы без контейнеров,
+# включая скачанные (перекачаются при следующем запуске). Правила для томов
+# и контейнеров в жёстком проходе НЕ строже обычных: данные стендов по
+# заполненности диска не сносятся, только по своим признакам.
+#
+# Ничего не трогает: работающие контейнеры и их тома, образы младше
+# выдержки (кроме --hard). `docker rmi` в любом случае откажется снести
+# образ, на который смотрит хоть один контейнер.
 #
 # ЛОГ. Каждый прогон дописывает строку в DOCKERGC_LOG_FILE — что снесено и
 # сколько освобождено; прогон, где сносить нечего, тоже пишет строку,
-# чтобы по пустому журналу было видно, что таймер вообще ходит.
+# чтобы по пустому журналу было видно, что таймер вообще ходит. Те же
+# строки идут в stdout — их пересказывает в уведомлении сторож диска.
 
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
 
 EXITED_GRACE_H = float(os.environ.get("DOCKERGC_EXITED_GRACE_HOURS", "24"))
 IMAGE_GRACE_H = float(os.environ.get("DOCKERGC_IMAGE_GRACE_HOURS", "72"))
+VOLUME_GRACE_H = float(os.environ.get("DOCKERGC_VOLUME_GRACE_HOURS", "24"))
 BUILDCACHE_MAX_AGE_H = float(os.environ.get("DOCKERGC_BUILDCACHE_MAX_AGE_HOURS", "168"))
+BUILDCACHE_MAX_SIZE = os.environ.get("DOCKERGC_BUILDCACHE_MAX_SIZE", "5GB")
+PROTECTED = {p for p in os.environ.get("DOCKERGC_PROTECTED_PROJECTS", "").replace(",", " ").split() if p}
 LOG_FILE = os.environ.get("DOCKERGC_LOG_FILE", "/var/lib/vps-dev/dockergc/dockergc.log")
+SEEN_FILE = os.path.join(os.path.dirname(LOG_FILE), "volumes-seen.json")
+KEEP_LABEL = "vps-dev.keep"
 # --dry-run (или DOCKERGC_DRY_RUN=1): показать, что снесётся, ничего не
 # трогая. Таймер его не передаёт; только руками, когда меняешь пороги.
 DRY_RUN = "--dry-run" in sys.argv or os.environ.get("DOCKERGC_DRY_RUN") == "1"
+HARD = "--hard" in sys.argv
+
+ANON_VOLUME = re.compile(r"^[0-9a-f]{64}$")
 
 
 def run(*args, check=False):
@@ -65,20 +96,19 @@ def mutate(*args):
     return run(*args)
 
 
+def inspect(kind, ids):
+    if not ids:
+        return []
+    res = run(kind, "inspect", *ids) if kind else run("inspect", *ids)
+    return json.loads(res.stdout or "[]")
+
+
 def docker_ps_all():
-    out = run("ps", "-a", "-q").stdout.split()
-    if not out:
-        return []
-    return json.loads(run("inspect", *out).stdout)
+    return inspect(None, run("ps", "-a", "-q").stdout.split())
 
 
-def docker_images_with_label(label):
-    out = run("images", "-a", "-q", "--no-trunc").stdout.split()
-    if not out:
-        return []
-    ids = sorted(set(out))
-    data = json.loads(run("inspect", *ids).stdout)
-    return [img for img in data if label in (img.get("Config", {}).get("Labels") or {})]
+def docker_images_all():
+    return inspect("image", sorted(set(run("images", "-a", "-q", "--no-trunc").stdout.split())))
 
 
 def age_hours(iso_stamp):
@@ -98,15 +128,83 @@ def age_hours(iso_stamp):
         return None
 
 
+def labels_of(obj):
+    return (obj.get("Config", {}).get("Labels") if "Config" in obj else obj.get("Labels")) or {}
+
+
+def protected(project, name=""):
+    """Проект из списка защищённых — по метке или по префиксу имени тома
+    (`listate_postgres-data`), если метки нет."""
+    if project and project in PROTECTED:
+        return True
+    return bool(name) and name.split("_", 1)[0] in PROTECTED
+
+
+def volume_size(vol):
+    mp = vol.get("Mountpoint")
+    if not mp:
+        return 0
+    res = subprocess.run(["du", "-sb", mp], capture_output=True, text=True)
+    try:
+        return int(res.stdout.split()[0])
+    except (IndexError, ValueError):
+        return 0
+
+
+def human(n):
+    return f"{n / 1024 / 1024 / 1024:.1f} ГБ" if n >= 1 << 30 else f"{n / 1024 / 1024:.0f} МБ"
+
+
+def short(name):
+    return name[:12] if ANON_VOLUME.match(name) else name
+
+
+def load_seen():
+    try:
+        with open(SEEN_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_seen(seen):
+    if DRY_RUN:
+        return
+    os.makedirs(os.path.dirname(SEEN_FILE), exist_ok=True)
+    tmp = SEEN_FILE + ".new"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(seen, f, indent=1, sort_keys=True)
+    os.replace(tmp, SEEN_FILE)
+
+
+def reclaimed_total(res):
+    for line in res.stdout.splitlines():
+        if "Total" in line and ":" in line:
+            value = line.split(":")[-1].strip()
+            if value and value not in ("0B", "0 B"):
+                return value
+    return ""
+
+
 def main():
     report = []
     containers = docker_ps_all()
+
+    # Проекты, у которых есть хоть один контейнер с живым каталогом.
+    # Их тома не снимаются ни правилом 1, ни правилом 5.
+    live_projects = set()
+    for c in containers:
+        labels = labels_of(c)
+        project = labels.get("com.docker.compose.project")
+        workdir = labels.get("com.docker.compose.project.working_dir")
+        if project and (not workdir or os.path.isdir(workdir)):
+            live_projects.add(project)
 
     # 1) Осиротевшие проекты: рабочего каталога compose-проекта уже нет.
     orphan_ids = set()
     orphan_projects = {}
     for c in containers:
-        labels = (c.get("Config", {}).get("Labels") or {})
+        labels = labels_of(c)
         workdir = labels.get("com.docker.compose.project.working_dir")
         project = labels.get("com.docker.compose.project")
         if workdir and project and not os.path.isdir(workdir):
@@ -117,62 +215,143 @@ def main():
     for cid in orphan_ids:
         mutate("rm", "-f", cid)
     for project, info in orphan_projects.items():
-        vols = run("volume", "ls", "-q", "--filter", f"label=com.docker.compose.project={project}").stdout.split()
-        for v in vols:
-            mutate("volume", "rm", v)
+        vols = []
+        may_remove = project not in live_projects and not protected(project)
+        if may_remove:
+            vols = run("volume", "ls", "-q", "--filter", f"label=com.docker.compose.project={project}").stdout.split()
+            for v in vols:
+                mutate("volume", "rm", v)
+        kept = "" if may_remove else " (тома оставлены: проект жив или защищён)"
         report.append(
             f"проект «{project}»: папки {info['workdir']} больше нет — "
-            f"контейнеров {info['n']}, томов {len(vols)}"
+            f"контейнеров {info['n']}, томов {len(vols)}{kept}"
         )
 
     # 2) Остальные остановленные контейнеры — по выдержке.
-    grace_removed = []
+    grace_removed = set()
     for c in containers:
         if c["Id"] in orphan_ids:
             continue
         state = c.get("State", {})
-        if state.get("Status") != "exited":
+        if state.get("Status") not in ("exited", "created", "dead"):
             continue
-        hours = age_hours(state.get("FinishedAt"))
+        hours = age_hours(state.get("FinishedAt")) or age_hours(c.get("Created"))
         if hours is not None and hours >= EXITED_GRACE_H:
-            name = (c.get("Name") or c["Id"][:12]).lstrip("/")
             mutate("rm", c["Id"])
-            grace_removed.append(name)
+            grace_removed.add(c["Id"])
     if grace_removed:
+        names = [(c.get("Name") or c["Id"][:12]).lstrip("/") for c in containers if c["Id"] in grace_removed]
+        report.append(f"остановленные контейнеры старше {EXITED_GRACE_H:.0f} ч: {', '.join(names)}")
+
+    # Что осталось после правил 1–2: на эти образы и тома ещё смотрят.
+    remaining = [c for c in containers if c["Id"] not in orphan_ids and c["Id"] not in grace_removed]
+    used_images = {c["Image"] for c in remaining}
+    used_volumes = {m.get("Name") for c in remaining for m in c.get("Mounts", []) if m.get("Type") == "volume"}
+    projects_with_containers = {labels_of(c).get("com.docker.compose.project") for c in remaining} - {None}
+
+    # 3–4) Образы.
+    images = docker_images_all()
+    # Репозиторий → самый ранний Created среди образов, которые сейчас в ходу.
+    # Вытесненной считается только версия СТАРШЕ работающей: postgres:18,
+    # скачанный на прошлой неделе рядом с работающим postgres:18.6, — это
+    # другой вариант, а не прошлая версия, и он может ждать своего compose.
+    used_repos = {}
+    for img in images:
+        if img["Id"] in used_images:
+            for t in img.get("RepoTags") or []:
+                repo = t.rsplit(":", 1)[0]
+                used_repos[repo] = min(used_repos.get(repo, img.get("Created", "")), img.get("Created", ""))
+    image_removed = []
+    superseded = []
+    if HARD:
+        res = mutate("image", "prune", "-af")
+        total = reclaimed_total(res)
+        report.append("жёсткий проход: все образы без контейнеров" + (f", освобождено {total}" if total else ""))
+    else:
+        for img in images:
+            iid = img["Id"]
+            if iid in used_images:
+                continue
+            tags = img.get("RepoTags") or []
+            hours = age_hours((img.get("Metadata") or {}).get("LastTagTime")) or age_hours(img.get("Created"))
+            if hours is None or hours < IMAGE_GRACE_H:
+                continue
+            if "com.docker.compose.project" in labels_of(img):
+                if mutate("rmi", iid).returncode == 0:
+                    image_removed.extend(tags or [iid[:19]])
+            elif tags and all(img.get("Created", "") < used_repos.get(t.rsplit(":", 1)[0], "") for t in tags):
+                if mutate("rmi", iid).returncode == 0:
+                    superseded.extend(tags)
+        if image_removed:
+            report.append(f"образы проектов без контейнеров старше {IMAGE_GRACE_H:.0f} ч: {', '.join(image_removed)}")
+        if superseded:
+            report.append(f"образы, вытесненные новой версией: {', '.join(superseded)}")
+        total = reclaimed_total(mutate("image", "prune", "-f"))
+        if total:
+            report.append(f"висячие слои без имени: освобождено {total}")
+
+    # 5) Тома без контейнеров — по своей выдержке, с учётом в volumes-seen.json.
+    seen = load_seen()
+    now = datetime.now(timezone.utc).timestamp()
+    still_seen = {}
+    vol_removed, vol_waiting = [], []
+    for vol in inspect("volume", run("volume", "ls", "-q").stdout.split()):
+        name = vol["Name"]
+        labels = vol.get("Labels") or {}
+        project = labels.get("com.docker.compose.project")
+        if name in used_volumes or KEEP_LABEL in labels:
+            continue
+        if protected(project, name):
+            continue
+        if project:
+            if project in projects_with_containers:
+                continue
+        elif not ANON_VOLUME.match(name):
+            continue  # именованный руками — намеренно
+        first = seen.get(name, now)
+        still_seen[name] = first
+        size = volume_size(vol)
+        idle_h = (now - first) / 3600
+        if idle_h >= VOLUME_GRACE_H and (age_hours(vol.get("CreatedAt")) or 0) >= VOLUME_GRACE_H:
+            if mutate("volume", "rm", name).returncode == 0:
+                vol_removed.append((name, size))
+                still_seen.pop(name, None)
+        else:
+            vol_waiting.append((name, size, VOLUME_GRACE_H - idle_h))
+    save_seen(still_seen)
+    if vol_removed:
+        total = sum(s for _, s in vol_removed)
         report.append(
-            f"остановленные контейнеры старше {EXITED_GRACE_H:.0f} ч: {', '.join(grace_removed)}"
+            f"тома без контейнеров дольше {VOLUME_GRACE_H:.0f} ч ({human(total)}): "
+            + ", ".join(f"{short(n)} {human(s)}" for n, s in vol_removed)
+        )
+    if vol_waiting:
+        report.append(
+            "тома без контейнеров, снос после выдержки: "
+            + ", ".join(f"{short(n)} {human(s)} (через {max(h, 0):.0f} ч)" for n, s, h in vol_waiting)
         )
 
-    # 3) Образы compose-проектов без единого контейнера — по своей выдержке.
-    live_image_ids = {c["Image"] for c in containers if c["Id"] not in orphan_ids}
-    image_removed = []
-    for img in docker_images_with_label("com.docker.compose.project"):
-        iid = img["Id"]
-        if iid in live_image_ids:
-            continue
-        hours = age_hours(img.get("Created"))
-        if hours is None or hours < IMAGE_GRACE_H:
-            continue
-        tags = img.get("RepoTags") or [iid[:19]]
-        res = mutate("rmi", iid)
-        if res.returncode == 0:
-            image_removed.extend(tags)
-    if image_removed:
-        report.append(f"образы без контейнеров старше {IMAGE_GRACE_H:.0f} ч: {', '.join(image_removed)}")
+    # 6) Кэш сборки: старше недели — целиком, остальное — до потолка размера.
+    if HARD:
+        total = reclaimed_total(mutate("builder", "prune", "-af"))
+        if total:
+            report.append(f"жёсткий проход: весь кэш сборки, освобождено {total}")
+    else:
+        total = reclaimed_total(mutate("builder", "prune", "-af", f"--filter=until={int(BUILDCACHE_MAX_AGE_H)}h"))
+        if total:
+            report.append(f"кэш сборки старше {BUILDCACHE_MAX_AGE_H:.0f} ч: освобождено {total}")
+        total = reclaimed_total(mutate("builder", "prune", "-af", f"--max-used-space={BUILDCACHE_MAX_SIZE}"))
+        if total:
+            report.append(f"кэш сборки сверх {BUILDCACHE_MAX_SIZE}: освобождено {total}")
 
-    # 4) Кэш сборки старше недели — свой, воссоздаётся сам.
-    cache_res = mutate("builder", "prune", "-af", f"--filter=until={int(BUILDCACHE_MAX_AGE_H)}h")
-    reclaimed = ""
-    for line in cache_res.stdout.splitlines():
-        if "Total:" in line:
-            reclaimed = line.split("Total:")[-1].strip()
-    if reclaimed and reclaimed not in ("0B", "0 B"):
-        report.append(f"кэш сборки старше {BUILDCACHE_MAX_AGE_H:.0f} ч: освобождено {reclaimed}")
-
+    for line in report:
+        print(line)
+    if DRY_RUN:
+        return
     os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
     with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(f"=== {stamp} ===\n")
+        f.write(f"=== {stamp}{' (жёсткий проход)' if HARD else ''} ===\n")
         f.write("\n".join(report) if report else "нечего убирать")
         f.write("\n")
 

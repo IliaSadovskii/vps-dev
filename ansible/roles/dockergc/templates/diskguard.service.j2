@@ -1,0 +1,37 @@
+# Управляется Ansible: roles/dockergc/templates/diskguard.service.j2
+[Unit]
+Description=Сторож диска: брошенные копии стендов и жёсткая уборка при заполнении
+After=docker.service
+
+[Service]
+Type=oneshot
+# root: зовёт уборку Docker и кэшей (им нужен root, см. их юниты) и снимает
+# чужие копии в /tmp. git внутри копий — от имени {{ base_deploy_user }}.
+User=root
+# Ниже всех по приоритету: жёсткий проход идёт, пока агенты работают, и
+# du/find по копиям не должны отнимать у них диск.
+Nice=10
+IOSchedulingClass=idle
+# Те же пороги, что у ежедневной уборки: --hard не строже её по томам.
+Environment=DOCKERGC_LOG_FILE={{ dockergc_log_file }}
+Environment=DOCKERGC_EXITED_GRACE_HOURS={{ dockergc_exited_grace_hours }}
+Environment=DOCKERGC_IMAGE_GRACE_HOURS={{ dockergc_image_grace_hours }}
+Environment=DOCKERGC_BUILDCACHE_MAX_AGE_HOURS={{ dockergc_buildcache_max_age_hours }}
+Environment=DOCKERGC_BUILDCACHE_MAX_SIZE={{ dockergc_buildcache_max_size }}
+Environment=DOCKERGC_VOLUME_GRACE_HOURS={{ dockergc_volume_grace_hours }}
+Environment="DOCKERGC_PROTECTED_PROJECTS={{ dockergc_protected_projects | join(' ') }}"
+Environment=CACHEGC_DEPLOY_USER={{ base_deploy_user }}
+Environment=CACHEGC_LOG_FILE={{ cachegc_log_file }}
+Environment=CACHEGC_JOURNAL_KEEP_DAYS={{ cachegc_journal_keep_days }}
+Environment=DISKGUARD_THRESHOLD_PERCENT={{ diskguard_threshold_percent }}
+Environment=DISKGUARD_IDLE_HOURS={{ diskguard_idle_hours }}
+Environment=DISKGUARD_STANDS_DIRS={{ diskguard_stands_dir }}
+Environment=DISKGUARD_DEPLOY_USER={{ base_deploy_user }}
+Environment=DISKGUARD_HOST={{ inventory_hostname }}
+Environment=DISKGUARD_NOTIFY_EVERY_HOURS={{ diskguard_notify_every_hours }}
+Environment=DISKGUARD_BIN_DIR={{ dockergc_install_dir }}
+Environment=DISKGUARD_LOG_FILE={{ diskguard_log_file }}
+# Адрес темы ntfy — по сути пароль (см. roles/heartbeat), поэтому не в юните,
+# который читают все, а в файле только для root.
+EnvironmentFile=-/etc/vps-dev/diskguard.env
+ExecStart={{ dockergc_install_dir }}/vps-dev-disk-guard

@@ -61,7 +61,10 @@
       # Права только для root: в файле подкачки лежат куски памяти процессов.
       chmod 600 "$tmp"
       chown root:root "$tmp"
-      mkswap "$tmp"
+      # Вывод mkswap — в никуда: stdout этой задачи читается как имя файла
+      # (base_swap_new_file ниже), и однажды две строки mkswap уже уехали
+      # в /etc/fstab мусорными записями.
+      mkswap "$tmp" >/dev/null
       mv "$tmp" "$name"
       swapon "$name"
       echo "$name"
@@ -81,4 +84,109 @@
   # её не увидит, потому что notify выше сработал только при реальном
   # изменении.
   ansible.builtin.set_fact:
-    base_swap_new_file: "{{ base_swap_created.stdout | default('') | trim }}"
+    base_swap_new_file: "{{ (base_swap_created.stdout_lines | default([]) | last) | default('') | trim }}"
+
+# ═══ Уменьшение ══════════════════════════════════════════════════════
+#
+# Своп на диске — это место: 12 ГБ файла были шестой частью всего диска.
+# Уменьшаем, только когда своп ровно один и это наш /swapfile: чужие
+# устройства (раздел, второй файл руками) не трогаем, а только говорим.
+#
+# Без окна «совсем без подкачки»: сначала включается временный файл нужного
+# размера, страницы переезжают на него с /swapfile при swapoff, /swapfile
+# пересоздаётся меньшим, и временный выключается — страницы переезжают
+# обратно. Условие — занятое сейчас помещается в новый размер с запасом
+# в гигабайт и на диске есть место под временный файл. Не выполнено —
+# задача пропускается и говорит почему; следующий прогон попробует снова.
+
+- name: Сколько подкачки занято и какие устройства подключены
+  ansible.builtin.shell:
+    cmd: set -o pipefail; awk 'NR>1 {print $1, $3, $4}' /proc/swaps
+    executable: /bin/bash
+  changed_when: false
+  check_mode: false
+  register: base_swap_devices
+
+- name: Нужно ли уменьшать подкачку
+  ansible.builtin.set_fact:
+    base_swap_shrink: >-
+      {{ (base_swap_current_kib.stdout | int) - (base_swap_target_kib | int) > (base_swap_tolerance_kib | int)
+         and base_swap_devices.stdout_lines | length == 1
+         and base_swap_devices.stdout_lines[0].split()[0] == '/swapfile' }}
+    base_swap_used_kib: "{{ (base_swap_devices.stdout_lines[0].split()[2] | int) if base_swap_devices.stdout_lines | length > 0 else 0 }}"
+
+- name: Сказать, что подкачки больше нужного, но устройство не наше
+  ansible.builtin.debug:
+    msg: >-
+      Подкачки {{ ((base_swap_current_kib.stdout | int) / 1048576) | round(1) }} ГБ при
+      base_swap_size_gb={{ base_swap_size_gb }}, но устройства не одно /swapfile
+      ({{ base_swap_devices.stdout_lines | join('; ') }}) — уменьшать не берусь.
+  when:
+    - (base_swap_current_kib.stdout | int) - (base_swap_target_kib | int) > (base_swap_tolerance_kib | int)
+    - not base_swap_shrink
+
+- name: Сказать, что в сухом прогоне подкачка не уменьшается
+  ansible.builtin.debug:
+    msg: >-
+      Сухой прогон: /swapfile будет уменьшен
+      с {{ ((base_swap_current_kib.stdout | int) / 1048576) | round(1) }} до {{ base_swap_size_gb }} ГБ
+      (занято сейчас {{ ((base_swap_used_kib | int) / 1048576) | round(1) }} ГБ).
+  when: base_swap_shrink and ansible_check_mode
+
+- name: "Уменьшить /swapfile до размера в ГБ — {{ base_swap_size_gb }}"
+  when: base_swap_shrink
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      target={{ base_swap_size_gb | int }}G
+      used_kib={{ base_swap_used_kib | int }}
+      need_kib=$(( {{ base_swap_target_kib | int }} - 1048576 ))
+      if [ "$used_kib" -gt "$need_kib" ]; then
+        echo "занято ${used_kib} КиБ подкачки — в ${target} с запасом не помещается, пропускаю" >&2
+        exit 3
+      fi
+      free_kib=$(df --output=avail -k / | tail -1)
+      if [ "$free_kib" -lt $(( {{ base_swap_target_kib | int }} + 2097152 )) ]; then
+        echo "на диске нет места под временный файл подкачки, пропускаю" >&2
+        exit 3
+      fi
+      tmp=/swapfile.shrink
+      swapoff "$tmp" 2>/dev/null || true
+      rm -f "$tmp" /swapfile.new
+      fallocate -l "$target" "$tmp"
+      chmod 600 "$tmp"
+      mkswap "$tmp" >/dev/null
+      swapon "$tmp"
+      swapoff /swapfile
+      rm -f /swapfile
+      fallocate -l "$target" /swapfile.new
+      chmod 600 /swapfile.new
+      mkswap /swapfile.new >/dev/null
+      mv /swapfile.new /swapfile
+      swapon /swapfile
+      swapoff "$tmp"
+      rm -f "$tmp"
+    executable: /bin/bash
+  register: base_swap_shrunk
+  # Код 3 — «условие не выполнено», не авария: прогон идёт дальше.
+  failed_when: base_swap_shrunk.rc not in [0, 3]
+  changed_when: base_swap_shrunk.rc == 0
+
+- name: Сказать, почему подкачка не уменьшена
+  ansible.builtin.debug:
+    msg: "{{ base_swap_shrunk.stderr }}"
+  when:
+    - base_swap_shrunk is not skipped
+    - base_swap_shrunk.rc | default(0) == 3
+
+- name: Убрать из fstab мусор от прежнего вывода mkswap
+  # Две строки вида «Setting\040up\040swapspace…» и «no\040label,\040UUID=…»
+  # попали туда, когда имя нового файла читалось из всего stdout задачи
+  # (исправлено выше). systemd на загрузке на них ругается.
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '{{ item }}'
+    state: absent
+  loop:
+    - '^Setting\\040up\\040swapspace'
+    - '^no\\040label,'

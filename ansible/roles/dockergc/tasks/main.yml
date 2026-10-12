@@ -1,7 +1,13 @@
 ---
-# Автоматическая уборка Docker — таймер, не веб-страница: смотреть на неё
-# незачем, только журнал в dockergc_log_file на случай вопроса «а что
-# вчера снесло». Подробности критериев — в самом скрипте.
+# Автоматическая уборка диска — таймеры, не веб-страница: смотреть на неё
+# незачем, только журналы в dockergc_state_dir на случай вопроса «а что
+# вчера снесло». Подробности критериев — в самих скриптах.
+#
+#   dockergc   ежедневно   Docker: осиротевшие проекты, контейнеры, образы,
+#                          тома, кэш сборки
+#   cachegc    еженедельно кэши npm/npx, apt, журнал systemd
+#   diskguard  раз в час   брошенные копии стендов; выше порога — жёсткий
+#                          проход обоими скриптами и уведомление в ntfy
 
 - name: Каталог состояния и журнала уборки Docker
   ansible.builtin.file:
@@ -10,6 +16,16 @@
     owner: root
     group: root
     mode: '0755'
+
+- name: Общий каталог вторых стендов и копий репозиториев
+  # setgid и группа владельца — как у самого /projects: копию, созданную
+  # одним агентом, другой может и поднять, и убрать.
+  ansible.builtin.file:
+    path: "{{ diskguard_stands_dir }}"
+    state: directory
+    owner: "{{ base_deploy_user }}"
+    group: "{{ base_deploy_user }}"
+    mode: '2775'
 
 - name: Скрипты уборки
   ansible.builtin.copy:
@@ -21,6 +37,25 @@
   loop:
     - vps-dev-docker-gc
     - vps-dev-cache-gc
+    - vps-dev-disk-guard
+
+- name: Каталог настроек vps-dev
+  ansible.builtin.file:
+    path: /etc/vps-dev
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Адрес уведомлений сторожа диска
+  # Только для root: в адресе тема ntfy, а она по сути пароль.
+  ansible.builtin.template:
+    src: diskguard.env.j2
+    dest: /etc/vps-dev/diskguard.env
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
 
 - name: Службы и таймеры
   ansible.builtin.template:
@@ -34,12 +69,23 @@
     - dockergc.timer
     - cachegc.service
     - cachegc.timer
+    - diskguard.service
+    - diskguard.timer
   register: dockergc_units
 
 - name: Перечитать systemd, если юнит изменился  # noqa: no-handler
   ansible.builtin.systemd:
     daemon_reload: true
   when: dockergc_units.changed
+
+- name: Есть ли уже таймер сторожа
+  # Сухой прогон файл юнита не создаёт, а systemd не умеет включать то,
+  # чего нет.
+  ansible.builtin.stat:
+    path: /etc/systemd/system/diskguard.timer
+  register: diskguard_timer_unit
+  check_mode: false
+  when: ansible_check_mode
 
 - name: Таймеры уборки включены
   ansible.builtin.systemd:
@@ -49,3 +95,41 @@
   loop:
     - dockergc.timer
     - cachegc.timer
+    - diskguard.timer
+  when: not (ansible_check_mode and not (diskguard_timer_unit.stat.exists | default(false)))
+
+- name: Каталог настроек journald
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Потолок журнала systemd
+  ansible.builtin.template:
+    src: journald.conf.j2
+    dest: /etc/systemd/journald.conf.d/vps-dev-size.conf
+    owner: root
+    group: root
+    mode: '0644'
+  register: dockergc_journald
+
+- name: Перечитать настройки journald  # noqa: no-handler
+  # restart, а не reload: размер журнала journald читает только при старте.
+  # Записи при этом не теряются — сокет держит systemd.
+  ansible.builtin.systemd:
+    name: systemd-journald
+    state: restarted
+  when: dockergc_journald.changed and not ansible_check_mode
+
+- name: Срок жизни файлов в /tmp
+  # Файл с тем же именем в /etc/tmpfiles.d замещает системный целиком —
+  # так задумано в systemd-tmpfiles, и следующее обновление пакета его не
+  # затрёт. Подхватывается ближайшим systemd-tmpfiles-clean.timer.
+  ansible.builtin.template:
+    src: tmp.conf.j2
+    dest: /etc/tmpfiles.d/tmp.conf
+    owner: root
+    group: root
+    mode: '0644'
