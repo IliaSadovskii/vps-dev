@@ -1,6 +1,6 @@
 # Управляется Ansible: roles/dockergc/templates/dockergc.service.j2
 [Unit]
-Description=Уборка Docker: осиротевшие проекты, старые контейнеры, старые образы, кэш сборки
+Description=Уборка Docker: осиротевшие проекты, старые контейнеры, образы и тома, кэш сборки
 After=docker.service
 Requires=docker.service
 
@@ -15,4 +15,7 @@ Environment=DOCKERGC_LOG_FILE={{ dockergc_log_file }}
 Environment=DOCKERGC_EXITED_GRACE_HOURS={{ dockergc_exited_grace_hours }}
 Environment=DOCKERGC_IMAGE_GRACE_HOURS={{ dockergc_image_grace_hours }}
 Environment=DOCKERGC_BUILDCACHE_MAX_AGE_HOURS={{ dockergc_buildcache_max_age_hours }}
+Environment=DOCKERGC_BUILDCACHE_MAX_SIZE={{ dockergc_buildcache_max_size }}
+Environment=DOCKERGC_VOLUME_GRACE_HOURS={{ dockergc_volume_grace_hours }}
+Environment="DOCKERGC_PROTECTED_PROJECTS={{ dockergc_protected_projects | join(' ') }}"
 ExecStart={{ dockergc_install_dir }}/vps-dev-docker-gc

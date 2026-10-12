@@ -98,6 +98,27 @@
     state: "{{ 'restarted' if (codeserver_installed.changed | default(false) or codeserver_unit.changed) else 'started' }}"
   when: not (ansible_check_mode and not (codeserver_unit_exists.stat.exists | default(false)))
 
+# Прежние версии рядом с текущей — по 0,7 ГБ каждая, и без этой уборки
+# копятся с каждым обновлением со страницы :8072. Откат ими не держится:
+# он ставит выбранную версию заново тем же блоком выше. После перезапуска
+# службы — старый процесс к этому моменту уже не держит свои файлы.
+- name: Найти прежние версии code-server
+  ansible.builtin.find:
+    paths: "{{ codeserver_install_dir | dirname }}"
+    patterns: "{{ codeserver_install_dir | basename }}-*"
+    excludes: "{{ codeserver_install_dir | basename }}-{{ codeserver_version }}"
+    file_type: directory
+  register: codeserver_old_versions
+  check_mode: false
+
+- name: Убрать прежние версии code-server
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ codeserver_old_versions.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+
 - name: Куда смотреть
   ansible.builtin.debug:
     msg: "VS Code: порт {{ codeserver_port }} на дашборде https://<машина>.ts.net/ — открывается в {{ codeserver_workspace }}."

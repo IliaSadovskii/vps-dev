@@ -1,0 +1,277 @@
+#!/usr/bin/env python3
+# vps-dev-disk-guard — сторож диска: раз в час, по заполненности, а не по
+# возрасту. Остальная уборка (vps-dev-docker-gc ежедневно, vps-dev-cache-gc
+# еженедельно) работает по возрасту, и диск трижды успевал забиться между
+# её проходами: стенд CRM — 3 ГБ слоёв, и три стенда за день съедают запас
+# раньше, чем доходит очередь недельного правила.
+#
+# Каждый час две вещи:
+#
+#  1. Брошенные копии стендов и репозиториев. Агенты раскладывают вторые
+#     стенды в общий каталог (STANDS_DIRS, по умолчанию /projects/.stands —
+#     правило в справке агентам, machine/ports.md) и по старой привычке в
+#     /tmp, а после задачи забывают убрать. Копия считается брошенной,
+#     когда ВСЁ сразу:
+#       - ни один файл в ней не менялся IDLE_HOURS (node_modules и vendor
+#         не смотрим — они меняются от установки, а не от работы);
+#       - ни один работающий контейнер не поднят из неё и ни один процесс
+#         не стоит в ней рабочим каталогом;
+#       - в git ничего не теряется: нет незакоммиченных правок и
+#         неотслеживаемых файлов, нет коммитов вне веток и удалённого
+#         репозитория, нет stash у самостоятельного клона. У worktree
+#         коммиты живут в основном репозитории и с копией не пропадают.
+#     Копию с несохранённой работой сторож не трогает никогда — только
+#     называет в журнале и в уведомлении. В /tmp смотрит лишь на каталоги
+#     верхнего уровня с .git: прочий мусор /tmp — забота systemd-tmpfiles.
+#     После сноса копий зовётся vps-dev-docker-gc: остановленные контейнеры
+#     снесённой копии и их тома он снимает правилом «осиротевший проект».
+#
+#  2. Заполненность. Выше THRESHOLD процентов — жёсткий проход: весь кэш
+#     сборки и все образы без контейнеров (`vps-dev-docker-gc --hard`),
+#     кэши npm и npx (`vps-dev-cache-gc`). Данные стендов (тома) жёсткий
+#     проход не трогает сверх обычных правил: заполненный диск — повод
+#     перекачать образы, но не терять базу. Владельцу уходит уведомление
+#     в ntfy (тот же канал, что у heartbeat): сколько было, сколько стало,
+#     что убрано. Если и после прохода выше порога — второе уведомление
+#     с крупнейшими каталогами, не чаще NOTIFY_EVERY_HOURS.
+#
+# --dry-run: показать, что снеслось бы, ничего не трогая.
+
+import json
+import os
+import pwd
+import shutil
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+
+THRESHOLD = int(os.environ.get("DISKGUARD_THRESHOLD_PERCENT", "80"))
+IDLE_HOURS = float(os.environ.get("DISKGUARD_IDLE_HOURS", "24"))
+STANDS_DIRS = os.environ.get("DISKGUARD_STANDS_DIRS", "/projects/.stands").split()
+TMP_DIR = os.environ.get("DISKGUARD_TMP_DIR", "/tmp")
+DEPLOY_USER = os.environ.get("DISKGUARD_DEPLOY_USER", "dev")
+NTFY_URL = os.environ.get("DISKGUARD_NTFY_URL", "")
+HOST = os.environ.get("DISKGUARD_HOST", os.uname().nodename)
+NOTIFY_EVERY_H = float(os.environ.get("DISKGUARD_NOTIFY_EVERY_HOURS", "6"))
+BIN_DIR = os.environ.get("DISKGUARD_BIN_DIR", "/usr/local/bin")
+LOG_FILE = os.environ.get("DISKGUARD_LOG_FILE", "/var/lib/vps-dev/dockergc/diskguard.log")
+STATE_FILE = os.path.join(os.path.dirname(LOG_FILE), "diskguard.json")
+DRY_RUN = "--dry-run" in sys.argv
+DEPLOY_UID = pwd.getpwnam(DEPLOY_USER).pw_uid
+SKIP_SCAN = ("node_modules", "vendor")
+
+
+def sh(*args, user=None):
+    if user:
+        args = ("runuser", "-u", user, "--", *args)
+    return subprocess.run(list(args), capture_output=True, text=True)
+
+
+def usage():
+    st = os.statvfs("/")
+    total = st.f_blocks * st.f_frsize
+    free = st.f_bavail * st.f_frsize
+    used = total - st.f_bfree * st.f_frsize
+    # Процент как у df: занятое к (занятое + доступное).
+    return round(100 * used / (used + free)), free
+
+
+def gb(n):
+    return f"{n / 1024 ** 3:.1f} ГБ"
+
+
+def du(path):
+    res = sh("du", "-sxb", path)
+    try:
+        return int(res.stdout.split()[0])
+    except (IndexError, ValueError):
+        return 0
+
+
+def recently_touched(path):
+    prune = []
+    for name in SKIP_SCAN:
+        prune += ["-name", name, "-o"]
+    cmd = ["find", path, "-xdev", "(", *prune[:-1], ")", "-prune", "-o",
+           "-mmin", f"-{int(IDLE_HOURS * 60)}", "-print", "-quit"]
+    return bool(subprocess.run(cmd, capture_output=True, text=True).stdout.strip())
+
+
+def busy_paths():
+    paths = set()
+    for pid in os.listdir("/proc"):
+        if pid.isdigit():
+            try:
+                paths.add(os.readlink(f"/proc/{pid}/cwd"))
+            except OSError:
+                pass
+    return paths
+
+
+def running_workdirs():
+    ids = sh("docker", "ps", "-q").stdout.split()
+    if not ids:
+        return set()
+    data = json.loads(sh("docker", "inspect", *ids).stdout or "[]")
+    return {((c.get("Config") or {}).get("Labels") or {}).get("com.docker.compose.project.working_dir") for c in data} - {None}
+
+
+def inside(child, parent):
+    return child == parent or child.startswith(parent.rstrip("/") + "/")
+
+
+def git_unsaved(path):
+    """Почему копию нельзя сносить (пустая строка — можно)."""
+    git = lambda *a: sh("git", "-C", path, *a, user=DEPLOY_USER)
+    status = git("status", "--porcelain")
+    if status.returncode != 0:
+        return "git не читается"
+    if status.stdout.strip():
+        return "незакоммиченные правки"
+    if not git("branch", "-a", "--contains", "HEAD").stdout.strip() and git("rev-parse", "HEAD").returncode == 0:
+        return "коммиты вне веток"
+    if os.path.isdir(os.path.join(path, ".git")):  # самостоятельный клон, не worktree
+        if git("log", "--branches", "--not", "--remotes", "-1", "--format=%h").stdout.strip():
+            return "коммиты не отправлены"
+        if git("stash", "list").stdout.strip():
+            return "есть stash"
+    return ""
+
+
+def candidates():
+    for base in STANDS_DIRS:
+        if os.path.isdir(base):
+            for name in sorted(os.listdir(base)):
+                path = os.path.join(base, name)
+                if os.path.isdir(path) and not os.path.islink(path):
+                    yield path
+    if os.path.isdir(TMP_DIR):
+        for name in sorted(os.listdir(TMP_DIR)):
+            path = os.path.join(TMP_DIR, name)
+            if (os.path.isdir(path) and not os.path.islink(path)
+                    and os.path.exists(os.path.join(path, ".git"))
+                    and os.stat(path).st_uid == DEPLOY_UID):
+                yield path
+
+
+def sweep_stands(report):
+    busy = busy_paths()
+    workdirs = running_workdirs()
+    removed, kept, freed = [], [], 0
+    for path in candidates():
+        if any(inside(p, path) for p in busy) or any(inside(w, path) for w in workdirs):
+            continue
+        if recently_touched(path):
+            continue
+        is_git = os.path.exists(os.path.join(path, ".git"))
+        reason = git_unsaved(path) if is_git else ""
+        if reason:
+            kept.append(f"{path} ({reason})")
+            continue
+        common = ""
+        if is_git and os.path.isfile(os.path.join(path, ".git")):
+            res = sh("git", "-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir", user=DEPLOY_USER)
+            common = res.stdout.strip()
+        size = du(path)
+        if DRY_RUN:
+            print(f"(dry-run) rm -rf {path}  # {gb(size)}")
+        else:
+            shutil.rmtree(path, ignore_errors=True)
+            if common:
+                # Запись о worktree в основном репозитории — иначе git
+                # считал бы его живым и не дал бы взять ту же ветку.
+                sh("git", "--git-dir", common, "worktree", "prune", user=DEPLOY_USER)
+        removed.append(f"{path} {gb(size)}")
+        freed += size
+    if removed:
+        report.append(f"брошенные копии (не тронуты {IDLE_HOURS:.0f} ч, в git ничего не теряется), {gb(freed)}: " + ", ".join(removed))
+    return bool(removed), kept
+
+
+def call(script, *args):
+    cmd = [os.path.join(BIN_DIR, script), *args] + (["--dry-run"] if DRY_RUN else [])
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    return [l for l in res.stdout.splitlines() if l.strip() and not l.startswith("(dry-run)")] + (
+        [f"{script}: ошибка {res.returncode}: {res.stderr.strip()[-300:]}"] if res.returncode else [])
+
+
+def top_dirs():
+    res = subprocess.run("du -xh --max-depth=2 / 2>/dev/null | sort -rh | sed -n '2,9p'",
+                         shell=True, capture_output=True, text=True)
+    return "; ".join(" ".join(l.split()) for l in res.stdout.splitlines())
+
+
+def notify(title, body, priority="default"):
+    if DRY_RUN:
+        print(f"(dry-run) ntfy: {title} — {body.splitlines()[0][:200]}")
+        return
+    if not NTFY_URL:
+        return
+    res = subprocess.run(["curl", "-fsS", "-m", "10", "--retry", "3",
+                          "-H", f"Title: {title}", "-H", f"Priority: {priority}", "-H", "Tags: floppy_disk",
+                          "-d", body, NTFY_URL], capture_output=True, text=True)
+    if res.returncode:
+        print(f"уведомление не доставлено: {res.stderr.strip()}", file=sys.stderr)
+
+
+def load_state():
+    try:
+        with open(STATE_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def main():
+    report = []
+    state = load_state()
+    before, free_before = usage()
+
+    swept, kept = sweep_stands(report)
+    if swept:
+        report += call("vps-dev-docker-gc")
+
+    hard = before >= THRESHOLD
+    # Оставленные копии называем, только когда есть о чём говорить и так:
+    # иначе одна и та же строка ложилась бы в журнал каждый час.
+    if kept and (swept or hard or DRY_RUN):
+        report.append("копии не тронуты давно, но в них несохранённая работа — оставлены: " + ", ".join(kept))
+    if hard:
+        report.append(f"диск занят на {before}% (порог {THRESHOLD}%) — жёсткий проход")
+        report += call("vps-dev-docker-gc", "--hard")
+        report += call("vps-dev-cache-gc")
+
+    after, free_after = usage()
+    freed = max(0, free_after - free_before)
+
+    if hard:
+        body = f"Было {before}%, стало {after}%, освобождено {gb(freed)}.\n" + "\n".join(report)
+        notify(f"{HOST}: диск {before}% → {after}%", body)
+        if after >= THRESHOLD:
+            last = state.get("still_full_notified", 0)
+            if time.time() - last >= NOTIFY_EVERY_H * 3600:
+                notify(f"{HOST}: диск {after}% и сам не освобождается",
+                       "Уборка сделала всё, что можно без данных стендов. Крупнейшее: " + top_dirs(),
+                       priority="high")
+                state["still_full_notified"] = time.time()
+
+    for line in report:
+        print(line)
+    if DRY_RUN:
+        print(f"диск сейчас {before}%, порог {THRESHOLD}% — жёсткий проход {'был бы' if hard else 'не нужен'}")
+        return
+    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+    with open(STATE_FILE + ".new", "w", encoding="utf-8") as f:
+        json.dump(state, f)
+    os.replace(STATE_FILE + ".new", STATE_FILE)
+    # Тихий час (ничего не снесено, ниже порога) в журнал не пишется: иначе
+    # 24 пустые строки в день заглушили бы те, ради которых журнал ведётся.
+    if report:
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"=== {stamp} диск {before}% → {after}% ===\n" + "\n".join(report) + "\n")
+
+
+if __name__ == "__main__":
+    main()

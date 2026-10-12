@@ -1,0 +1,4 @@
+# Управляется Ansible: roles/dockergc/templates/tmp.conf.j2
+# Замещает /usr/lib/tmpfiles.d/tmp.conf (там 30 дней): тот же /tmp, срок
+# короче — см. tmpfiles_tmp_max_age в defaults роли dockergc.
+D /tmp 1777 root root {{ tmpfiles_tmp_max_age }}
