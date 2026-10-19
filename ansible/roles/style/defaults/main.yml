@@ -51,6 +51,22 @@ style_targets:
 # ~/.claude/settings.json, остальное содержимое файла не трогается.
 style_claude_output_style: Concise
 
+# Скиллы claude.ai, которые на сервере разработки не нужны: инструменты
+# настольного приложения (браузер, экран), утренняя сводка, документы
+# Office и Google. В claude.ai они остаются — выключены только здесь
+# (`skillOverrides`, «off» убирает и описание из контекста агента).
+# Свои выключения через /skills сохраняются: роль дописывает, не заменяет.
+style_claude_skill_overrides:
+  "anthropic-skills:built-in-browser": "off"
+  "anthropic-skills:chrome-browser": "off"
+  "anthropic-skills:computer-use": "off"
+  "anthropic-skills:morning": "off"
+  "anthropic-skills:import-memory": "off"
+  "anthropic-skills:google-workspace": "off"
+  "anthropic-skills:docs": "off"
+  "anthropic-skills:docx": "off"
+  "anthropic-skills:pptx": "off"
+
 # Куда ставится сам скрипт службы.
 style_install_dir: /usr/local/bin
 

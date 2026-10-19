@@ -125,16 +125,24 @@
       {{ (style_claude_raw.content | b64decode | from_json)
          if style_claude_settings.stat.exists else {} }}
 
-- name: Ключ outputStyle в settings.json
+- name: Желаемые outputStyle и skillOverrides
+  ansible.builtin.set_fact:
+    style_claude_want: >-
+      {{ style_claude_now | combine({
+           'outputStyle': style_claude_output_style,
+           'skillOverrides': (style_claude_now.skillOverrides | default({}))
+                             | combine(style_claude_skill_overrides)}) }}
+
+- name: Ключи outputStyle и skillOverrides в settings.json
   # Файлом владеет сам Claude Code (тема, уведомления), поэтому меняем
-  # один ключ и переписываем остальное как было.
+  # свои ключи и переписываем остальное как было.
   ansible.builtin.copy:
     dest: "/home/{{ style_user }}/.claude/settings.json"
     owner: "{{ style_user }}"
     group: "{{ style_user }}"
     mode: '0644'
-    content: "{{ style_claude_now | combine({'outputStyle': style_claude_output_style}) | to_nice_json }}\n"
-  when: style_claude_now.outputStyle | default('') != style_claude_output_style
+    content: "{{ style_claude_want | to_nice_json }}\n"
+  when: style_claude_want != style_claude_now
 
 # ═══ Служба ══════════════════════════════════════════════════════════
 
