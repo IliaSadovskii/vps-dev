@@ -224,7 +224,10 @@ secrets_env_lines() {
         case "$value" in
             *$'\n'*) die "Значение ${v} содержит перенос строки — так его передать нельзя." ;;
         esac
-        printf '%s=%s\n' "$v" "$value"
+        # Для оболочки (pull-режим читает файл через «.») — с экранированием:
+        # пробел без него превратил бы остаток строки в команду. Docker
+        # --env-file берёт значение буквально — ему без.
+        if [ "${1:-}" = shell ]; then printf '%s=%q\n' "$v" "$value"; else printf '%s=%s\n' "$v" "$value"; fi
     done
 }
 
@@ -281,7 +284,7 @@ ansible_pull_run() {
     # Открытая половина ключа — тем же файлом окружения: в ней пробел,
     # а через аргументы удалённой команды он не переживает двух оболочек.
     # shellcheck disable=SC2086,SC2029  # флаги должны разбиться на слова; подстановки — намеренно здесь
-    { secrets_env_lines; printf 'DEV_CONTROL_PUBKEY=%s\n' "$pubkey"; } \
+    { secrets_env_lines shell; printf 'DEV_CONTROL_PUBKEY=%q\n' "$pubkey"; } \
         | ssh $opts "dev@${addr}" "umask 077; cat > ${env_remote}" \
         || die "Не смог передать секреты на ${name}"
 
@@ -290,6 +293,7 @@ ansible_pull_run() {
     ssh $opts "dev@${addr}" "set -a; . ${env_remote}; set +a; rm -f ${env_remote};
         cd ${PULL_SRC}/ansible &&
         ANSIBLE_CONFIG=ansible.cfg \
+        ANSIBLE_LOCAL_TEMP=\$HOME/.ansible/local-tmp \
         ANSIBLE_COLLECTIONS_PATH=/usr/share/ansible/collections \
         ANSIBLE_FORCE_COLOR=1 \
         /usr/local/bin/ansible-playbook -i ../servers.yml -i inventory -c local site.yml${args}"
