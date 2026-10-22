@@ -1,0 +1,33 @@
+# zswap включается параметрами модуля в /sys, а они живут до перезагрузки.
+# Поэтому — служба systemd, выставляющая их при каждой загрузке, а не правка
+# командной строки ядра: та требует update-grub и перезагрузки, чтобы
+# изменение хотя бы проверить. Компрессор zstd в ядре Ubuntu — модулем,
+# ядро подгружает его само при записи имени.
+
+- name: Служба zswap
+  ansible.builtin.template:
+    src: zswap.service.j2
+    dest: /etc/systemd/system/vps-dev-zswap.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: base_zswap_unit
+
+- name: Перечитать systemd, если служба zswap изменилась  # noqa: no-handler
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: base_zswap_unit.changed
+
+- name: Есть ли уже служба zswap
+  # Сухой прогон файл юнита не создаёт, а systemd не умеет включать то, чего нет.
+  ansible.builtin.stat:
+    path: /etc/systemd/system/vps-dev-zswap.service
+  register: base_zswap_unit_file
+  check_mode: false
+
+- name: Сжатый кэш zswap включён сейчас и при загрузке
+  ansible.builtin.systemd:
+    name: vps-dev-zswap.service
+    enabled: true
+    state: "{{ 'restarted' if base_zswap_unit.changed else 'started' }}"
+  when: base_zswap_unit_file.stat.exists

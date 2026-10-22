@@ -58,6 +58,11 @@
   ansible.builtin.import_tasks: swap.yml
   tags: [base, swap]
 
+- name: Сжатый кэш подкачки (zswap)
+  ansible.builtin.import_tasks: zswap.yml
+  tags: [base, swap, zswap]
+  when: base_zswap_enabled | bool
+
 - name: Каталог проектов
   ansible.builtin.import_tasks: projects-dir.yml
   tags: [base, projects]
