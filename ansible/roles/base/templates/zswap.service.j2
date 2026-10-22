@@ -1,0 +1,12 @@
+# Создан ролью base (tasks/zswap.yml): параметры zswap при каждой загрузке.
+[Unit]
+Description=vps-dev: zswap ({{ base_zswap_compressor }}, {{ base_zswap_zpool }}, {{ base_zswap_max_pool_percent }}%)
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'p=/sys/module/zswap/parameters; echo {{ base_zswap_compressor }} > $p/compressor && echo {{ base_zswap_zpool }} > $p/zpool && echo {{ base_zswap_max_pool_percent }} > $p/max_pool_percent && echo Y > $p/enabled'
+
+[Install]
+WantedBy=multi-user.target

@@ -35,6 +35,15 @@ base_server_timezone: Etc/UTC
 # подкачки.
 base_swap_size_gb: 8
 
+# zswap — сжатый кэш перед файлом подкачки. Холодные страницы простаивающих
+# CLI агентов и стендов уходят сначала в сжатый пул в памяти (zstd сжимает
+# их в 3–4 раза), а на диск — только то, что не влезло. Пул — не больше
+# доли памяти ниже. base_zswap_enabled: false — не трогаем.
+base_zswap_enabled: true
+base_zswap_compressor: zstd
+base_zswap_zpool: zsmalloc
+base_zswap_max_pool_percent: 20
+
 # fail2ban для sshd. Пороги мягкие НАМЕРЕННО.
 #
 # Вход только по ключу (PasswordAuthentication no), поэтому перебор пароля
