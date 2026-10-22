@@ -14,6 +14,9 @@
 #     когда ВСЁ сразу:
 #       - ни один файл в ней не менялся IDLE_HOURS (node_modules и vendor
 #         не смотрим — они меняются от установки, а не от работы);
+#       - в её корне нет пометки KEEP_MARKER (.stand-keep): её ставит тот,
+#         кто держит копию долго и намеренно, например полоса контура CRM,
+#         которая может стоять погашенной сутками;
 #       - ни один работающий контейнер не поднят из неё и не подключает
 #         её томом (полоса контура поднимается из папки платформы, а код
 #         берёт из копии), ни один процесс не стоит в ней рабочим каталогом;
@@ -61,6 +64,7 @@ STATE_FILE = os.path.join(os.path.dirname(LOG_FILE), "diskguard.json")
 DRY_RUN = "--dry-run" in sys.argv
 DEPLOY_UID = pwd.getpwnam(DEPLOY_USER).pw_uid
 SKIP_SCAN = ("node_modules", "vendor")
+KEEP_MARKER = ".stand-keep"
 
 
 def sh(*args, user=None):
@@ -163,6 +167,8 @@ def sweep_stands(report):
     workdirs = running_workdirs()
     removed, kept, freed = [], [], 0
     for path in candidates():
+        if os.path.exists(os.path.join(path, KEEP_MARKER)):
+            continue
         if any(inside(p, path) for p in busy) or any(inside(w, path) for w in workdirs):
             continue
         if recently_touched(path):
