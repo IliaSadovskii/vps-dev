@@ -14,8 +14,9 @@
 #     когда ВСЁ сразу:
 #       - ни один файл в ней не менялся IDLE_HOURS (node_modules и vendor
 #         не смотрим — они меняются от установки, а не от работы);
-#       - ни один работающий контейнер не поднят из неё и ни один процесс
-#         не стоит в ней рабочим каталогом;
+#       - ни один работающий контейнер не поднят из неё и не подключает
+#         её томом (полоса контура поднимается из папки платформы, а код
+#         берёт из копии), ни один процесс не стоит в ней рабочим каталогом;
 #       - в git ничего не теряется: нет незакоммиченных правок и
 #         неотслеживаемых файлов, нет коммитов вне веток и удалённого
 #         репозитория, нет stash у самостоятельного клона. У worktree
@@ -114,7 +115,9 @@ def running_workdirs():
     if not ids:
         return set()
     data = json.loads(sh("docker", "inspect", *ids).stdout or "[]")
-    return {((c.get("Config") or {}).get("Labels") or {}).get("com.docker.compose.project.working_dir") for c in data} - {None}
+    dirs = {((c.get("Config") or {}).get("Labels") or {}).get("com.docker.compose.project.working_dir") for c in data}
+    dirs |= {m.get("Source") for c in data for m in c.get("Mounts") or [] if m.get("Type") == "bind"}
+    return dirs - {None, ""}
 
 
 def inside(child, parent):
