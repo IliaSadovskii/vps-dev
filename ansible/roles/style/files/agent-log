@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""Последние действия субагента — одной строкой каждое, без чтения всего журнала.
+
+    agent-log <id агента | путь к .output> [N=15]
+
+Журнал субагента — /tmp/claude-*/<проект>/<сессия>/tasks/<id>.output (JSONL).
+Печатает время (UTC), инструмент и команду/файл, реплики агента — «text:».
+"""
+import glob
+import json
+import os
+import sys
+from collections import deque
+
+if len(sys.argv) < 2:
+    sys.exit(__doc__)
+
+target, count = sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 15
+if os.path.isfile(target):
+    path = target
+else:
+    found = sorted(glob.glob(f"/tmp/claude-*/*/*/tasks/{target}*.output"), key=os.path.getmtime)
+    if not found:
+        sys.exit(f"журнал агента «{target}» не найден")
+    path = found[-1]
+
+lines = deque(maxlen=count)
+with open(path, encoding="utf-8", errors="replace") as journal:
+    for raw in journal:
+        try:
+            entry = json.loads(raw)
+        except ValueError:
+            continue
+        message = entry.get("message") or {}
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        when = (entry.get("timestamp") or "")[11:16]
+        for block in content:
+            if block.get("type") == "tool_use":
+                args = block.get("input") or {}
+                what = args.get("command") or args.get("file_path") or args.get("description") or json.dumps(args, ensure_ascii=False)
+                lines.append(f"{when} {block['name']}: {' '.join(str(what).split())[:140]}")
+            elif block.get("type") == "text" and message.get("role") == "assistant" and block.get("text", "").strip():
+                lines.append(f"{when} text: {' '.join(block['text'].split())[:140]}")
+
+age = int((__import__('time').time() - os.path.getmtime(path)) / 60)
+print(f"# {os.path.basename(path)} — последняя запись {age} мин назад")
+print("\n".join(lines))
