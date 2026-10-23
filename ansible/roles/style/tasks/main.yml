@@ -161,6 +161,14 @@
 
 # ═══ Служба ══════════════════════════════════════════════════════════
 
+- name: Последние действия субагента (agent-log)
+  ansible.builtin.copy:
+    src: agent-log
+    dest: "{{ style_install_dir }}/agent-log"
+    owner: root
+    group: root
+    mode: '0755'
+
 - name: Скрипт службы
   ansible.builtin.copy:
     src: vps-dev-style
