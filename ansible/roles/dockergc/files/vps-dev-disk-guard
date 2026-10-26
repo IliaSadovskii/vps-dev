@@ -130,7 +130,13 @@ def inside(child, parent):
 
 def git_unsaved(path):
     """Почему копию нельзя сносить (пустая строка — можно)."""
-    git = lambda *a: sh("git", "-C", path, *a, user=DEPLOY_USER)
+    # .git копии могут писать контейнеры проекта (том .:/app), а git читает
+    # из .git/config команды и сам их запускает. Отключаем то, что status и
+    # остальные вызовы ниже исполнили бы: fsmonitor, хуки (post-index-change
+    # при обновлении индекса) и саму запись индекса. Фильтры из .gitattributes
+    # так не закрываются — остаток риска, принятый 26.10.2026.
+    git = lambda *a: sh("git", "--no-optional-locks", "-c", "core.fsmonitor=false",
+                        "-c", "core.hooksPath=/dev/null", "-C", path, *a, user=DEPLOY_USER)
     status = git("status", "--porcelain")
     if status.returncode != 0:
         return "git не читается"

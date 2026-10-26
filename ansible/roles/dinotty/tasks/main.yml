@@ -96,8 +96,7 @@
 
 - name: Завести токен службы
   # Один раз за всю жизнь машины: перевыпуск на каждом прогоне рвал бы уже
-  # открытые сессии. Вводить его при входе через опубликованный порт
-  # не придётся — за это отвечает белый список ниже.
+  # открытые сессии.
   ansible.builtin.copy:
     content: "DINOTTY_TOKEN={{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['ascii_letters', 'digits']) }}\n"
     dest: "{{ dinotty_token_file }}"
@@ -137,7 +136,7 @@
   ansible.builtin.set_fact:
     dinotty_settings: "{{ (dinotty_settings_raw.content | b64decode | from_json) if dinotty_settings_stat.stat.exists else {} }}"
 
-- name: Вход через опубликованный порт — без токена
+- name: Белый список адресов без токена
   # Пишем, только когда список отличается. Иначе файл переписывался бы каждый
   # прогон: dinotty хранит его в своём форматировании, а не в нашем, и copy
   # видел бы отличие всегда.
