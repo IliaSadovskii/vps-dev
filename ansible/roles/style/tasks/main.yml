@@ -176,24 +176,33 @@
                              | combine(style_claude_skill_overrides)}) }}
 
 - name: Желаемый хук context-handoff в PostToolUse
-  # В PostToolUse уже есть чужие хуки (aoe-hooks): свою группу узнаём по
-  # пути скрипта, убираем прежнюю (порог мог поменяться) и ставим в конец,
-  # чужие остаются как были. Matcher не задан — все инструменты.
+  # В PostToolUse уже есть чужие хуки (aoe-hooks). Своя группа — та, где
+  # ровно один хук и его команда начинается с пути скрипта: её убираем
+  # (порог мог поменяться) и ставим заново в конец; чужие, даже если
+  # упоминают путь, остаются как были. hooks: null в файле — как пусто.
+  # Matcher не задан — все инструменты.
   ansible.builtin.set_fact:
     style_claude_want: >-
-      {{ style_claude_want | combine({'hooks': (style_claude_want.hooks | default({})) | combine({
-           'PostToolUse': (style_claude_want.hooks.PostToolUse | default([]))
-                          | map('to_json')
-                          | reject('search', (style_install_dir ~ '/context-handoff') | regex_escape)
-                          | map('from_json') | list
-                          + [style_claude_context_hook]})}) }}
+      {{ style_claude_want | combine({'hooks': style_claude_hooks_now | combine({
+           'PostToolUse': style_claude_post_others + [style_claude_context_hook]})}) }}
   vars:
+    style_claude_hooks_now: "{{ style_claude_want.hooks | default({}, true) }}"
+    style_claude_context_bin: "{{ style_install_dir }}/context-handoff"
+    style_claude_post_others: >-
+      {%- set others = [] -%}
+      {%- for group in style_claude_hooks_now.PostToolUse | default([], true) -%}
+      {%-   set handlers = group.hooks | default([], true) -%}
+      {%-   set ours = handlers | length == 1
+                and (handlers[0].command | default('', true) | string).startswith(style_claude_context_bin) -%}
+      {%-   if not ours %}{% set _ = others.append(group) %}{% endif -%}
+      {%- endfor -%}
+      {{ others }}
     style_claude_context_hook:
       hooks:
         - type: command
           command: >-
-            {{ style_install_dir }}/context-handoff
-            {{ style_context_handoff_limit }} {{ style_context_handoff_step }}
+            {{ style_claude_context_bin }}
+            {{ style_context_handoff_limit | int }} {{ style_context_handoff_step | int }}
           timeout: 10
 
 - name: Ключи outputStyle, skillOverrides и хук context-handoff в settings.json
