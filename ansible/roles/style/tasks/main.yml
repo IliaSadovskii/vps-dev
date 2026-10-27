@@ -175,22 +175,22 @@
            'skillOverrides': (style_claude_now.skillOverrides | default({}))
                              | combine(style_claude_skill_overrides)}) }}
 
-- name: Желаемый хук context-handoff в PostToolUse
-  # В PostToolUse уже есть чужие хуки (aoe-hooks). Своя группа — та, где
-  # ровно один хук и его команда начинается с пути скрипта: её убираем
-  # (порог мог поменяться) и ставим заново в конец; чужие, даже если
-  # упоминают путь, остаются как были. hooks: null в файле — как пусто.
-  # Matcher не задан — все инструменты.
+- name: Желаемый хук context-handoff в PostToolBatch
+  # Чужие хуки (aoe-hooks) в файле есть и могут появиться в этом же
+  # событии. Своя группа — та, где ровно один хук и его команда начинается
+  # с пути скрипта: её убираем (порог мог поменяться) и ставим заново в
+  # конец; чужие, даже если упоминают путь, остаются как были. hooks: null
+  # в файле — как пусто. Почему PostToolBatch — см. docstring скрипта.
   ansible.builtin.set_fact:
     style_claude_want: >-
       {{ style_claude_want | combine({'hooks': style_claude_hooks_now | combine({
-           'PostToolUse': style_claude_post_others + [style_claude_context_hook]})}) }}
+           'PostToolBatch': style_claude_batch_others + [style_claude_context_hook]})}) }}
   vars:
     style_claude_hooks_now: "{{ style_claude_want.hooks | default({}, true) }}"
     style_claude_context_bin: "{{ style_install_dir }}/context-handoff"
-    style_claude_post_others: >-
+    style_claude_batch_others: >-
       {%- set others = [] -%}
-      {%- for group in style_claude_hooks_now.PostToolUse | default([], true) -%}
+      {%- for group in style_claude_hooks_now.PostToolBatch | default([], true) -%}
       {%-   set handlers = group.hooks | default([], true) -%}
       {%-   set ours = handlers | length == 1
                 and (handlers[0].command | default('', true) | string).startswith(style_claude_context_bin) -%}
