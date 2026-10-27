@@ -80,6 +80,50 @@
     state: started
   when: not (ansible_check_mode and not (updates_unit_exists.stat.exists | default(false)))
 
+# Страница помнит последние версии (latest.json) и прежние, на которые можно
+# вернуться (state.json, ключ previous), по id службы — и сама записи не
+# убирает. Служба, снятая со страницы, оставалась бы там навсегда. Убираем
+# ключи служб, которых нет в updates_services; остальное как было. После
+# записи services.json и запуска страницы: опрос версий берёт список оттуда,
+# и снятая служба туда больше не вернётся.
+
+- name: Есть ли состояние страницы
+  ansible.builtin.stat:
+    path: "{{ updates_state_dir }}/{{ item }}"
+  loop: [latest.json, state.json]
+  register: updates_state_files
+  check_mode: false
+
+- name: Прочитать состояние страницы
+  ansible.builtin.slurp:
+    src: "{{ item.stat.path }}"
+  loop: "{{ updates_state_files.results | selectattr('stat.exists') }}"
+  loop_control:
+    label: "{{ item.item }}"
+  register: updates_state_raw
+
+- name: Убрать из состояния страницы службы, которых нет в списке
+  ansible.builtin.copy:
+    dest: "{{ item.source }}"
+    owner: "{{ updates_user }}"
+    group: "{{ updates_user }}"
+    mode: '0644'
+    content: "{{ updates_state_want | to_json(ensure_ascii=false) }}\n"
+  loop: "{{ updates_state_raw.results }}"
+  loop_control:
+    label: "{{ item.source | basename }}"
+  vars:
+    updates_known_ids: "{{ updates_services | map(attribute='id') | list }}"
+    updates_state_now: "{{ item.content | b64decode | from_json }}"
+    updates_state_previous: "{{ updates_state_now.previous | default({}) }}"
+    updates_state_want: >-
+      {{ (updates_state_now | dict2items | selectattr('key', 'in', updates_known_ids) | items2dict)
+         if item.source is search('latest\.json$') else
+         (updates_state_now | combine({'previous': updates_state_previous | dict2items
+                                       | selectattr('key', 'in', updates_known_ids) | items2dict})
+          if updates_state_now.previous is mapping else updates_state_now) }}
+  when: updates_state_want != updates_state_now
+
 - name: Куда смотреть
   ansible.builtin.debug:
     msg: >-

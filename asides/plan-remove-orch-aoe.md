@@ -41,10 +41,11 @@
     целиком, как в задачах уборки.
   - ACP-адаптеры (`@agentclientprotocol/claude-agent-acp`, `codex-acp`) больше не
     ставятся; роль `agents` удаляет уже установленные (`state: absent`).
-  - Состояние страницы обновлений чистится от aoe и снятого раньше kandev: ключи
-    `aoe`/`kandev` в `latest.json` и в `previous` у `state.json`, остальное как было;
-    удаляется и `~/.vps-dev/src/kandev`. Место — уборка aoe/orch в роли `paseo`,
-    пути — через переменные `updates_*`.
+  - Состояние страницы обновлений чистится общим правилом в роли `updates`, после
+    записи списка служб и запуска страницы: из `latest.json` и `previous` в
+    `state.json` уходят ключи служб, которых нет в `updates_services` (сейчас aoe,
+    kandev, files), остальное как было. `~/.vps-dev/src/kandev` удаляет уборка
+    aoe/orch в роли `paseo`; пути — через переменные `updates_*`.
   - Bind-монтирование `/projects` → `~/projects` остаётся: им пользуются
     `session_src` и ссылки на скиллы.
 

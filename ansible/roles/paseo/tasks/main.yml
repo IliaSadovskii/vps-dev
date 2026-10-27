@@ -22,12 +22,13 @@
   check_mode: false
 
 - name: Остановить и выключить службы aoe и orch
-  # orch-sweep.service без [Install]: её запускает таймер, гасим его.
+  # orch-sweep.service без [Install]: её запускает таймер, выключать нечего,
+  # только остановить, чтобы не работала, пока удаляются её файлы.
   ansible.builtin.systemd:
     name: "{{ item.item }}"
     state: stopped
-    enabled: false
-  loop: "{{ paseo_retired_units.results | selectattr('stat.exists') | rejectattr('item', 'eq', 'orch-sweep.service') }}"
+    enabled: "{{ omit if item.item == 'orch-sweep.service' else false }}"
+  loop: "{{ paseo_retired_units.results | selectattr('stat.exists') }}"
   loop_control:
     label: "{{ item.item }}"
 
@@ -54,6 +55,7 @@
     # Копии orch/ и kandev/, которые обвязка присылала для прогона на машине.
     - "{{ updates_repo_dir }}/orch"
     - "{{ updates_repo_dir }}/kandev"
+  register: paseo_retired_files
 
 - name: Uid пользователя — им подписан каталог хуков aoe в /tmp
   # Пользователя может ещё не быть: сухой прогон на свежей машине.
@@ -70,10 +72,21 @@
     state: absent
   when: paseo_retired_uid.rc == 0
 
+- name: Ждёт ли systemd перечитывания юнитов aoe и orch
+  # Не по тому, были ли файлы на этом прогоне: прерванная выкатка удалила
+  # бы их без перечитывания, и следующая об этом уже не узнала бы.
+  ansible.builtin.command:
+    argv: [systemctl, show, -p, NeedDaemonReload, --value, aoe-web.service,
+           orch-chains.service, orch-sweep.service, orch-sweep.timer]
+  register: paseo_retired_reload
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
 - name: Перечитать systemd после удаления юнитов aoe и orch
   ansible.builtin.systemd:
     daemon_reload: true
-  when: paseo_retired_units.results | selectattr('stat.exists') | list | length > 0
+  when: paseo_retired_files is changed or 'yes' in paseo_retired_reload.stdout_lines
 
 - name: Убрать ночной снимок базы orch
   ansible.builtin.cron:
@@ -88,47 +101,6 @@
     path: "{{ updates_overrides_file }}"
     regexp: '^aoe_version:'
     state: absent
-
-# Страница обновлений помнит последние версии (latest.json) и прежние,
-# на которые можно вернуться (state.json, ключ previous), по id службы.
-# Записи aoe и kandev, снятого раньше, там остались; остальное не трогаем.
-
-- name: Есть ли состояние страницы обновлений
-  ansible.builtin.stat:
-    path: "{{ updates_state_dir }}/{{ item }}"
-  loop: [latest.json, state.json]
-  register: paseo_retired_updates
-  check_mode: false
-
-- name: Прочитать состояние страницы обновлений
-  ansible.builtin.slurp:
-    src: "{{ item.stat.path }}"
-  loop: "{{ paseo_retired_updates.results | selectattr('stat.exists') }}"
-  loop_control:
-    label: "{{ item.item }}"
-  register: paseo_retired_updates_raw
-
-- name: Убрать aoe и kandev из состояния страницы обновлений
-  ansible.builtin.copy:
-    dest: "{{ item.source }}"
-    owner: "{{ updates_user }}"
-    group: "{{ updates_user }}"
-    mode: '0644'
-    content: "{{ paseo_retired_want | to_json(ensure_ascii=false) }}\n"
-  loop: "{{ paseo_retired_updates_raw.results }}"
-  loop_control:
-    label: "{{ item.source | basename }}"
-  vars:
-    paseo_retired_ids: [aoe, kandev]
-    paseo_retired_now: "{{ item.content | b64decode | from_json }}"
-    paseo_retired_previous: "{{ paseo_retired_now.previous | default({}) }}"
-    paseo_retired_want: >-
-      {{ (paseo_retired_now | dict2items | rejectattr('key', 'in', paseo_retired_ids) | items2dict)
-         if item.source is search('latest\.json$') else
-         (paseo_retired_now | combine({'previous': paseo_retired_previous | dict2items
-                                       | rejectattr('key', 'in', paseo_retired_ids) | items2dict})
-          if paseo_retired_now.previous is mapping else paseo_retired_now) }}
-  when: paseo_retired_want != paseo_retired_now
 
 # --- сам Paseo ---------------------------------------------------------------
 
