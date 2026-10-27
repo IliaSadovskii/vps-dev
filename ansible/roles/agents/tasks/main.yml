@@ -104,12 +104,15 @@
       loop: "{{ dev_agent_clis }}"
       when: not (ansible_check_mode and not (agents_npm_bin.stat.exists | default(false)))
 
-    - name: "ACP-адаптеры для aoe: {{ dev_agent_clis | select('in', agents_acp_adapters) | join(', ') }}"
+    - name: Убрать адаптеры, которые роль ставила раньше
+      # Разовая уборка: больше их никто не зовёт. Где их нет — ничего не делает.
       community.general.npm:
-        name: "{{ agents_acp_adapters[item] }}"
+        name: "{{ item }}"
         global: true
-        state: "{{ agents_npm_state }}"
-      loop: "{{ dev_agent_clis | select('in', agents_acp_adapters) | list }}"
+        state: absent
+      loop:
+        - "@agentclientprotocol/claude-agent-acp"
+        - "@agentclientprotocol/codex-acp"
       when: not (ansible_check_mode and not (agents_npm_bin.stat.exists | default(false)))
 
     - name: Каталог настроек Codex

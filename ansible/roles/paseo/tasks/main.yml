@@ -51,8 +51,9 @@
     # База задач, venv и правленые цепочки orch.
     - /home/{{ base_deploy_user }}/.local/share/orch
     - /var/backups/vps-dev/orch
-    # Копия orch/, которую обвязка присылала для прогона на машине.
-    - /home/{{ base_deploy_user }}/.vps-dev/src/orch
+    # Копии orch/ и kandev/, которые обвязка присылала для прогона на машине.
+    - "{{ updates_repo_dir }}/orch"
+    - "{{ updates_repo_dir }}/kandev"
 
 - name: Uid пользователя — им подписан каталог хуков aoe в /tmp
   # Пользователя может ещё не быть: сухой прогон на свежей машине.
@@ -84,9 +85,50 @@
   # Её писала страница обновлений (roles/updates) в файл версий машины;
   # службы aoe там больше нет, строка осталась бы мёртвой.
   ansible.builtin.lineinfile:
-    path: /var/lib/vps-dev/versions.yml
+    path: "{{ updates_overrides_file }}"
     regexp: '^aoe_version:'
     state: absent
+
+# Страница обновлений помнит последние версии (latest.json) и прежние,
+# на которые можно вернуться (state.json, ключ previous), по id службы.
+# Записи aoe и kandev, снятого раньше, там остались; остальное не трогаем.
+
+- name: Есть ли состояние страницы обновлений
+  ansible.builtin.stat:
+    path: "{{ updates_state_dir }}/{{ item }}"
+  loop: [latest.json, state.json]
+  register: paseo_retired_updates
+  check_mode: false
+
+- name: Прочитать состояние страницы обновлений
+  ansible.builtin.slurp:
+    src: "{{ item.stat.path }}"
+  loop: "{{ paseo_retired_updates.results | selectattr('stat.exists') }}"
+  loop_control:
+    label: "{{ item.item }}"
+  register: paseo_retired_updates_raw
+
+- name: Убрать aoe и kandev из состояния страницы обновлений
+  ansible.builtin.copy:
+    dest: "{{ item.source }}"
+    owner: "{{ updates_user }}"
+    group: "{{ updates_user }}"
+    mode: '0644'
+    content: "{{ paseo_retired_want | to_json(ensure_ascii=false) }}\n"
+  loop: "{{ paseo_retired_updates_raw.results }}"
+  loop_control:
+    label: "{{ item.source | basename }}"
+  vars:
+    paseo_retired_ids: [aoe, kandev]
+    paseo_retired_now: "{{ item.content | b64decode | from_json }}"
+    paseo_retired_previous: "{{ paseo_retired_now.previous | default({}) }}"
+    paseo_retired_want: >-
+      {{ (paseo_retired_now | dict2items | rejectattr('key', 'in', paseo_retired_ids) | items2dict)
+         if item.source is search('latest\.json$') else
+         (paseo_retired_now | combine({'previous': paseo_retired_previous | dict2items
+                                       | rejectattr('key', 'in', paseo_retired_ids) | items2dict})
+          if paseo_retired_now.previous is mapping else paseo_retired_now) }}
+  when: paseo_retired_want != paseo_retired_now
 
 # --- сам Paseo ---------------------------------------------------------------
 
