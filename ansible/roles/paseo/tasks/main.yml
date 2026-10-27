@@ -11,7 +11,8 @@
 # Вместе со службами уходят их данные: настройки и сессии aoe, база задач
 # orch и её снимки. Рабочие копии задач orch (`<проект>-orch` в /projects)
 # остаются — это ветки проектов, а не состояние orch. Хуки aoe в
-# settings.json Claude Code убирает роль style: у файла один писатель.
+# settings.json Claude Code убирает роль style: она и так сливает в него
+# свои ключи.
 
 - name: Какие юниты aoe и orch ещё есть
   ansible.builtin.stat:
@@ -52,6 +53,21 @@
     - /var/backups/vps-dev/orch
     # Копия orch/, которую обвязка присылала для прогона на машине.
     - /home/{{ base_deploy_user }}/.vps-dev/src/orch
+
+- name: Uid пользователя — им подписан каталог хуков aoe в /tmp
+  # Пользователя может ещё не быть: сухой прогон на свежей машине.
+  ansible.builtin.command:
+    argv: [id, -u, "{{ base_deploy_user }}"]
+  register: paseo_retired_uid
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Убрать каталог состояния хуков aoe
+  ansible.builtin.file:
+    path: "/tmp/aoe-hooks-{{ paseo_retired_uid.stdout }}"
+    state: absent
+  when: paseo_retired_uid.rc == 0
 
 - name: Перечитать systemd после удаления юнитов aoe и orch
   ansible.builtin.systemd:

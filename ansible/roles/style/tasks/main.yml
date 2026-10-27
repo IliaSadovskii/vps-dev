@@ -138,7 +138,7 @@
   loop_control:
     label: "{{ item.name }}"
 
-# ═══ Claude Code: встроенный краткий стиль вывода ════════════════════
+# ═══ Claude Code: стиль вывода, скиллы, без хуков aoe ════════════════
 
 - name: Есть ли settings.json Claude Code
   ansible.builtin.stat:
@@ -189,9 +189,9 @@
            'skillOverrides': (style_claude_now.skillOverrides | default({}))
                              | combine(style_claude_skill_overrides)}) }}
 
-- name: Ключи outputStyle и skillOverrides в settings.json
-  # Файлом владеет сам Claude Code (тема, уведомления), поэтому меняем
-  # свои ключи и переписываем остальное как было.
+- name: Ключи outputStyle и skillOverrides в settings.json, без хуков aoe
+  # Файлом владеет сам Claude Code (тема, уведомления, чужие хуки), поэтому
+  # меняем свои ключи, вычищаем хуки aoe и переписываем остальное как было.
   ansible.builtin.copy:
     dest: "/home/{{ style_user }}/.claude/settings.json"
     owner: "{{ style_user }}"

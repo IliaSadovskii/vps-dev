@@ -4,8 +4,6 @@
 .playwright-mcp/
 __pycache__/
 *.pyc
-.pytest_cache/
-*.egg-info/
 # Скиллы claude.ai: Claude Code скачивает их сам через ссылку
 # ~/.claude/skills → session/skills, в репозитории им не место.
 session/skills/synced/

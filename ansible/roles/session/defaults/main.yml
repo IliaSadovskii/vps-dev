@@ -9,7 +9,8 @@
 # ../sample/, значит рядом со skills/ должен лежать sample/ — так и есть
 # в session/.
 
-# Клон репозитория на машине.
+# Клон репозитория на машине — через ~/projects, bind-монтирование
+# /projects (roles/base, projects-dir.yml).
 session_src: /home/{{ base_deploy_user }}/projects/vps-dev/session
 
 # Кому принадлежат ссылки: пользователь, под которым запускаются агенты.
