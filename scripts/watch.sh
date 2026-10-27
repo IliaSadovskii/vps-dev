@@ -89,10 +89,10 @@ check_one() {
         PROBLEMS+=("${name}: служба частной сети не работает")
     }
     [ "$docker" = "active" ] || {
-        # Чат Agent of Empires и сами агенты живут в Docker —
+        # Проекты и их стенды живут в Docker —
         # без него на машине нечем работать.
         echo "    ✖ Docker не работает"
-        PROBLEMS+=("${name}: Docker не работает — доска и чат лежат")
+        PROBLEMS+=("${name}: Docker не работает — проекты лежат")
     }
     return 0
 }

@@ -139,7 +139,7 @@
   loop_control:
     label: "{{ item.name }}"
 
-# ═══ Claude Code: стиль вывода, скиллы, хук передачи ═════════════════
+# ═══ Claude Code: стиль вывода, скиллы, хук передачи, без хуков aoe ═══
 
 - name: Хук передачи по порогу контекста (context-handoff)
   # Раньше слияния в settings.json: хук ссылается на этот файл.
@@ -168,17 +168,40 @@
       {{ (style_claude_raw.content | b64decode | from_json)
          if style_claude_settings.stat.exists else {} }}
 
+- name: Без хуков Agent of Empires
+  # aoe дописывал свои хуки во все события, с меткой `# aoe-hooks` в конце
+  # команды. aoe с машины снят (roles/paseo) — убираем их; группа, где
+  # других хуков не было, уходит целиком, событие без групп — тоже.
+  # Чужие хуки остаются как были.
+  ansible.builtin.set_fact:
+    style_claude_base: >-
+      {%- set hooks = {} -%}
+      {%- for event, groups in (style_claude_now.hooks | default({}, true)).items() -%}
+      {%-   set kept = [] -%}
+      {%-   for group in groups | default([], true) -%}
+      {%-     set handlers = group.hooks | default([], true) -%}
+      {%-     set others = [] -%}
+      {%-     for handler in handlers -%}
+      {%-       if '# aoe-hooks' not in (handler.command | default('', true) | string) %}{% set _ = others.append(handler) %}{% endif -%}
+      {%-     endfor -%}
+      {%-     if others | length == handlers | length %}{% set _ = kept.append(group) -%}
+      {%-     elif others %}{% set _ = kept.append(group | combine({'hooks': others})) %}{% endif -%}
+      {%-   endfor -%}
+      {%-   if kept or not groups %}{% set _ = hooks.update({event: kept or groups}) %}{% endif -%}
+      {%- endfor -%}
+      {{ style_claude_now | combine({'hooks': hooks})
+         if style_claude_now.hooks | default({}, true) else style_claude_now }}
+
 - name: Желаемые outputStyle и skillOverrides
   ansible.builtin.set_fact:
     style_claude_want: >-
-      {{ style_claude_now | combine({
+      {{ style_claude_base | combine({
            'outputStyle': style_claude_output_style,
            'skillOverrides': (style_claude_now.skillOverrides | default({}))
                              | combine(style_claude_skill_overrides)}) }}
 
 - name: Чужие группы хуков PostToolBatch — начать с пустого
-  # Чужие хуки (aoe-hooks) в файле есть и могут появиться в этом же
-  # событии. Своя группа — та, где ровно один хук и его команда начинается
+  # Чужие хуки в файле есть и могут появиться в этом же событии. Своя группа — та, где ровно один хук и его команда начинается
   # с пути скрипта и пробела: её убираем (порог мог поменяться) и ставим
   # заново в конец; чужие, даже если упоминают путь, остаются как были.
   # hooks: null в файле — как пусто. Циклом set_fact, а не циклом внутри
@@ -213,9 +236,9 @@
             {{ style_context_handoff_limit | int }} {{ style_context_handoff_step | int }}
           timeout: 10
 
-- name: Ключи outputStyle, skillOverrides и хук context-handoff в settings.json
+- name: Ключи outputStyle, skillOverrides и хук context-handoff в settings.json, без хуков aoe
   # Файлом владеет сам Claude Code (тема, уведомления, чужие хуки), поэтому
-  # меняем свои ключи и переписываем остальное как было.
+  # меняем свои ключи, вычищаем хуки aoe и переписываем остальное как было.
   ansible.builtin.copy:
     dest: "/home/{{ style_user }}/.claude/settings.json"
     owner: "{{ style_user }}"

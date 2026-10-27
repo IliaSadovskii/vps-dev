@@ -16,10 +16,6 @@
 # свой каталог, systemd будит эту службу, и всё опасное делается здесь.
 # Обратной связи у страницы ровно две: журнал прогона и state.json.
 #
-# ПОРЯДОК ДЛЯ KANDEV. Он применяет миграции базы при старте, и обратной
-# дороги у них нет, поэтому снимок базы снимается ДО смены версии — тем же
-# скриптом, что делает суточные снимки.
-#
 # Зависимостей нет: стандартная библиотека Python 3.12.
 
 import json
@@ -38,7 +34,6 @@ SERVICES_FILE = os.path.join(STATE_DIR, "services.json")
 QUEUE_DIR = os.path.join(STATE_DIR, "queue")
 LOG_DIR = os.path.join(STATE_DIR, "logs")
 STATE_FILE = os.path.join(STATE_DIR, "state.json")
-BACKUP_CMD = "/usr/local/bin/orch-backup.sh"
 
 
 def read_json(path, default):
@@ -156,13 +151,6 @@ def do_update(job, svc, out):
     defaults = repo_defaults([var])
     before = chosen.get(var) or defaults.get(var, "")
     out.write(f"Служба: {svc['name']}\nБыло: {before or '—'}\nСтавим: {value}\n\n")
-
-    if svc.get("backup") and os.path.exists(BACKUP_CMD):
-        out.write("Снимок базы перед обновлением:\n")
-        if run([BACKUP_CMD], out) != 0:
-            out.write("\nСнимок не снялся — обновление отменено, версия не менялась.\n")
-            return 1
-        out.write("\n")
 
     if before:
         remember_previous(svc["id"], before)

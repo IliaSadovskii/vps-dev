@@ -1,7 +1,108 @@
-# Paseo — веб/мобильный клиент к тем же CLI агентов, что и aoe: ставим
-# npm-пакетом, поднимаем демоном на хосте от того же пользователя. Он
-# находит claude/codex/opencode на $PATH и их логин сам (roles/agents),
+# Paseo — веб/мобильный клиент к CLI агентов: ставим npm-пакетом,
+# поднимаем демоном на хосте от того же пользователя. Он находит
+# claude/codex/opencode на $PATH и их логин сам (roles/agents),
 # досогласовывать нечего.
+
+# --- Agent of Empires и orch, которые стояли здесь до Paseo -----------------
+# Роли aoe и orch из репозитория удалены, но с уже настроенной машины их
+# должен убрать кто-то: удалённая роль не выполняется и ничего не сносит.
+# На машине, где их не было или их уже убрали, задачи ничего не делают.
+#
+# Вместе со службами уходят их данные: настройки и сессии aoe, база задач
+# orch и её снимки. Рабочие копии задач orch (`<проект>-orch` в /projects)
+# остаются — это ветки проектов, а не состояние orch. Хуки aoe в
+# settings.json Claude Code убирает роль style: она и так сливает в него
+# свои ключи.
+
+- name: Какие юниты aoe и orch ещё есть
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ item }}"
+  loop: [aoe-web.service, orch-chains.service, orch-sweep.timer, orch-sweep.service]
+  register: paseo_retired_units
+  check_mode: false
+
+- name: Остановить и выключить службы aoe и orch
+  # orch-sweep.service без [Install]: её запускает таймер, выключать нечего,
+  # только остановить, чтобы не работала, пока удаляются её файлы.
+  ansible.builtin.systemd:
+    name: "{{ item.item }}"
+    state: stopped
+    enabled: "{{ omit if item.item == 'orch-sweep.service' else false }}"
+  loop: "{{ paseo_retired_units.results | selectattr('stat.exists') }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Убрать юниты, программы и данные aoe и orch
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/aoe-web.service
+    - /etc/systemd/system/orch-chains.service
+    - /etc/systemd/system/orch-sweep.service
+    - /etc/systemd/system/orch-sweep.timer
+    - /usr/local/bin/aoe
+    - /usr/local/bin/orch
+    - /usr/local/bin/orch-plugin
+    - /usr/local/bin/orch-chains
+    - /usr/local/bin/orch-sweep
+    - /usr/local/bin/orch-backup.sh
+    # Настройки, сессии, журналы aoe и плагин orch в нём.
+    - /home/{{ base_deploy_user }}/.config/agent-of-empires
+    # База задач, venv и правленые цепочки orch.
+    - /home/{{ base_deploy_user }}/.local/share/orch
+    - /var/backups/vps-dev/orch
+    # Копии orch/ и kandev/, которые обвязка присылала для прогона на машине.
+    - "{{ updates_repo_dir }}/orch"
+    - "{{ updates_repo_dir }}/kandev"
+  register: paseo_retired_files
+
+- name: Uid пользователя — им подписан каталог хуков aoe в /tmp
+  # Пользователя может ещё не быть: сухой прогон на свежей машине.
+  ansible.builtin.command:
+    argv: [id, -u, "{{ base_deploy_user }}"]
+  register: paseo_retired_uid
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Убрать каталог состояния хуков aoe
+  ansible.builtin.file:
+    path: "/tmp/aoe-hooks-{{ paseo_retired_uid.stdout }}"
+    state: absent
+  when: paseo_retired_uid.rc == 0
+
+- name: Ждёт ли systemd перечитывания юнитов aoe и orch
+  # Не по тому, были ли файлы на этом прогоне: прерванная выкатка удалила
+  # бы их без перечитывания, и следующая об этом уже не узнала бы.
+  ansible.builtin.command:
+    argv: [systemctl, show, -p, NeedDaemonReload, --value, aoe-web.service,
+           orch-chains.service, orch-sweep.service, orch-sweep.timer]
+  register: paseo_retired_reload
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Перечитать systemd после удаления юнитов aoe и orch
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: paseo_retired_files is changed or 'yes' in paseo_retired_reload.stdout_lines
+
+- name: Убрать ночной снимок базы orch
+  ansible.builtin.cron:
+    name: "orch: снимок базы задач"
+    user: "{{ base_deploy_user }}"
+    state: absent
+
+- name: Убрать версию aoe, выбранную на машине
+  # Её писала страница обновлений (roles/updates) в файл версий машины;
+  # службы aoe там больше нет, строка осталась бы мёртвой.
+  ansible.builtin.lineinfile:
+    path: "{{ updates_overrides_file }}"
+    regexp: '^aoe_version:'
+    state: absent
+
+# --- сам Paseo ---------------------------------------------------------------
 
 - name: Есть ли уже npm
   ansible.builtin.stat:
@@ -29,8 +130,8 @@
 
 - name: Узнать имя машины в частной сети
   # Демон принимает запросы только с заголовком Host из своего списка
-  # (--hostnames, защита от DNS rebinding) — как и у aoe, имя в tailnet
-  # нужно передать явно.
+  # (--hostnames, защита от DNS rebinding): имя в tailnet нужно передать
+  # явно.
   ansible.builtin.shell:
     cmd: set -o pipefail; tailscale status --json | jq -r '.Self.DNSName // empty' | sed 's/\.$//'
     executable: /bin/bash
@@ -98,5 +199,5 @@
   ansible.builtin.debug:
     msg: >-
       Paseo: https://{{ paseo_tailnet_host | default('<машина>.ts.net', true) }}:{{ paseo_port }}
-      — только из частной сети, второй вкладкой рядом с aoe. Пароля нет:
+      — только из частной сети, карточка на дашборде. Пароля нет:
       границу держит Tailscale, как и у остальных служб машины.

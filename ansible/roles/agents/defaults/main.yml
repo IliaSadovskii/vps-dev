@@ -7,8 +7,8 @@
 # Имя в dev_agent_clis -> npm-пакет, который его ставит.
 #
 # Добавить провайдера — дописать строку. Ничего в tasks/ трогать не надо:
-# Agent of Empires говорит со всеми CLI агентов через ACP одинаково, и обвязке
-# не важно, чей это пакет.
+# Paseo и терминал находят любой CLI агента на общем $PATH одинаково, и
+# обвязке не важно, чей это пакет.
 #
 # Имена пакетов подтверждены `npm view <имя> version` 2026-09-02:
 #   claude   -> @anthropic-ai/claude-code  (2.1.258 на день проверки)
@@ -20,15 +20,6 @@ agents_npm_packages:
   codex: "@openai/codex"
   gemini: "@google/gemini-cli"
   opencode: "opencode-ai"
-
-# ACP-адаптеры для Agent of Empires: его «структурный вид» говорит с CLI
-# по протоколу ACP, и у Claude Code и Codex он живёт в отдельном npm-пакете
-# (`aoe acp doctor` показывает, какой). Gemini и OpenCode умеют ACP сами.
-# Ставим глобально под root, как и сами CLI: `npm -g` под dev в /usr/lib
-# не пишет, и без этого `aoe acp doctor --fix` упирался бы в EACCES.
-agents_acp_adapters:
-  claude: "@agentclientprotocol/claude-agent-acp"
-  codex: "@agentclientprotocol/codex-acp"
 
 # Версии пакетов НЕ закрепляем, в отличие от служб машины. У службы риск —
 # автомигрирующая база, которую нельзя откатить; у этих CLI локального
@@ -59,7 +50,7 @@ agents_codex_auto_compact_token_limit: 900000
 #               (github.com/google-gemini/gemini-cli)
 #   opencode -> `opencode auth login`             (opencode.ai/docs/cli)
 agents_login_commands:
-  gh: "gh auth login   # GitHub: нужен агентам и роли PR оркестратора"
+  gh: "gh auth login   # GitHub: нужен агентам для PR и issues"
   claude: "claude auth login"
   codex: "codex   # в меню выбрать «Sign in with ChatGPT»"
   gemini: "gemini   # в меню выбрать «Sign in with Google»"

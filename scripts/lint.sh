@@ -23,37 +23,6 @@ for name, h in hosts.items():
     if not h.get('dev_host_fingerprint'):
         print(f'  ⚠ у машины {name} нет отпечатка ключа — впишется после первой выкатки')
 "
-# Цепочки оркестратора — по тому же доводу, что и реестр выше: линтер
-# движка читает их при каждой загрузке, и опечатка в `next` всплывает не
-# здесь, а посреди живой задачи. Заодно ловим шаг, ссылающийся на роль,
-# которой нет в prompts/: такая ссылка развернётся в пустоту молча.
-echo ""
-echo "→ Проверяю цепочки оркестратора"
-python3 - <<'PY'
-import glob, os, sys
-sys.path.insert(0, "orch/src")
-from orch.chain import ChainError, load, prompts_dir
-
-files = sorted(glob.glob("orch/chains/*.yml"))
-if not files:
-    print("  \u2716 в orch/chains пусто"); sys.exit(1)
-bad = 0
-for path in files:
-    try:
-        chain = load(path)
-    except ChainError as exc:
-        print(f"  \u2716 {os.path.basename(path)}: {exc}"); bad = 1; continue
-    for step in chain.steps:
-        role = prompts_dir() / f"{step.prompt_file}.md"
-        if not role.exists():
-            print(f"  \u2716 {chain.name}, шаг «{step.id}»: нет файла роли {role.name}"); bad = 1
-    for name in chain.includes:
-        if not (prompts_dir() / f"{name}.md").exists():
-            print(f"  \u2716 {chain.name}: нет общего промпта {name}.md"); bad = 1
-sys.exit(bad)
-PY
-echo "  ✔ цепочек: $(find orch/chains -name '*.yml' | wc -l), ролей: $(find orch/prompts -name 'role-*.md' | wc -l), файлы ролей на месте"
-
 echo ""
 echo "→ Проверяю сценарии Ansible"
 ansible_run ansible-lint site.yml
