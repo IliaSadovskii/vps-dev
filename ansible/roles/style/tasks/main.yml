@@ -175,33 +175,40 @@
            'skillOverrides': (style_claude_now.skillOverrides | default({}))
                              | combine(style_claude_skill_overrides)}) }}
 
-- name: Желаемый хук context-handoff в PostToolBatch
+- name: Чужие группы хуков PostToolBatch — начать с пустого
   # Чужие хуки (aoe-hooks) в файле есть и могут появиться в этом же
   # событии. Своя группа — та, где ровно один хук и его команда начинается
-  # с пути скрипта: её убираем (порог мог поменяться) и ставим заново в
-  # конец; чужие, даже если упоминают путь, остаются как были. hooks: null
-  # в файле — как пусто. Почему PostToolBatch — см. docstring скрипта.
+  # с пути скрипта и пробела: её убираем (порог мог поменяться) и ставим
+  # заново в конец; чужие, даже если упоминают путь, остаются как были.
+  # hooks: null в файле — как пусто. Циклом set_fact, а не циклом внутри
+  # шаблона: шаблон с {% %} отдаёт строку, и её превращение обратно в
+  # список зависит от версии Ansible. Почему PostToolBatch — см. docstring
+  # скрипта.
+  ansible.builtin.set_fact:
+    style_claude_batch_others: []
+
+- name: Чужие группы хуков PostToolBatch
+  ansible.builtin.set_fact:
+    style_claude_batch_others: "{{ style_claude_batch_others + [item] }}"
+  loop: "{{ (style_claude_want.hooks | default({}, true)).PostToolBatch | default([], true) }}"
+  loop_control:
+    label: "{{ item | to_json | truncate(80) }}"
+  when: >-
+    not ((item.hooks | default([], true) | length) == 1
+         and ((item.hooks | default([], true) | first).command | default('', true) | string)
+             .startswith(style_install_dir ~ '/context-handoff '))
+
+- name: Желаемый хук context-handoff в PostToolBatch
   ansible.builtin.set_fact:
     style_claude_want: >-
-      {{ style_claude_want | combine({'hooks': style_claude_hooks_now | combine({
+      {{ style_claude_want | combine({'hooks': (style_claude_want.hooks | default({}, true)) | combine({
            'PostToolBatch': style_claude_batch_others + [style_claude_context_hook]})}) }}
   vars:
-    style_claude_hooks_now: "{{ style_claude_want.hooks | default({}, true) }}"
-    style_claude_context_bin: "{{ style_install_dir }}/context-handoff"
-    style_claude_batch_others: >-
-      {%- set others = [] -%}
-      {%- for group in style_claude_hooks_now.PostToolBatch | default([], true) -%}
-      {%-   set handlers = group.hooks | default([], true) -%}
-      {%-   set ours = handlers | length == 1
-                and (handlers[0].command | default('', true) | string).startswith(style_claude_context_bin ~ ' ') -%}
-      {%-   if not ours %}{% set _ = others.append(group) %}{% endif -%}
-      {%- endfor -%}
-      {{ others }}
     style_claude_context_hook:
       hooks:
         - type: command
           command: >-
-            {{ style_claude_context_bin }}
+            {{ style_install_dir }}/context-handoff
             {{ style_context_handoff_limit | int }} {{ style_context_handoff_step | int }}
           timeout: 10
 
@@ -215,6 +222,59 @@
     mode: '0644'
     content: "{{ style_claude_want | to_nice_json }}\n"
   when: style_claude_want != style_claude_now
+
+- name: Хук context-handoff видит размер контекста в живом журнале
+  # Claude Code может поменять формат журнала, и хук тогда тихо замолчит:
+  # ошибки он глотает нарочно. Поэтому прогоняем установленный хук на
+  # свежих журналах субагентов с порогом 1 — он обязан напомнить. HOME —
+  # временный: отметки хука не попадают в живой ~/.cache, журналы только
+  # читаются. И при выкатке, и в make check.
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -I
+      - -c
+      - |
+        import glob, json, os, subprocess, sys, tempfile, time
+        hook, home = sys.argv[1], sys.argv[2]
+        if not os.path.exists(hook):
+            print("skip: хук ещё не установлен")
+            sys.exit(0)
+        journals = [p for p in glob.glob(home + "/.claude/projects/*/*/subagents/agent-*.jsonl")
+                    if time.time() - os.path.getmtime(p) < 7 * 86400]
+        if not journals:
+            print("skip: нет журналов субагентов за неделю")
+            sys.exit(0)
+        journals = sorted(journals, key=os.path.getmtime)[-3:]
+        with tempfile.TemporaryDirectory() as tmp:
+            for path in journals:
+                session = os.path.dirname(os.path.dirname(path))
+                hook_in = json.dumps({"session_id": os.path.basename(session),
+                                      "transcript_path": session + ".jsonl",
+                                      "agent_id": os.path.basename(path)[6:-6],
+                                      "agent_type": "general-purpose",
+                                      "hook_event_name": "PostToolBatch", "tool_calls": []})
+                out = subprocess.run([hook, "1", "1"], input=hook_in, capture_output=True,
+                                     text=True, timeout=30, env={"HOME": tmp, "PATH": "/usr/bin:/bin"}).stdout
+                if "additionalContext" in out:
+                    print("ok:", path)
+                    sys.exit(0)
+        print("silent:", " ".join(journals))
+      - "{{ style_install_dir }}/context-handoff"
+      - "/home/{{ style_user }}"
+  register: style_context_probe
+  check_mode: false
+  changed_when: false
+  failed_when: false
+
+- name: ВНИМАНИЕ — хук context-handoff не нашёл размер контекста
+  ansible.builtin.debug:
+    msg:
+      - "ВНИМАНИЕ: хук context-handoff не нашёл размер контекста ни в одном из свежих журналов субагентов."
+      - "Скорее всего, Claude Code поменял формат журнала или путь к нему — хук молчит, передачи по порогу не будет."
+      - "Проверка: {{ style_context_probe.stdout }} {{ style_context_probe.stderr | default('') | trim }}"
+      - "Сверь с docstring {{ style_install_dir }}/context-handoff и поправь скрипт в роли style."
+  when: style_context_probe.rc != 0 or style_context_probe.stdout is match('silent:')
 
 # ═══ Служба ══════════════════════════════════════════════════════════
 
