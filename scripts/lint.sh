@@ -55,6 +55,32 @@ sys.exit(bad)
 " "${py_files[@]}"
 fi
 
+# Разбор дерева не видит строку шебанга: `#!/usr/bin/python3 -I -S` ядро
+# передаёт интерпретатору одним аргументом «-I -S», и скрипт на машине не
+# стартует вовсе (так и было с хуком context-handoff). Запускать сами
+# скрипты ролей здесь нельзя — у них побочные действия. Поэтому запускаем
+# пустышку с той же строкой шебанга: пустое тело должно выйти с нулём.
+# На хосте, а не в контейнере Ansible: там другой env (busybox) и другие пути.
+echo ""
+echo "→ Проверяю, что интерпретаторы из шебангов ролей стартуют"
+shebang_dir="$(mktemp -d)"
+shebang_bad=0
+shebang_count=0
+while IFS= read -r f; do
+    line="$(head -n1 "$f")"
+    [[ "$line" == '#!'* ]] || continue
+    shebang_count=$((shebang_count + 1))
+    printf '%s\n' "$line" > "${shebang_dir}/probe"
+    chmod +x "${shebang_dir}/probe"
+    if ! err="$("${shebang_dir}/probe" </dev/null 2>&1)"; then
+        echo "  ✖ ${f#"${ROOT_DIR}/"}: «${line}» не стартует: ${err%%$'\n'*}"
+        shebang_bad=1
+    fi
+done < <(find "${ROOT_DIR}/ansible" -type f ! -name '*.j2' | sort)
+rm -rf "$shebang_dir"
+[ "$shebang_bad" -eq 0 ] || exit 1
+echo "  ✔ стартуют, файлов: ${shebang_count}"
+
 # Сам shellcheck ставить на хост нельзя, поэтому запускаем его в контейнере.
 #
 # Образ не достался — расходимся по-разному, и это важно. На своей машине
