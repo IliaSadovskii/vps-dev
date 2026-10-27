@@ -1,0 +1,179 @@
+#!/usr/bin/python3 -IS
+"""Хук PostToolBatch Claude Code: субагенту с большим контекстом — напоминание о передаче.
+
+    context-handoff ПОРОГ ШАГ   (токены; вход хука — JSON на stdin)
+
+Агент не видит размер своего контекста, а каждый его ход перечитывает контекст
+целиком. Хук берёт размер из журнала субагента — usage последней записи
+assistant (input + cache_read + cache_creation) — и с ПОРОГА возвращает
+additionalContext: выполнить правило передачи из общего промпта. Повторяет не
+на каждом ходе, а после роста ещё на ШАГ; контекст уменьшился (автосжатие) —
+отсчёт заново. Любая ошибка, нет или кривые аргументы — тихий выход 0: хук не
+должен ломать работу агента.
+
+Молчит в основной сессии (во входе нет agent_id) и у агентов SILENT_TYPES.
+PostToolBatch, а не PostToolUse: срабатывает раз на ход, а не на каждый из
+параллельных вызовов. Проверено вживую на Claude Code 2.1.311: в субагенте во
+входе есть agent_id и agent_type (Explore, Plan, fork, general-purpose…),
+additionalContext доходит до субагента. transcript_path там — журнал основной
+сессии; журнал субагента лежит рядом: <сессия>/subagents/agent-<agent_id>.jsonl.
+Журнал пишется с запаздыванием, и хук может увидеть размер прошлого хода — на
+пороге в сотни тысяч это не важно. Читается только хвост журнала, не больше
+TAIL_LIMIT. Когда уже напоминали — в ~/.cache/context-handoff/<agent_id>.
+Только stdlib, запуск с -I -S: хук зовётся на каждом ходе каждой сессии.
+"""
+import json
+import os
+import sys
+
+STATE_DIR = os.path.expanduser("~/.cache/context-handoff")
+STATE_TTL = 3 * 86400
+CHUNK = 256 * 1024
+TAIL_LIMIT = 16 * 1024 * 1024
+
+# Короткоживущие агенты, которым передача не нужна: поисковый и планировщик
+# только читают, а fork наследует контекст родителя и упирался бы в порог с
+# первого хода.
+SILENT_TYPES = {"Explore", "Plan", "fork"}
+
+# Что делать — только в правиле общего промпта (prompt-work.md.j2 роли style).
+REMINDER = (
+    "context-handoff: контекст этого субагента — {size}k токенов (порог {limit}k){again}. "
+    "Выполни правило передачи по порогу контекста из общего промпта (~/.claude/CLAUDE.md)."
+)
+
+
+def journal_path(hook):
+    session_dir = os.path.splitext(hook["transcript_path"])[0]
+    return os.path.join(session_dir, "subagents", f"agent-{hook['agent_id']}.jsonl")
+
+
+def usage_size(line):
+    """Размер контекста из строки журнала или 0, если это не запись assistant с usage."""
+    if b'"usage"' not in line:
+        return 0
+    try:
+        entry = json.loads(line)
+        message = entry.get("message")
+        usage = message.get("usage")
+        if entry.get("type") != "assistant" or not isinstance(usage, dict):
+            return 0
+        return sum(int(usage.get(key) or 0) for key in (
+            "input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+    except (ValueError, TypeError, AttributeError):
+        return 0
+
+
+def lines_from_end(path):
+    """Строки файла с конца, но не дальше TAIL_LIMIT байт. Куски длинной строки
+    копятся списком и склеиваются один раз, когда строка закончилась."""
+    with open(path, "rb") as journal:
+        end = journal.seek(0, os.SEEK_END)
+        floor = max(0, end - TAIL_LIMIT)
+        pending = []  # куски незаконченной строки, от конца к началу
+        while end > floor:
+            start = max(floor, end - CHUNK)
+            journal.seek(start)
+            chunk = journal.read(end - start)
+            end = start
+            parts = chunk.split(b"\n")
+            if len(parts) == 1:
+                pending.append(chunk)
+                continue
+            yield parts[-1] + b"".join(reversed(pending))
+            yield from reversed(parts[1:-1])
+            pending = [parts[0]]
+        # Самая ранняя строка окна целая, если окно начинается с начала файла
+        # или ровно после перевода строки.
+        if pending and (floor == 0 or (journal.seek(floor - 1), journal.read(1))[1] == b"\n"):
+            yield b"".join(reversed(pending))
+
+
+def context_size(path):
+    for line in lines_from_end(path):
+        size = usage_size(line)
+        if size:
+            return size
+    return 0
+
+
+def last_reminded(state):
+    try:
+        with open(state, encoding="utf-8") as fh:
+            return int(fh.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def remember(state, size):
+    import tempfile
+    import time
+
+    os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
+    now = time.time()
+    for entry in os.scandir(STATE_DIR):
+        try:
+            if entry.is_file(follow_symlinks=False) and now - entry.stat(follow_symlinks=False).st_mtime > STATE_TTL:
+                os.unlink(entry.path)
+        except OSError:
+            pass
+    fd, tmp = tempfile.mkstemp(dir=STATE_DIR, prefix=".tmp-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(str(size))
+        os.replace(tmp, state)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+
+
+def positive(arg):
+    value = int(arg)
+    if value <= 0:
+        raise ValueError(arg)
+    return value
+
+
+def main():
+    # Вход читаем целиком первым делом, даже если дальше молчим: иначе
+    # пишущая сторона может получить EPIPE.
+    raw = sys.stdin.buffer.read()
+    # Дешёвый отсев основной сессии — без разбора JSON с результатами вызовов.
+    if b'"agent_id"' not in raw or len(sys.argv) != 3:
+        return
+    try:
+        limit, step = positive(sys.argv[1]), positive(sys.argv[2])
+    except ValueError:
+        return
+    hook = json.loads(raw)
+    agent_id = hook.get("agent_id")
+    if not isinstance(agent_id, str) or not agent_id or hook.get("agent_type") in SILENT_TYPES:
+        return
+    if not all(ch.isascii() and (ch.isalnum() or ch in "_-") for ch in agent_id):
+        return
+
+    size = context_size(journal_path(hook))
+    if size < limit:
+        return
+    state = os.path.join(STATE_DIR, agent_id)
+    before = last_reminded(state)
+    if before is not None and size < before - step:
+        before = None  # контекст сжался — отсчёт заново
+    if before is not None and size < before + step:
+        return
+    # Сначала отметка, потом вывод: не записалась — молчим, а не напоминаем
+    # на каждом ходе без счёта.
+    remember(state, size)
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PostToolBatch",
+        "additionalContext": REMINDER.format(
+            size=size // 1000, limit=limit // 1000, again=", повторно" if before is not None else ""),
+    }}, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:  # noqa: BLE001 — хук не должен ломать работу агента
+        pass
+    sys.exit(0)
