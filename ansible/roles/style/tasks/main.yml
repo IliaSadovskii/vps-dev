@@ -149,6 +149,7 @@
     owner: root
     group: root
     mode: '0755'
+  register: style_context_handoff_file
 
 - name: Есть ли settings.json Claude Code
   ansible.builtin.stat:
@@ -223,12 +224,16 @@
     content: "{{ style_claude_want | to_nice_json }}\n"
   when: style_claude_want != style_claude_now
 
-- name: Хук context-handoff видит размер контекста в живом журнале
-  # Claude Code может поменять формат журнала, и хук тогда тихо замолчит:
-  # ошибки он глотает нарочно. Поэтому прогоняем установленный хук на
-  # свежих журналах субагентов с порогом 1 — он обязан напомнить. HOME —
-  # временный: отметки хука не попадают в живой ~/.cache, журналы только
-  # читаются. И при выкатке, и в make check.
+- name: Хук context-handoff находит размер контекста в живом журнале
+  # Claude Code может поменять формат журнала или раскладку каталогов, и
+  # хук тогда тихо замолчит: ошибки он глотает нарочно. Поэтому прогоняем
+  # установленный хук с порогом 1 на самом свежем журнале субагента, где
+  # уже есть записи usage, — он обязан напомнить. Проверяются формат
+  # журнала и раскладка <сессия>/subagents/agent-<id>.jsonl; вход, который
+  # Claude Code передаёт хуку, здесь собран вручную и не проверяется.
+  # От владельца журналов, HOME — временный: отметки хука не попадают в
+  # живой ~/.cache, журналы только читаются. И при выкатке, и в make check.
+  # Вывод: ok / silent / moved — проверено; skip — проверить было нечем.
   ansible.builtin.command:
     argv:
       - python3
@@ -236,45 +241,84 @@
       - -c
       - |
         import glob, json, os, subprocess, sys, tempfile, time
-        hook, home = sys.argv[1], sys.argv[2]
-        if not os.path.exists(hook):
-            print("skip: хук ещё не установлен")
-            sys.exit(0)
-        journals = [p for p in glob.glob(home + "/.claude/projects/*/*/subagents/agent-*.jsonl")
-                    if time.time() - os.path.getmtime(p) < 7 * 86400]
-        if not journals:
-            print("skip: нет журналов субагентов за неделю")
-            sys.exit(0)
-        journals = sorted(journals, key=os.path.getmtime)[-3:]
-        with tempfile.TemporaryDirectory() as tmp:
+
+        def fresh(pattern):
+            found = []
+            for path in glob.glob(pattern):
+                try:
+                    mtime = os.path.getmtime(path)
+                except OSError:
+                    continue
+                if time.time() - mtime < 7 * 86400:
+                    found.append((mtime, path))
+            return [path for _, path in sorted(found, reverse=True)]
+
+        def has_usage(path):
+            tail = b""
+            with open(path, "rb") as journal:
+                for chunk in iter(lambda: journal.read(1 << 20), b""):
+                    if b'"usage"' in tail + chunk:
+                        return True
+                    tail = chunk[-8:]
+            return False
+
+        def main(hook, home):
+            if not os.path.exists(hook):
+                return "skip: хук ещё не установлен"
+            journals = fresh(home + "/.claude/projects/*/*/subagents/agent-*.jsonl")
+            if not journals:
+                if fresh(home + "/.claude/projects/*/*.jsonl"):
+                    return "moved: журналы сессий за неделю есть, а журналов <сессия>/subagents/agent-<id>.jsonl нет"
+                return "skip: за неделю не было ни сессий, ни субагентов"
+            unread = 0
             for path in journals:
-                session = os.path.dirname(os.path.dirname(path))
-                hook_in = json.dumps({"session_id": os.path.basename(session),
-                                      "transcript_path": session + ".jsonl",
-                                      "agent_id": os.path.basename(path)[6:-6],
-                                      "agent_type": "general-purpose",
-                                      "hook_event_name": "PostToolBatch", "tool_calls": []})
-                out = subprocess.run([hook, "1", "1"], input=hook_in, capture_output=True,
-                                     text=True, timeout=30, env={"HOME": tmp, "PATH": "/usr/bin:/bin"}).stdout
-                if "additionalContext" in out:
-                    print("ok:", path)
-                    sys.exit(0)
-        print("silent:", " ".join(journals))
+                try:
+                    if has_usage(path):
+                        break
+                except OSError:
+                    unread += 1
+            else:
+                if unread:
+                    return f"skip: в прочитанных журналах нет usage, не прочитано: {unread}"
+                return "silent: ни в одном журнале субагента за неделю нет записей usage"
+            session = os.path.dirname(os.path.dirname(path))
+            hook_in = json.dumps({"session_id": os.path.basename(session),
+                                  "transcript_path": session + ".jsonl",
+                                  "agent_id": os.path.basename(path)[6:-6],
+                                  "agent_type": "general-purpose",
+                                  "hook_event_name": "PostToolBatch", "tool_calls": []})
+            with tempfile.TemporaryDirectory() as tmp:
+                try:
+                    out = subprocess.run([hook, "1", "1"], input=hook_in, capture_output=True, text=True,
+                                         timeout=30, env={"HOME": tmp, "PATH": "/usr/bin:/bin"}).stdout
+                except subprocess.TimeoutExpired:
+                    return "skip: хук не ответил за 30 с"
+            return ("ok: " if "additionalContext" in out else "silent: ") + path
+
+        try:
+            print(main(*sys.argv[1:3]))
+        except Exception as exc:
+            print(f"skip: проверка не удалась: {exc!r}")
       - "{{ style_install_dir }}/context-handoff"
       - "/home/{{ style_user }}"
+  become: true
+  become_user: "{{ style_user }}"
   register: style_context_probe
   check_mode: false
   changed_when: false
   failed_when: false
 
-- name: ВНИМАНИЕ — хук context-handoff не нашёл размер контекста
+- name: ВНИМАНИЕ — хук context-handoff не находит размер контекста в журналах
   ansible.builtin.debug:
     msg:
-      - "ВНИМАНИЕ: хук context-handoff не нашёл размер контекста ни в одном из свежих журналов субагентов."
-      - "Скорее всего, Claude Code поменял формат журнала или путь к нему — хук молчит, передачи по порогу не будет."
-      - "Проверка: {{ style_context_probe.stdout }} {{ style_context_probe.stderr | default('') | trim }}"
-      - "Сверь с docstring {{ style_install_dir }}/context-handoff и поправь скрипт в роли style."
-  when: style_context_probe.rc != 0 or style_context_probe.stdout is match('silent:')
+      - "ВНИМАНИЕ: установленный хук context-handoff не нашёл размер контекста в свежем журнале субагента."
+      - "Скорее всего, Claude Code поменял формат журнала или раскладку <сессия>/subagents/agent-<id>.jsonl — хук молчит, передачи по порогу не будет."
+      - "Проверка: {{ (style_context_probe.stdout | default('', true) ~ ' ' ~ style_context_probe.stderr | default('', true)) | trim }}"
+      - >-
+        {{ 'В роли лежит другая версия хука — она встанет при выкатке; проверен установленный.'
+           if (ansible_check_mode and style_context_handoff_file.changed)
+           else 'Сверь с docstring скрипта и поправь его в роли style.' }}
+  when: style_context_probe.rc != 0 or style_context_probe.stdout is match('(silent|moved):')
 
 # ═══ Служба ══════════════════════════════════════════════════════════
 
