@@ -157,10 +157,34 @@
       {{ (style_claude_raw.content | b64decode | from_json)
          if style_claude_settings.stat.exists else {} }}
 
+- name: Без хуков Agent of Empires
+  # aoe дописывал свои хуки во все события, с меткой `# aoe-hooks` в конце
+  # команды. aoe с машины снят (roles/paseo) — убираем их; группа, где
+  # других хуков не было, уходит целиком, событие без групп — тоже.
+  # Чужие хуки остаются как были.
+  ansible.builtin.set_fact:
+    style_claude_base: >-
+      {%- set hooks = {} -%}
+      {%- for event, groups in (style_claude_now.hooks | default({}, true)).items() -%}
+      {%-   set kept = [] -%}
+      {%-   for group in groups | default([], true) -%}
+      {%-     set handlers = group.hooks | default([], true) -%}
+      {%-     set others = [] -%}
+      {%-     for handler in handlers -%}
+      {%-       if '# aoe-hooks' not in (handler.command | default('', true) | string) %}{% set _ = others.append(handler) %}{% endif -%}
+      {%-     endfor -%}
+      {%-     if others | length == handlers | length %}{% set _ = kept.append(group) -%}
+      {%-     elif others %}{% set _ = kept.append(group | combine({'hooks': others})) %}{% endif -%}
+      {%-   endfor -%}
+      {%-   if kept or not groups %}{% set _ = hooks.update({event: kept or groups}) %}{% endif -%}
+      {%- endfor -%}
+      {{ style_claude_now | combine({'hooks': hooks})
+         if style_claude_now.hooks | default({}, true) else style_claude_now }}
+
 - name: Желаемые outputStyle и skillOverrides
   ansible.builtin.set_fact:
     style_claude_want: >-
-      {{ style_claude_now | combine({
+      {{ style_claude_base | combine({
            'outputStyle': style_claude_output_style,
            'skillOverrides': (style_claude_now.skillOverrides | default({}))
                              | combine(style_claude_skill_overrides)}) }}
