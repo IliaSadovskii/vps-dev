@@ -193,7 +193,7 @@
       {%- for group in style_claude_hooks_now.PostToolBatch | default([], true) -%}
       {%-   set handlers = group.hooks | default([], true) -%}
       {%-   set ours = handlers | length == 1
-                and (handlers[0].command | default('', true) | string).startswith(style_claude_context_bin) -%}
+                and (handlers[0].command | default('', true) | string).startswith(style_claude_context_bin ~ ' ') -%}
       {%-   if not ours %}{% set _ = others.append(group) %}{% endif -%}
       {%- endfor -%}
       {{ others }}

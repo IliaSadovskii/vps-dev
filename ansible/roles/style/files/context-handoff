@@ -1,4 +1,4 @@
-#!/usr/bin/env -S python3 -I -S
+#!/usr/bin/python3 -IS
 """Хук PostToolBatch Claude Code: субагенту с большим контекстом — напоминание о передаче.
 
     context-handoff ПОРОГ ШАГ   (токены; вход хука — JSON на stdin)
@@ -157,7 +157,7 @@ def main():
         return
     state = os.path.join(STATE_DIR, agent_id)
     before = last_reminded(state)
-    if before is not None and size < before:
+    if before is not None and size < before - step:
         before = None  # контекст сжался — отсчёт заново
     if before is not None and size < before + step:
         return
