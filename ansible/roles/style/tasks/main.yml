@@ -58,7 +58,8 @@
 
 - name: Как работать — общие правила для любого агента и проекта
   # Стиль работы владельца, не зависит ни от стека, ни от проекта
-  # (аудит промптов 2026-10-19; раздел «Ревью» — 2026-10-27). Первым в файле:
+  # (аудит промптов 2026-10-19; раздел «Ревью» и передача по порогу
+  # контекста — 2026-10-27). Первым в файле:
   # правила, читаемые раньше, держатся лучше. Свои маркеры — как у блока
   # «Эта машина» ниже.
   ansible.builtin.blockinfile:
@@ -138,7 +139,16 @@
   loop_control:
     label: "{{ item.name }}"
 
-# ═══ Claude Code: встроенный краткий стиль вывода ════════════════════
+# ═══ Claude Code: стиль вывода, скиллы, хук передачи ═════════════════
+
+- name: Хук передачи по порогу контекста (context-handoff)
+  # Раньше слияния в settings.json: хук ссылается на этот файл.
+  ansible.builtin.copy:
+    src: context-handoff
+    dest: "{{ style_install_dir }}/context-handoff"
+    owner: root
+    group: root
+    mode: '0755'
 
 - name: Есть ли settings.json Claude Code
   ansible.builtin.stat:
@@ -165,9 +175,30 @@
            'skillOverrides': (style_claude_now.skillOverrides | default({}))
                              | combine(style_claude_skill_overrides)}) }}
 
-- name: Ключи outputStyle и skillOverrides в settings.json
-  # Файлом владеет сам Claude Code (тема, уведомления), поэтому меняем
-  # свои ключи и переписываем остальное как было.
+- name: Желаемый хук context-handoff в PostToolUse
+  # В PostToolUse уже есть чужие хуки (aoe-hooks): свою группу узнаём по
+  # пути скрипта, убираем прежнюю (порог мог поменяться) и ставим в конец,
+  # чужие остаются как были. Matcher не задан — все инструменты.
+  ansible.builtin.set_fact:
+    style_claude_want: >-
+      {{ style_claude_want | combine({'hooks': (style_claude_want.hooks | default({})) | combine({
+           'PostToolUse': (style_claude_want.hooks.PostToolUse | default([]))
+                          | map('to_json')
+                          | reject('search', (style_install_dir ~ '/context-handoff') | regex_escape)
+                          | map('from_json') | list
+                          + [style_claude_context_hook]})}) }}
+  vars:
+    style_claude_context_hook:
+      hooks:
+        - type: command
+          command: >-
+            {{ style_install_dir }}/context-handoff
+            {{ style_context_handoff_limit }} {{ style_context_handoff_step }}
+          timeout: 10
+
+- name: Ключи outputStyle, skillOverrides и хук context-handoff в settings.json
+  # Файлом владеет сам Claude Code (тема, уведомления, чужие хуки), поэтому
+  # меняем свои ключи и переписываем остальное как было.
   ansible.builtin.copy:
     dest: "/home/{{ style_user }}/.claude/settings.json"
     owner: "{{ style_user }}"
