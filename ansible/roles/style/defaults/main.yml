@@ -96,5 +96,5 @@ style_work_dir: "{{ style_state_dir }}/work"
 # Повторяет после роста ещё на шаг, а не на каждом ходе. В основной
 # сессии, у Explore, Plan и fork молчит. Автосжатие не трогаем: передача
 # в выбранной агентом точке надёжнее сводки посреди фичи (план 2026-10-27).
-style_context_handoff_limit: 500000
+style_context_handoff_limit: 750000
 style_context_handoff_step: 100000
