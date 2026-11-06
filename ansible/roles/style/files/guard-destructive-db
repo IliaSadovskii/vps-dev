@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Сторож команд, которые стирают базу или уводят artisan в чужое окружение.
+# Повод: 2026-09-21 config:cache и 2026-10-02 migrate:fresh --env=testing
+# стёрли базу общего стенда listate-crm. Такие команды запускает человек сам,
+# кроме удаления тестовых баз CRM — см. crm_test_db.
+input=$(cat)
+cmd=$(jq -r '.tool_input.command // empty' <<<"$input")
+[ -z "$cmd" ] && exit 0
+cwd=$(jq -r '.cwd // empty' <<<"$input")
+low=$(printf '%s' "$cmd" | tr '[:upper:]' '[:lower:]')
+
+deny() {
+  echo "Заблокировано сторожем (guard-destructive-db): $1. Такие команды запускает владелец сам — попроси его." >&2
+  exit 2
+}
+
+has() { grep -Eq "$1" <<<"$low"; }
+
+# Тестовые базы CRM агент удаляет сам (выбор владельца 2026-11-06). Только в
+# тестовом Postgres CRM на этой машине: контур, платформа, чужие проекты и всё
+# удалённое закрыты; из баз папки — та, на которую настроен её .env.
+crm_test_db() {
+  has '(^|[^[:alnum:]_-])ssh([[:space:]]|$)|docker_host|--context|kamal|://|psql[^|;&]*[[:space:]](-h|--host)|contour|listate-platform' && return 1
+  has '/projects/' && ! has '/projects/(listate-crm|\.stands/listate-crm-)' && return 1
+  has '(database|dropdb)[[:space:]]+(if[[:space:]]+exists[[:space:]]+)?"?(listate|listate_owner|postgres)"?([^[:alnum:]_]|$)' && return 1
+  has 'docker[[:space:]]+exec[^|;&]*[[:space:]]listate-([a-z]-)?postgres-1' && return 0
+  case "$cwd" in /projects/listate-crm|/projects/listate-crm/*|/projects/.stands/listate-crm-*) return 0 ;; esac
+  return 1
+}
+
+if has 'artisan'; then
+  has '(migrate:(fresh|reset|rollback|refresh)|db:wipe|db:seed[^|;&]*--force)' && deny "команда artisan стирает или откатывает базу"
+  has '(config:cache|[[:space:]]optimize([^:a-z]|$))' && deny "кэш конфига увёл тесты в боевую базу 2026-09-21"
+  has 'artisan[^|;&]*--env([= ])' && deny "artisan с --env берёт .env стенда, если файла окружения нет"
+fi
+
+has '(^|[;&|[:space:]])make[[:space:]]+([^|;&]*[[:space:]])?fresh([[:space:]]|$)' && deny "make fresh пересоздаёт базу стенда"
+
+if has '(psql|pg_|dropdb)' && ! crm_test_db; then
+  has '(drop[[:space:]]+(table|schema|database|owned)|truncate[[:space:]]|(^|[[:space:]])dropdb|pg_restore[^|;&]*(--clean|-c))' && deny "SQL стирает таблицы или базу (тестовые базы CRM удаляй из её папки или через docker exec listate-<полоса>-postgres-1; агентство контура — удалением в консоли платформы)"
+fi
+
+has 'docker[^|;&]*(volume[[:space:]]+(rm|prune)|system[[:space:]]+prune)' && deny "удаление томов docker уносит базу"
+
+if has 'down[^|;&]*([[:space:]]-v([[:space:]]|$)|--volumes)' && ! has 'ports run'; then
+  deny "docker compose down -v без ports run сносит том общего стенда"
+fi
+exit 0
