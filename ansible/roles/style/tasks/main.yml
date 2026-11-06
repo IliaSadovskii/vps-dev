@@ -151,6 +151,14 @@
     mode: '0755'
   register: style_context_handoff_file
 
+- name: Сторож команд, стирающих базу (guard-destructive-db)
+  ansible.builtin.copy:
+    src: guard-destructive-db
+    dest: "{{ style_install_dir }}/guard-destructive-db"
+    owner: root
+    group: root
+    mode: '0755'
+
 - name: Есть ли settings.json Claude Code
   ansible.builtin.stat:
     path: "/home/{{ style_user }}/.claude/settings.json"
@@ -236,7 +244,38 @@
             {{ style_context_handoff_limit | int }} {{ style_context_handoff_step | int }}
           timeout: 10
 
-- name: Ключи outputStyle, skillOverrides и хук context-handoff в settings.json, без хуков aoe
+- name: Чужие группы хуков PreToolUse — начать с пустого
+  # Как с PostToolBatch: своя группа — один хук с этим сторожем, в том числе
+  # по прежнему пути в ~/.claude/hooks, где он жил до переноса в репозиторий.
+  ansible.builtin.set_fact:
+    style_claude_pre_others: []
+
+- name: Чужие группы хуков PreToolUse
+  ansible.builtin.set_fact:
+    style_claude_pre_others: "{{ style_claude_pre_others + [item] }}"
+  loop: "{{ (style_claude_want.hooks | default({}, true)).PreToolUse | default([], true) }}"
+  loop_control:
+    label: "{{ item | to_json | truncate(80) }}"
+  when: >-
+    not ((item.hooks | default([], true) | length) == 1
+         and ((item.hooks | default([], true) | first).command | default('', true) | string)
+             in [style_install_dir ~ '/guard-destructive-db',
+                 '/home/' ~ style_user ~ '/.claude/hooks/guard-destructive-db.sh'])
+
+- name: Желаемый сторож в PreToolUse
+  ansible.builtin.set_fact:
+    style_claude_want: >-
+      {{ style_claude_want | combine({'hooks': (style_claude_want.hooks | default({}, true)) | combine({
+           'PreToolUse': style_claude_pre_others + [style_claude_guard_hook]})}) }}
+  vars:
+    style_claude_guard_hook:
+      matcher: Bash
+      hooks:
+        - type: command
+          command: "{{ style_install_dir }}/guard-destructive-db"
+          timeout: 10
+
+- name: Ключи outputStyle, skillOverrides и хуки context-handoff и сторож в settings.json, без хуков aoe
   # Файлом владеет сам Claude Code (тема, уведомления, чужие хуки), поэтому
   # меняем свои ключи, вычищаем хуки aoe и переписываем остальное как было.
   ansible.builtin.copy:
@@ -246,6 +285,11 @@
     mode: '0644'
     content: "{{ style_claude_want | to_nice_json }}\n"
   when: style_claude_want != style_claude_now
+
+- name: Без прежней копии сторожа в ~/.claude/hooks
+  ansible.builtin.file:
+    path: "/home/{{ style_user }}/.claude/hooks/guard-destructive-db.sh"
+    state: absent
 
 - name: Хук context-handoff находит размер контекста в живом журнале
   # Claude Code может поменять формат журнала или раскладку каталогов, и
