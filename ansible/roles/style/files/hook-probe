@@ -1,0 +1,204 @@
+#!/usr/bin/python3 -IS
+"""Живая проверка хуков Claude Code на журналах этой машины — для выкатки роли style.
+
+    hook-probe context-handoff  <хук> <HOME владельца журналов>
+    hook-probe guard-decisions  <хук> <HOME владельца журналов>
+
+Claude Code может поменять формат журнала или раскладку каталогов, а хуки
+ошибки глотают нарочно — тогда хук тихо перестаёт работать. Проба гоняет
+установленный хук на входе, собранном по самому свежему пригодному журналу
+субагента за неделю, и печатает одну строку:
+    ok: …      хук сработал как надо;
+    silent: …  журнал нашёлся, а хук не сработал;
+    moved: …   журналы есть, а нужной раскладки нет;
+    skip: …    проверить нечем (хука нет, субагентов за неделю не было).
+silent и moved валят выкатку в конце (post_tasks site.yml), skip — нет.
+Журналы только читаются; хук идёт с временным HOME, что нужно изменить —
+копируется во временный каталог. Вход, который Claude Code передаёт хуку,
+собран вручную и не проверяется. Только stdlib, запуск с -I -S.
+"""
+import glob
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+WEEK = 7 * 86400
+TIMEOUT = 30
+GRANT = "guard-decisions: tests/Arch"
+
+
+def fresh(pattern):
+    """Файлы за неделю, свежие первыми."""
+    found = []
+    for path in glob.glob(pattern):
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            continue
+        if time.time() - mtime < WEEK:
+            found.append((mtime, path))
+    return [path for _, path in sorted(found, reverse=True)]
+
+
+def run(hook, args, hook_in, home):
+    """Код и вывод хука с временным HOME; None — не ответил за TIMEOUT."""
+    try:
+        done = subprocess.run([hook, *args], input=json.dumps(hook_in), capture_output=True, text=True,
+                              timeout=TIMEOUT, env={"HOME": home, "PATH": "/usr/bin:/bin",
+                                                    "GIT_CEILING_DIRECTORIES": os.path.dirname(home)})
+    except subprocess.TimeoutExpired:
+        return None
+    return done.returncode, done.stdout
+
+
+def has_usage(path):
+    tail = b""
+    with open(path, "rb") as journal:
+        for chunk in iter(lambda: journal.read(1 << 20), b""):
+            if b'"usage"' in tail + chunk:
+                return True
+            tail = chunk[-8:]
+    return False
+
+
+def context_handoff(hook, home):
+    """С порогом 1 на журнале, где уже есть usage, хук обязан напомнить о передаче."""
+    journals = fresh(home + "/.claude/projects/*/*/subagents/agent-*.jsonl")
+    if not journals:
+        if fresh(home + "/.claude/projects/*/*.jsonl"):
+            return "moved: журналы сессий за неделю есть, а журналов <сессия>/subagents/agent-<id>.jsonl нет"
+        return "skip: за неделю не было ни сессий, ни субагентов"
+    unread = 0
+    for path in journals:
+        try:
+            if has_usage(path):
+                break
+        except OSError:
+            unread += 1
+    else:
+        if unread:
+            return f"skip: в прочитанных журналах нет usage, не прочитано: {unread}"
+        return "silent: ни в одном журнале субагента за неделю нет записей usage — хук не узнает размер контекста"
+    session = os.path.dirname(os.path.dirname(path))
+    hook_in = {"session_id": os.path.basename(session), "transcript_path": session + ".jsonl",
+               "agent_id": os.path.basename(path)[6:-6], "agent_type": "general-purpose",
+               "hook_event_name": "PostToolBatch", "tool_calls": []}
+    with tempfile.TemporaryDirectory() as tmp:
+        got = run(hook, ["1", "1"], hook_in, tmp)
+    if got is None:
+        return f"skip: хук не ответил за {TIMEOUT} с"
+    if "additionalContext" in got[1]:
+        return "ok: " + path
+    return ("silent: хук не нашёл размер контекста — формат журнала или раскладка <сессия>/subagents/"
+            "agent-<id>.jsonl поменялись, передачи по порогу не будет: " + path)
+
+
+def task_record(journal):
+    """Первая запись журнала, если это текст задания; иначе None."""
+    with open(journal, encoding="utf-8") as fh:
+        first = json.loads(fh.readline())
+    content = (first.get("message") or {}).get("content")
+    if first.get("type") == "user" and isinstance(content, (str, list)):
+        return first
+    return None
+
+
+def with_grant(record):
+    """Та же запись со строкой-разрешением первой строкой задания."""
+    content = record["message"]["content"]
+    if isinstance(content, str):
+        content = f"{GRANT}\n{content}"
+    else:
+        content = [{"type": "text", "text": GRANT}] + content
+    return {**record, "message": {**record["message"], "content": content}}
+
+
+def suitable(home):
+    """(meta, журнал, первая запись) самого свежего пригодного субагента или строка «moved/skip»."""
+    metas = fresh(home + "/.claude/projects/*/*/subagents/agent-*.meta.json")
+    if not metas:
+        if fresh(home + "/.claude/projects/*/*/subagents/agent-*.jsonl"):
+            return "moved: журналы субагентов за неделю есть, а agent-<id>.meta.json рядом нет"
+        return "skip: за неделю не было субагентов"
+    for meta_path in metas:
+        try:
+            with open(meta_path, encoding="utf-8") as fh:
+                meta = json.load(fh)
+            if not isinstance(meta, dict) or "spawnDepth" not in meta:
+                continue
+            journal = meta_path[:-len(".meta.json")] + ".jsonl"
+            record = task_record(journal)
+        except (OSError, ValueError, TypeError, AttributeError):
+            continue
+        if record is not None:
+            return meta_path, journal, meta, record
+    return ("moved: ни у одного субагента за неделю нет пары meta со spawnDepth и журнала, чья первая "
+            "запись — текст задания; сторож не прочтёт разрешение и не отличит вложенного")
+
+
+def guard_decisions(hook, home):
+    """Разрешение из живого задания пускает Write нового арх-теста, у вложенного субагента — нет."""
+    found = suitable(home)
+    if isinstance(found, str):
+        return found
+    meta_path, journal, meta, record = found
+    agent_dir = os.path.dirname(meta_path)
+    session = os.path.dirname(agent_dir)
+    project = os.path.dirname(session)
+    agent_id = os.path.basename(meta_path)[6:-len(".meta.json")]
+    with tempfile.TemporaryDirectory() as tmp:
+        copy_dir = os.path.join(tmp, ".claude", "projects", os.path.basename(project),
+                                os.path.basename(session), "subagents")
+        os.makedirs(copy_dir)
+        with open(journal, encoding="utf-8") as src, \
+                open(os.path.join(copy_dir, os.path.basename(journal)), "w", encoding="utf-8") as dst:
+            src.readline()
+            dst.write(json.dumps(with_grant(record), ensure_ascii=False) + "\n")
+            shutil.copyfileobj(src, dst)
+        work = os.path.join(tmp, "work")
+        os.makedirs(os.path.join(work, "tests", "Arch"))
+        hook_in = {"session_id": os.path.basename(session),
+                   "transcript_path": os.path.dirname(copy_dir) + ".jsonl", "cwd": work,
+                   "agent_id": agent_id, "agent_type": "general-purpose", "hook_event_name": "PreToolUse",
+                   "tool_name": "Write",
+                   "tool_input": {"file_path": os.path.join(work, "tests", "Arch", "ProbeTest.php"),
+                                  "content": "<?php\n"}}
+        codes = []
+        for depth, parent in ((1, None), (2, "probe")):
+            probe_meta = {k: v for k, v in meta.items() if k != "parentAgentId"}
+            probe_meta["spawnDepth"] = depth
+            if parent:
+                probe_meta["parentAgentId"] = parent
+            with open(os.path.join(copy_dir, os.path.basename(meta_path)), "w", encoding="utf-8") as fh:
+                json.dump(probe_meta, fh)
+            got = run(hook, [], hook_in, tmp)
+            if got is None:
+                return f"skip: хук не ответил за {TIMEOUT} с"
+            codes.append(got[0])
+    if codes == [0, 2]:
+        return "ok: " + meta_path
+    if codes[0] != 0:
+        return (f"silent: разрешение «{GRANT}» в первой записи журнала не пустило Write нового арх-теста "
+                f"(код {codes[0]}, ждали 0) — сторож не читает задание: " + meta_path)
+    return (f"silent: у вложенного субагента (spawnDepth 2, parentAgentId) разрешение сработало (код "
+            f"{codes[1]}, ждали 2) — сторож не отличает вложенного: " + meta_path)
+
+
+PROBES = {"context-handoff": context_handoff, "guard-decisions": guard_decisions}
+
+
+def main(name, hook, home):
+    if not os.path.exists(hook):
+        return "skip: хук ещё не установлен"
+    return PROBES[name](hook, home)
+
+
+if __name__ == "__main__":
+    try:
+        print(main(*sys.argv[1:4]))
+    except Exception as exc:  # noqa: BLE001 — сбой пробы не валит выкатку, это «проверить нечем»
+        print(f"skip: проверка не удалась: {exc!r}")

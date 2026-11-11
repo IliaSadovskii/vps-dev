@@ -1,0 +1,767 @@
+#!/usr/bin/python3 -IS
+"""Хук PreToolUse Claude Code: исполнитель не правит арх-тесты и решения плана.
+
+    guard-decisions   (вход хука — JSON на stdin; запрет — код 2 и причина в stderr)
+
+Повод: агенты «чинят» тест, который держит решение, вместо кода, и
+переписывают решения в плане под сделанное (план decisions-hold, решения
+владельца 2026-11-11). Субагенту (во входе есть agent_id) запрещено:
+- править и удалять существующие арх-тесты под tests/Arch/ — те, что есть в
+  основной ветке репозитория (origin/HEAD, иначе main, иначе master; нет git
+  или ни одной из них — те, что есть на диске);
+- без разрешения в задании — создавать, править и удалять там свои новые
+  (их нет в основной ветке);
+- менять раздел «## Решения…» файла плана — .md в каталоге plans/ или файл
+  plan-*.md (asides/plan-x.md); остальной план (передача и прочее) он правит;
+- писать в ~/.claude/projects/** (журналы и agent-<id>.meta.json): оттуда
+  хук читает разрешение, и выписать его себе нельзя; автопамять
+  <проект>/memory/ — можно.
+Главная сессия (нет agent_id) правит всё. Пути сравниваются после
+os.path.realpath: симлинк на tests/Arch или на план — то же, что сам путь.
+Заголовки внутри блоков кода — не заголовки; блок закрывает только ограда
+из того же символа (``` или ~~~) не короче открывающей.
+
+Разрешение — строка в тексте задания субагенту, без отступа, ровно
+    guard-decisions: tests/Arch
+    guard-decisions: Решения
+    guard-decisions: tests/Arch, Решения
+не внутри блока кода и не после заголовка «Передача» (передача и цитаты
+разрешения не переносят). Её пишет мастер: «tests/Arch» — когда исполнитель
+заводит новый арх-тест к решению, «Решения» — только чтобы исполнитель
+вписал решение владельца дословно. «tests/Arch» пускает к своим новым
+арх-тестам (Write, Edit, удаление, оболочка); существующий исполнитель не
+правит и с разрешением — его правит мастер по слову владельца. «Решения»
+пускает правку раздела решений, в том числе оболочкой.
+Хук ищет строку в первой записи журнала субагента
+(<сессия>/subagents/agent-<id>.jsonl — это и есть текст задания) и верит
+ей, только если субагента запустила главная сессия: в agent-<id>.meta.json
+spawnDepth 1 и нет parentAgentId. Иначе исполнитель выдал бы разрешение
+сам, вписав строку в задание своему субагенту. Раскладка журналов проверена
+на Claude Code 2.1.316; при выкатке её проверяет hook-probe роли style.
+
+Bash разбирается по частям команды (;, &&, ||, |, &, перевод строки, ( ),
+слова if/then/do/else/elif/{/!/}/fi/done/esac); кавычки и тело heredoc —
+данные, а $(…), `…` (и внутри двойных кавычек), <(…), >(…) — команды.
+cd меняет каталог для следующих частей, внутри ( … ) — только до «)».
+Обёртки снимаются вместе со значениями опций: sudo -u X, env -u X / -C DIR /
+VAR=…, nice -n N, timeout N, xargs [опции], time, nohup, stdbuf, ionice.
+Запись засчитывается, только если путь — цель перенаправления (>, >>, >|,
+&>) или tee, аргумент файловой операции (rm, unlink, shred, truncate — все
+пути; mv, cp, rsync — цель, а цель-каталог — вместе с tests/Arch и файлами
+плана под ней; mv — ещё и источник; install, ln — цель; dd of=; sed/perl
+-i, но не -M…; git checkout/restore/rm/mv/apply, кроме restore --staged
+и глобальных опций git со значением), начало
+find с -delete или -exec файловой операцией над {}, путь в аргументах
+команды после xargs, файл из патча (+++ b/…, --- a/…) у git apply и patch.
+В файл плана оболочка без разрешения «Решения» не пишет: раздел так не
+отличить, план правится через Edit. Edit без old_string — создание, как
+Write; Edit, чей old_string не нашёлся в плане буквально, при разделе
+«Решения» запрещён: Claude Code сам приводит кавычки, и хук не знает, куда
+ляжет правка. Прогон и чтение не задеваются.
+
+Не видно (защита от ошибки агента, а не от умысла): пути из входа xargs,
+патч из трубы или нечитаемого файла (тогда записью считаются аргументы, как
+у rm), $(…) в теле heredoc без кавычек у метки, bash -c и eval со строкой,
+python -c и другие интерпретаторы, docker, rm -r каталога выше tests/Arch,
+find . с -delete. Исполнитель, запущенный отдельной главной сессией (Paseo,
+claude -p, Codex), хуком не покрыт — для него правило только в общем промпте. Любая ошибка разбора — тихий выход 0,
+как у соседних хуков: хук не должен ломать работу. Не прочиталось
+разрешение — его нет; сбой или таймаут git — арх-тест существующий. Примеры
+решений — scripts/test-guard-decisions.sh. Только stdlib, запуск с -I -S.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+
+ARCH = "tests/Arch"
+DECISIONS = "Решения"
+GRANT = re.compile(r"guard-decisions: (tests/Arch|Решения)(?:, (tests/Arch|Решения))?[ \t]*")
+HANDOFF = re.compile(r"^#{1,6}\s+Передача")
+FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+ARCH_PATH = re.compile(r"(^|/)tests/Arch(/|$)")
+SECTION = re.compile(r"^## Решения")
+HEADING = re.compile(r"^#{1,2}\s")
+PLANS_DIR = re.compile(r"(^|/)plans/")
+MAIN_REFS = ("origin/HEAD", "main", "master")
+GIT_TIMEOUT = 2
+
+# Оболочка: разделители частей и перенаправления, после которых слово — файл.
+SEPARATORS = {";", ";;", "&&", "||", "|", "|&", "&", "\n", "(", ")"}
+WRITE_REDIRECT = {">", ">>", ">|", "&>", "&>>", "<>", ">&"}
+READ_REDIRECT = {"<", "<<", "<<-", "<<<", "<&"}
+OPERATORS = sorted(SEPARATORS | WRITE_REDIRECT | READ_REDIRECT, key=len, reverse=True)
+# Слова оболочки в начале части: снимаются, команда — следующее слово.
+KEYWORDS = {"if", "then", "do", "else", "elif", "while", "until", "{", "!", "}", "fi", "done", "esac"}
+# Обёртки: имя → опции со значением отдельным словом; сколько слов после опций — не команда.
+WRAPPERS = {
+    "sudo": {"-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-T", "-U", "--user", "--group", "--host",
+             "--prompt", "--chdir", "--role", "--type", "--command-timeout", "--other-user", "--close-from"},
+    "doas": {"-u", "-C"},
+    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+    "nice": {"-n", "--adjustment"},
+    "ionice": {"-c", "-n", "-p", "-P", "-u", "--class", "--classdata"},
+    "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
+    "timeout": {"-s", "-k", "--signal", "--kill-after"},
+    "xargs": {"-I", "-n", "-L", "-P", "-s", "-d", "-E", "-a", "--arg-file", "--delimiter", "--max-args",
+              "--max-lines", "--max-procs", "--max-chars", "--replace", "--eof", "--process-slot-var"},
+    "time": {"-f", "-o", "--format", "--output"},
+    "exec": {"-a"},
+    "nohup": set(), "command": set(), "builtin": set(),
+}
+WRAPPER_POSITIONAL = {"timeout": 1}
+DELETE = {"rm", "unlink", "shred", "truncate"}
+TREE = {"mv", "cp", "rsync"}
+TARGET = {"install", "ln"}
+GIT_GLOBAL = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env",
+              "--attr-source"}
+GIT_WRITE = {"checkout", "restore", "rm", "mv", "apply"}
+PATCH_ARG = {"-i", "--input", "-o", "--output", "-d", "--directory", "-p", "--strip", "-r", "--reject-file",
+             "-B", "--prefix", "-D", "--ifdef", "-F", "--fuzz", "-z", "--suffix", "-V", "--version-control",
+             "-Y", "--basename-prefix", "-g", "--get", "--quoting-style"}
+FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
+INPLACE = re.compile(r"^(-[a-zA-Z]*i|--in-place(=|$))")
+ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+PATCH_LINE = re.compile(r"^(?:\+\+\+|---) (\S+)")
+WALK_SKIP = {".git", "node_modules", "vendor", ".cache", ".venv"}
+
+
+def deny(why):
+    print(f"Заблокировано сторожем (guard-decisions): {why}", file=sys.stderr)
+    sys.exit(2)
+
+
+def unfenced(text):
+    """(строка, вне блока кода ли). Блок закрывает та же ограда не короче открывающей."""
+    fence = None
+    for line in text.splitlines():
+        mark = FENCE.match(line)
+        if fence is None:
+            if mark and not (mark.group(1)[0] == "`" and "`" in mark.group(2)):
+                fence = mark.group(1)
+                yield line, False
+            else:
+                yield line, True
+            continue
+        if mark and mark.group(1)[0] == fence[0] and len(mark.group(1)) >= len(fence) and not mark.group(2).strip():
+            fence = None
+        yield line, False
+
+
+def decisions(text):
+    """Строки всех разделов «## Решения…» до следующего заголовка уровня 1–2."""
+    out, inside = [], False
+    for line, plain in unfenced(text):
+        if plain and HEADING.match(line):
+            inside = bool(SECTION.match(line))
+        if inside:
+            out.append(line)
+    return out
+
+
+def grants(text):
+    """Слова разрешения: свои строки задания до заголовка «Передача»."""
+    words = set()
+    for line, plain in unfenced(text):
+        if not plain:
+            continue
+        if HANDOFF.match(line):
+            break
+        found = GRANT.fullmatch(line)
+        if found:
+            words.update(w for w in found.groups() if w)
+    return words
+
+
+def is_plan(path):
+    """Файл плана: .md в каталоге plans/ или plan-*.md."""
+    if not path.lower().endswith(".md"):
+        return False
+    return bool(PLANS_DIR.search(path)) or os.path.basename(path).lower().startswith("plan-")
+
+
+def after_edits(text, edits):
+    """Текст после правок или None, если old_string не нашёлся буквально."""
+    for edit in edits:
+        old, new = edit.get("old_string") or "", edit.get("new_string") or ""
+        if not old:
+            text = new  # пустой old_string — создание файла, как Write
+            continue
+        if old not in text:
+            return None
+        text = text.replace(old, new) if edit.get("replace_all") else text.replace(old, new, 1)
+    return text
+
+
+def closing(cmd, i, end):
+    """Индекс конца подстановки от позиции i: «)» с учётом вложенности и кавычек или «`»."""
+    depth, n = 1, len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if end == "`":
+            if ch == "`":
+                return i
+        elif ch == "'":
+            found = cmd.find("'", i + 1)
+            i = n if found < 0 else found
+        elif ch == '"':
+            i += 1
+            while i < n and cmd[i] != '"':
+                i += 2 if cmd[i] == "\\" else 1
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return n
+
+
+def tokens(cmd):
+    """Слова и операторы оболочки: ("w", слово), ("op", оператор), ("sub", команда внутри $(…), `…`, <(…)).
+
+    Кавычки снимаются, их содержимое — часть слова; тело heredoc пропускается;
+    номер дескриптора перед перенаправлением (2>) отбрасывается."""
+    out, word, quoted, heredocs, delim = [], [], False, [], None
+    i, n = 0, len(cmd)
+
+    def flush():
+        nonlocal word, quoted, delim
+        if word or quoted:
+            out.append(("w", "".join(word)))
+            if delim:
+                heredocs.append((delim, out[-1][1]))
+                delim = None
+        word, quoted = [], False
+
+    def substitution(i):
+        start = i + 1 if cmd[i] == "`" else i + 2
+        end = closing(cmd, start, "`" if cmd[i] == "`" else ")")
+        out.append(("sub", cmd[start:end]))
+        word.append(cmd[i:end + 1])
+        return end + 1
+
+    while i < n:
+        ch = cmd[i]
+        if ch == "\\":
+            if cmd[i + 1:i + 2] == "\n":
+                i += 2
+                continue
+            word.append(cmd[i + 1:i + 2])
+            i += 2
+            continue
+        if ch == "`" or cmd.startswith("$(", i):
+            i = substitution(i)
+            continue
+        if ch == "'":
+            end = cmd.find("'", i + 1)
+            end = n if end < 0 else end
+            word.append(cmd[i + 1:end])
+            quoted, i = True, end + 1
+            continue
+        if ch == '"':
+            i += 1
+            while i < n and cmd[i] != '"':
+                if cmd[i] == "\\" and i + 1 < n and cmd[i + 1] in '"\\$`':
+                    word.append(cmd[i + 1])
+                    i += 2
+                elif cmd[i] == "`" or cmd.startswith("$(", i):
+                    i = substitution(i)
+                else:
+                    word.append(cmd[i])
+                    i += 1
+            quoted, i = True, i + 1
+            continue
+        if ch == "#" and not word and not quoted:
+            end = cmd.find("\n", i)
+            i = n if end < 0 else end
+            continue
+        if ch in " \t":
+            flush()
+            i += 1
+            continue
+        if cmd.startswith(("<(", ">("), i):
+            flush()  # <(…) и >(…) — команда внутри, а снаружи — слово-файл
+            i = substitution(i)
+            flush()
+            continue
+        op = next((o for o in OPERATORS if cmd.startswith(o, i)), None)
+        if op is None:
+            word.append(ch)
+            i += 1
+            continue
+        if op in WRITE_REDIRECT | READ_REDIRECT and word and not quoted and "".join(word).isdigit():
+            word = []  # 2>файл: «2» — дескриптор, не слово
+        flush()
+        out.append(("op", op))
+        i += len(op)
+        if op in {"<<", "<<-"}:
+            delim = op
+        elif op == "\n":
+            for kind, mark in heredocs:  # тело heredoc — данные до строки-метки
+                while i < n:
+                    end = cmd.find("\n", i)
+                    end = n if end < 0 else end
+                    line, i = cmd[i:end], end + 1
+                    if (line.lstrip("\t") if kind == "<<-" else line) == mark:
+                        break
+            heredocs = []
+    flush()
+    return out
+
+
+def parts(cmd):
+    """Части команды: (argv, цели записи, файлы чтения «<», подстановки, разделитель после части)."""
+    argv, writes, reads, subs, after = [], [], [], [], None
+    for kind, value in tokens(cmd):
+        if kind == "sub":
+            subs.append(value)
+            continue
+        if after is not None:
+            if kind == "w":
+                if after in WRITE_REDIRECT and not (value.isdigit() or value == "-"):
+                    writes.append(value)
+                elif after == "<":
+                    reads.append(value)
+                after = None
+                continue
+            after = None
+        if kind == "w":
+            argv.append(value)
+        elif value in SEPARATORS:
+            yield argv, writes, reads, subs, value
+            argv, writes, reads, subs = [], [], [], []
+        else:
+            after = value
+    yield argv, writes, reads, subs, None
+
+
+def positional(args):
+    out, opts_done = [], False
+    for arg in args:
+        if not opts_done and arg == "--":
+            opts_done = True
+        elif opts_done or not arg.startswith("-") or arg == "-":
+            out.append(arg)
+    return out
+
+
+def unwrap(argv, cwd):
+    """Снять слова оболочки, присваивания и обёртки: (argv команды, её каталог, была ли xargs)."""
+    via_xargs = False
+    while argv:
+        head = os.path.basename(argv[0])
+        if ASSIGN.match(argv[0]) or argv[0] in KEYWORDS:
+            argv = argv[1:]
+            continue
+        if head not in WRAPPERS:
+            break
+        takes, argv = WRAPPERS[head], argv[1:]
+        via_xargs = via_xargs or head == "xargs"
+        while argv and argv[0].startswith("-") and not (head == "env" and argv[0] == "-"):
+            opt, argv = argv[0], argv[1:]
+            if opt == "--":
+                break
+            if opt in takes and argv:
+                value, argv = argv[0], argv[1:]
+                if head == "env" and opt in {"-C", "--chdir"}:
+                    cwd = os.path.join(cwd, os.path.expanduser(value))
+                elif head == "env" and opt in {"-S", "--split-string"}:
+                    argv = [v for k, v in tokens(value) if k == "w"] + argv
+            elif head == "env" and opt.startswith("--chdir="):
+                cwd = os.path.join(cwd, os.path.expanduser(opt.split("=", 1)[1]))
+        if head == "env" and argv[:1] == ["-"]:
+            argv = argv[1:]
+        argv = argv[WRAPPER_POSITIONAL.get(head, 0):]
+    return argv, cwd, via_xargs
+
+
+def modifies(name, args):
+    """Пути, которые команда name меняет по своим аргументам (без каталога отсчёта)."""
+    if name in DELETE or name == "tee":
+        return positional(args)
+    if name in {"sed", "perl"}:
+        return positional(args) if any(INPLACE.match(a) for a in args if not a.startswith("-M")) else []
+    if name == "dd":
+        return [a[3:] for a in args if a.startswith("of=")]
+    return []
+
+
+def patch_paths(patch, base):
+    """Пути файлов из патча (+++ b/…, --- a/…) или None, если патч не читается."""
+    try:
+        with open(os.path.join(base, os.path.expanduser(patch)), encoding="utf-8", errors="replace") as fh:
+            text = fh.read(4 << 20)
+    except OSError:
+        return None
+    out = []
+    for line in text.splitlines():
+        found = PATCH_LINE.match(line)
+        if found and found.group(1) != "/dev/null":
+            path = found.group(1)
+            out.append(path[2:] if path[:2] in {"a/", "b/"} else path)
+    return out
+
+
+def file_args(argv, cwd, reads):
+    """Что часть команды меняет: [(путь, каталог отсчёта, цель-каталог ли)], и новый cwd после cd."""
+    argv, base, via_xargs = unwrap(argv, cwd)
+    if not argv:
+        return [], cwd
+    name, args = os.path.basename(argv[0]), argv[1:]
+    if name == "cd":
+        rest = positional(args)
+        if not rest:
+            return [], os.path.expanduser("~")
+        return [], cwd if rest[0] == "-" else os.path.join(cwd, os.path.expanduser(rest[0]))
+    if via_xargs and (name in DELETE | TREE | TARGET | {"tee"} or modifies(name, args)):
+        return [(p, base, False) for p in positional(args)], cwd
+    if name in TREE:
+        moved = [p for p in positional(args) if p not in target(name, args)] if name == "mv" else []
+        return [(p, base, True) for p in tree_targets(name, args, base)] + [(p, base, False) for p in moved], cwd
+    if name in TARGET:
+        return [(p, base, False) for p in target(name, args)], cwd
+    if name == "patch":
+        return [(p, d, False) for p, d in patch_targets(args, base, reads)], cwd
+    if name == "find":
+        return find_targets(args, base), cwd
+    if name == "git":
+        return [(p, d, False) for p, d in git_targets(args, base, reads)], cwd
+    return [(p, base, False) for p in modifies(name, args)], cwd
+
+
+def target(name, args):
+    """Цель cp/mv/install/ln/rsync: -t КАТАЛОГ (у rsync -t — время, не цель) или последний позиционный."""
+    out = []
+    for k, arg in enumerate(args):
+        if name == "rsync":
+            break
+        if arg in {"-t", "--target-directory"} and k + 1 < len(args):
+            out.append(args[k + 1])
+        elif arg.startswith("--target-directory="):
+            out.append(arg.split("=", 1)[1])
+    rest = positional(args)
+    return out or (rest[-1:] if len(rest) >= 2 else [])
+
+
+def tree_targets(name, args, base):
+    """Куда ляжет cp/mv/rsync: цель; в цель-каталог — каталог/имя источника, у rsync «src/» — сама цель."""
+    dest = target(name, args)
+    if not dest:
+        return []
+    rest = positional(args)
+    sources = [p for p in rest if p != dest[0]] if dest[0] not in rest[-1:] else rest[:-1]
+    folder = os.path.join(base, os.path.expanduser(dest[0]))
+    if "-T" in args or "--no-target-directory" in args or not os.path.isdir(folder):
+        return dest
+    out = []
+    for src in sources:
+        if name == "rsync" and src.endswith("/"):
+            out.append(dest[0])  # содержимое — прямо в цель
+        else:
+            out.append(os.path.join(dest[0], os.path.basename(src.rstrip("/"))))
+    return out
+
+
+def patch_targets(args, base, reads):
+    """patch [опции] [исходный [патч]]: исходный, -o, пути из патча (-i, второй позиционный или «<»)."""
+    rest, patchfile, out, k = [], None, [], 0
+    while k < len(args):
+        arg = args[k]
+        if arg in PATCH_ARG and k + 1 < len(args):
+            if arg in {"-i", "--input"}:
+                patchfile = args[k + 1]
+            elif arg in {"-o", "--output"}:
+                out.append(args[k + 1])
+            elif arg in {"-d", "--directory"}:
+                base = os.path.join(base, args[k + 1])
+            k += 2
+            continue
+        if arg.startswith("--input="):
+            patchfile = arg.split("=", 1)[1]
+        elif arg.startswith("--output="):
+            out.append(arg.split("=", 1)[1])
+        elif arg.startswith("--directory="):
+            base = os.path.join(base, arg.split("=", 1)[1])
+        elif not arg.startswith("-") or arg == "-":
+            rest.append(arg)
+        k += 1
+    patchfile = patchfile or (rest[1] if len(rest) > 1 else None) or (reads[-1] if reads else None)
+    found = patch_paths(patchfile, base) if patchfile else None
+    named = rest[:1] + out
+    if found is None:
+        return [(p, base) for p in rest + out]
+    return [(p, base) for p in named + found]
+
+
+def find_targets(args, base):
+    """find: начальные пути — запись при -delete или -exec файловой операцией над {}; плюс пути из -exec."""
+    k, starts, out, destructive = 0, [], [], False
+    while k < len(args) and args[k] in {"-H", "-L", "-P"}:
+        k += 1
+    while k < len(args) and not (args[k].startswith("-") or args[k] in {"(", "!", ")", ","}):
+        starts.append(args[k])
+        k += 1
+    while k < len(args):
+        arg = args[k]
+        if arg == "-delete":
+            destructive = True
+        elif arg in FIND_EXEC:
+            end = k + 1
+            while end < len(args) and args[end] not in {";", "+"}:
+                end += 1
+            for path, where, tree in file_args(args[k + 1:end], base, [])[0]:
+                if path == "{}":
+                    destructive = True  # меняется сам найденный файл
+                else:
+                    out.append((path, where, tree))
+            k = end
+        k += 1
+    if destructive:
+        out += [(p, base, False) for p in starts or ["."]]
+    return out
+
+
+def git_targets(args, base, reads):
+    """git [глобальные опции] checkout/restore/rm/mv/apply: что меняется в рабочем дереве."""
+    k = 0
+    while k < len(args) and args[k].startswith("-"):
+        if args[k] in GIT_GLOBAL and k + 1 < len(args):
+            if args[k] == "-C":
+                base = os.path.join(base, args[k + 1])
+            k += 1
+        k += 1
+    if k >= len(args) or args[k] not in GIT_WRITE:
+        return []
+    sub, rest = args[k], args[k + 1:]
+    if sub == "restore":
+        short = [a[1:] for a in rest if a.startswith("-") and not a.startswith("--")]
+        staged = "--staged" in rest or any("S" in s for s in short)
+        worktree = "--worktree" in rest or any("W" in s for s in short)
+        if staged and not worktree:
+            return []
+    if sub == "apply":
+        patches = [p for p in positional(rest) if p != "-"] or reads[-1:]
+        found = [patch_paths(p, base) for p in patches]
+        if patches and all(f is not None for f in found):
+            return [(p, base) for f in found for p in f]
+    return [(p, base) for p in positional(rest)]
+
+
+def real(path, base):
+    return os.path.realpath(os.path.join(base, os.path.expanduser(os.path.expandvars(path))))
+
+
+def below(folder):
+    """Защищённое внутри каталога-цели: каталоги tests/Arch и файлы плана (не глубже 4 уровней)."""
+    if not os.path.isdir(folder):
+        return []
+    found, top, seen = [], folder.rstrip("/").count("/"), 0
+    for root, dirs, files in os.walk(folder):
+        seen += 1
+        if ARCH_PATH.search(root) or seen > 5000:
+            found += [root] if ARCH_PATH.search(root) else []
+            dirs[:] = []
+            continue
+        dirs[:] = [] if root.count("/") - top >= 4 else [d for d in dirs if d not in WALK_SKIP]
+        found += [os.path.join(root, f) for f in files if is_plan(os.path.join(root, f))]
+    return found
+
+
+def written(cmd, cwd, depth=0):
+    """Настоящие пути, в которые пишет команда оболочки."""
+    out, stack = [], []
+    for argv, writes, reads, subs, sep in parts(cmd):
+        if depth < 8:
+            for sub in subs:
+                out += written(sub, cwd, depth + 1)
+        found, next_cwd = file_args(argv, cwd, reads)
+        for path, base, tree in found:
+            if path:
+                out.append(real(path, base))
+                out += below(out[-1]) if tree else []
+        out += [real(p, cwd) for p in writes if p]
+        cwd = next_cwd
+        if sep == "(":
+            stack.append(cwd)
+        elif sep == ")" and stack:
+            cwd = stack.pop()
+    return out
+
+
+def git(folder, *args):
+    """(код, вывод, ошибки) git; нет git — FileNotFoundError, таймаут — исключение."""
+    done = subprocess.run(["git", "-C", folder, *args], capture_output=True, text=True, timeout=GIT_TIMEOUT,
+                          env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"}, stdin=subprocess.DEVNULL)
+    return done.returncode, done.stdout.strip(), done.stderr
+
+
+def existing(path):
+    """Существующий арх-тест (Р10б): путь есть в основной ветке; нет git или ветки — есть на диске."""
+    folder = path
+    while not os.path.isdir(folder) and os.path.dirname(folder) != folder:
+        folder = os.path.dirname(folder)
+    try:
+        code, top, err = git(folder, "rev-parse", "--show-toplevel")
+        if code != 0:
+            return os.path.lexists(path) if "not a git repository" in err else True
+        rel = os.path.relpath(path, os.path.realpath(top))
+        if rel.startswith(".."):
+            return os.path.lexists(path)
+        for ref in MAIN_REFS:
+            if git(folder, "rev-parse", "--verify", "--quiet", ref + "^{commit}")[0] == 0:
+                return git(folder, "cat-file", "-e", f"{ref}:{rel}")[0] == 0
+        return os.path.lexists(path)
+    except FileNotFoundError:
+        return os.path.lexists(path)
+    except Exception:  # noqa: BLE001 — сбой git: безопасная сторона
+        return True
+
+
+def journal_roots(hook):
+    """Каталоги журналов Claude Code: ~/.claude/projects и тот, где лежит transcript_path."""
+    roots = {os.path.realpath(os.path.expanduser("~/.claude/projects"))}
+    transcript = hook.get("transcript_path")
+    if isinstance(transcript, str) and transcript:
+        root = os.path.dirname(os.path.dirname(os.path.realpath(transcript)))
+        if os.path.basename(root) == "projects":
+            roots.add(root)
+    return roots
+
+
+def allowed(hook):
+    """Слова разрешения из задания субагента, если его запустила главная сессия."""
+    base = os.path.join(os.path.splitext(hook["transcript_path"])[0], "subagents", f"agent-{hook['agent_id']}")
+    try:
+        with open(base + ".meta.json", encoding="utf-8") as fh:
+            meta = json.load(fh)
+        if meta.get("spawnDepth") != 1 or meta.get("parentAgentId"):
+            return set()
+        with open(base + ".jsonl", encoding="utf-8") as fh:
+            first = json.loads(fh.readline())
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return set()
+    if first.get("type") != "user":
+        return set()
+    content = (first.get("message") or {}).get("content")
+    if isinstance(content, list):
+        content = "\n".join(b.get("text", "") for b in content if isinstance(b, dict))
+    if not isinstance(content, str):
+        return set()
+    return grants(content)
+
+
+ARCH_OLD = ("— существующий арх-тест (есть в основной ветке), он держит решение. Исполнитель его не правит "
+            "и не удаляет, даже с разрешением в задании: код разошёлся с тестом — чини код; тест сам неверен — "
+            "верни вопрос мастеру, существующий арх-тест правит мастер по слову владельца.")
+ARCH_NEW = ("— новый арх-тест (его нет в основной ветке). Создавать, править и удалять свои новые можно только "
+            "по разрешению мастера: строка «guard-decisions: tests/Arch» отдельной строкой в тексте задания, "
+            "до передачи. Разрешения нет — верни вопрос мастеру.")
+JOURNALS = ("— журнал или meta Claude Code. Субагент их не пишет: оттуда сторож читает разрешение, "
+            "и выписать его себе нельзя.")
+PLAN_BASH = ("— файл плана, а раздел «Решения» оболочкой не отличить: план правь через Edit, раздел «Решения» "
+             "не трогай — он мастера. Решение владельца вписать дословно — по разрешению «guard-decisions: "
+             "Решения» в задании.")
+PLAN_EDIT = ("правка меняет раздел «Решения» плана {}. Решения правит мастер: код разошёлся с решением — чини "
+             "код или верни вопрос мастеру. Решение владельца вписывает исполнитель только по разрешению — "
+             "строке «guard-decisions: Решения» отдельной строкой в тексте задания.")
+PLAN_FUZZY = ("old_string не нашёлся в плане {} буквально, а в плане есть раздел «Решения»: Claude Code приведёт "
+              "кавычки сам, и сторож не знает, куда ляжет правка. Скопируй old_string из файла точно.")
+
+
+def main():
+    raw = sys.stdin.buffer.read()
+    if b'"agent_id"' not in raw:
+        return
+    hook = json.loads(raw)
+    agent_id = hook.get("agent_id")
+    if not isinstance(agent_id, str) or not agent_id:
+        return
+    if not all(ch.isascii() and (ch.isalnum() or ch in "_-") for ch in agent_id):
+        return
+    tool = hook.get("tool_name")
+    args = hook.get("tool_input") or {}
+    cwd = hook.get("cwd") if isinstance(hook.get("cwd"), str) and hook.get("cwd") else os.getcwd()
+    roots = journal_roots(hook)
+    grant = None  # разрешение читается лениво: только когда дошло до запрета
+
+    def granted(word):
+        nonlocal grant
+        if grant is None:
+            grant = allowed(hook) if isinstance(hook.get("transcript_path"), str) else set()
+        return word in grant
+
+    def in_journals(path):
+        # Журналы и meta — да; автопамять <проект>/memory/ — нет: разрешение оттуда не читается.
+        for r in roots:
+            if path == r or path.startswith(r + "/"):
+                parts = path[len(r) + 1:].split("/")
+                return not (len(parts) > 2 and parts[1] == "memory")
+        return False
+
+    def guard_path(path, how):
+        if in_journals(path):
+            deny(f"{how}{path} {JOURNALS}")
+        if ARCH_PATH.search(path):
+            if existing(path):
+                deny(f"{how}{path} {ARCH_OLD}")
+            if not granted(ARCH):
+                deny(f"{how}{path} {ARCH_NEW}")
+
+    if tool == "Bash":
+        cmd = args.get("command") or ""
+        if not isinstance(cmd, str):
+            return
+        paths = written(cmd, cwd)
+        for path in paths:
+            guard_path(path, "команда оболочки пишет в ")
+        for path in paths:
+            if is_plan(path) and not granted(DECISIONS):
+                deny(f"команда оболочки пишет в {path} {PLAN_BASH}")
+        return
+
+    path = args.get("file_path") or args.get("notebook_path") or ""
+    if not isinstance(path, str) or not path:
+        return
+    path = real(path, cwd)
+    guard_path(path, "")
+    if ARCH_PATH.search(path) or not is_plan(path):
+        return
+    try:
+        with open(path, encoding="utf-8") as fh:
+            before = fh.read()
+    except FileNotFoundError:
+        before = ""
+    if tool == "Write":
+        after = args.get("content")
+    elif tool == "Edit":
+        after = after_edits(before, [args])
+    elif tool == "MultiEdit":
+        after = after_edits(before, args.get("edits") or [])
+    else:
+        return
+    if after is None:
+        edits = [args] if tool == "Edit" else args.get("edits") or []
+        adds = any(SECTION.match(line) for e in edits for line in str(e.get("new_string") or "").splitlines())
+        if (decisions(before) or adds) and not granted(DECISIONS):
+            deny(PLAN_FUZZY.format(path))
+        return
+    if not isinstance(after, str):
+        return
+    if decisions(before) != decisions(after) and not granted(DECISIONS):
+        deny(PLAN_EDIT.format(path))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception:  # noqa: BLE001 — хук не должен ломать работу агента
+        pass
+    sys.exit(0)
