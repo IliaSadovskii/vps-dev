@@ -301,3 +301,16 @@
           Выбери время и выполни: sudo reboot
       when: reboot_required.stat.exists
       tags: always
+
+    - name: Живая проверка хуков Claude Code не прошла (роль style)
+      # Падение здесь, а не посреди роли style: остальные роли успевают
+      # примениться, а итог выкатки — красный (план decisions-hold, Р10а).
+      # Причины собирает задача «Сбой живой проверки хуков» роли style.
+      ansible.builtin.fail:
+        msg: >-
+          {{ style_hook_probe_failures | join('; ') }}.
+          Скорее всего, Claude Code поменял формат журнала или раскладку
+          <сессия>/subagents/agent-<id>.jsonl и .meta.json — хук тихо не работает.
+          Сверь с docstring хука и ansible/roles/style/files/hook-probe и поправь их в роли style.
+      when: style_hook_probe_failures | default([]) | length > 0
+      tags: always

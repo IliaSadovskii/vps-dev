@@ -309,216 +309,70 @@
     path: "/home/{{ style_user }}/.claude/hooks/guard-destructive-db.sh"
     state: absent
 
-- name: Хук context-handoff находит размер контекста в живом журнале
-  # Claude Code может поменять формат журнала или раскладку каталогов, и
-  # хук тогда тихо замолчит: ошибки он глотает нарочно. Поэтому прогоняем
-  # установленный хук с порогом 1 на самом свежем журнале субагента, где
-  # уже есть записи usage, — он обязан напомнить. Проверяются формат
-  # журнала и раскладка <сессия>/subagents/agent-<id>.jsonl; вход, который
-  # Claude Code передаёт хуку, здесь собран вручную и не проверяется.
-  # От владельца журналов, HOME — временный: отметки хука не попадают в
-  # живой ~/.cache, журналы только читаются. И при выкатке, и в make check.
-  # Вывод: ok / silent / moved — проверено; skip — проверить было нечем.
+- name: Живая проверка хуков (hook-probe)
+  # Claude Code может поменять формат журнала или раскладку каталогов, а
+  # хуки ошибки глотают нарочно и тогда тихо перестают работать. Проба
+  # гоняет установленный хук на свежем журнале субагента этой машины; что
+  # и как проверяется — в docstring скрипта.
+  ansible.builtin.copy:
+    src: hook-probe
+    dest: "{{ style_install_dir }}/hook-probe"
+    owner: root
+    group: root
+    mode: '0755'
+  register: style_hook_probe_file
+
+- name: Где в роли лежит версия новее установленной (хук или проба)
+  # В check-режиме новая версия ещё не встала, проверен прежний хук: его
+  # сбой — предупреждение, а не падение выкатки.
+  ansible.builtin.set_fact:
+    style_hook_new:
+      context-handoff: "{{ style_context_handoff_file.changed or style_hook_probe_file.changed }}"
+      guard-decisions: "{{ style_guard_decisions_file.changed or style_hook_probe_file.changed }}"
+
+- name: Хуки context-handoff и guard-decisions работают на живых журналах
+  # От владельца журналов: журналы только читаются, хук идёт с временным
+  # HOME. И при выкатке, и в make check. Вывод: ok / silent / moved —
+  # проверено; skip — проверить было нечем.
   ansible.builtin.command:
     argv:
-      - python3
-      - -I
-      - -c
-      - |
-        import glob, json, os, subprocess, sys, tempfile, time
-
-        def fresh(pattern):
-            found = []
-            for path in glob.glob(pattern):
-                try:
-                    mtime = os.path.getmtime(path)
-                except OSError:
-                    continue
-                if time.time() - mtime < 7 * 86400:
-                    found.append((mtime, path))
-            return [path for _, path in sorted(found, reverse=True)]
-
-        def has_usage(path):
-            tail = b""
-            with open(path, "rb") as journal:
-                for chunk in iter(lambda: journal.read(1 << 20), b""):
-                    if b'"usage"' in tail + chunk:
-                        return True
-                    tail = chunk[-8:]
-            return False
-
-        def main(hook, home):
-            if not os.path.exists(hook):
-                return "skip: хук ещё не установлен"
-            journals = fresh(home + "/.claude/projects/*/*/subagents/agent-*.jsonl")
-            if not journals:
-                if fresh(home + "/.claude/projects/*/*.jsonl"):
-                    return "moved: журналы сессий за неделю есть, а журналов <сессия>/subagents/agent-<id>.jsonl нет"
-                return "skip: за неделю не было ни сессий, ни субагентов"
-            unread = 0
-            for path in journals:
-                try:
-                    if has_usage(path):
-                        break
-                except OSError:
-                    unread += 1
-            else:
-                if unread:
-                    return f"skip: в прочитанных журналах нет usage, не прочитано: {unread}"
-                return "silent: ни в одном журнале субагента за неделю нет записей usage"
-            session = os.path.dirname(os.path.dirname(path))
-            hook_in = json.dumps({"session_id": os.path.basename(session),
-                                  "transcript_path": session + ".jsonl",
-                                  "agent_id": os.path.basename(path)[6:-6],
-                                  "agent_type": "general-purpose",
-                                  "hook_event_name": "PostToolBatch", "tool_calls": []})
-            with tempfile.TemporaryDirectory() as tmp:
-                try:
-                    out = subprocess.run([hook, "1", "1"], input=hook_in, capture_output=True, text=True,
-                                         timeout=30, env={"HOME": tmp, "PATH": "/usr/bin:/bin"}).stdout
-                except subprocess.TimeoutExpired:
-                    return "skip: хук не ответил за 30 с"
-            return ("ok: " if "additionalContext" in out else "silent: ") + path
-
-        try:
-            print(main(*sys.argv[1:3]))
-        except Exception as exc:
-            print(f"skip: проверка не удалась: {exc!r}")
-      - "{{ style_install_dir }}/context-handoff"
+      - "{{ style_install_dir }}/hook-probe"
+      - "{{ item }}"
+      - "{{ style_install_dir }}/{{ item }}"
       - "/home/{{ style_user }}"
+  loop: [context-handoff, guard-decisions]
   become: true
   become_user: "{{ style_user }}"
-  register: style_context_probe
+  register: style_hook_probes
   check_mode: false
   changed_when: false
   failed_when: false
 
-- name: ВНИМАНИЕ — хук context-handoff не находит размер контекста в журналах
-  ansible.builtin.fail:
-    msg: >-
-      ВНИМАНИЕ: установленный хук context-handoff не нашёл размер контекста в свежем журнале субагента.
-      Скорее всего, Claude Code поменял формат журнала или раскладку <сессия>/subagents/agent-<id>.jsonl — хук молчит, передачи по порогу не будет.
-      Проверка: {{ (style_context_probe.stdout | default('', true) ~ ' ' ~ style_context_probe.stderr | default('', true)) | trim }}
-      Сверь с docstring скрипта и поправь его в роли style.
+- name: Сбой живой проверки хуков — выкатка упадёт в конце (post_tasks в site.yml)
+  # Не fail здесь: остальные роли должны примениться, а итог выкатки —
+  # красный (решение владельца 2026-11-11, план decisions-hold, Р10а).
+  ansible.builtin.set_fact:
+    style_hook_probe_failures: >-
+      {{ style_hook_probe_failures | default([]) + [item.item ~ ': '
+         ~ ((item.stdout | default('', true)) ~ ' ' ~ (item.stderr | default(item.msg | default(''), true))) | trim] }}
+  loop: "{{ style_hook_probes.results }}"
+  loop_control:
+    label: "{{ item.item }}"
   when:
-    - style_context_probe.rc != 0 or style_context_probe.stdout is match('(silent|moved):')
-    - not (ansible_check_mode and style_context_handoff_file.changed)
+    - item.rc | default(1) != 0 or item.stdout | default('') is match('(silent|moved):')
+    - not (ansible_check_mode and style_hook_new[item.item] | bool)
 
-- name: ВНИМАНИЕ — хук context-handoff не находит размер контекста в журналах (проверка шла по прежней версии)
+- name: ВНИМАНИЕ — живая проверка хука не прошла (проверка шла по прежней версии)
   ansible.builtin.debug:
-    msg: "В роли лежит другая версия — она встанет при выкатке; проверен установленный: {{ style_context_probe.stdout | default('', true) | trim }}"
-  when:
-    - style_context_probe.rc != 0 or style_context_probe.stdout is match('(silent|moved):')
-    - ansible_check_mode and style_context_handoff_file.changed
-
-- name: Сторож guard-decisions узнаёт субагента и его задание в живом журнале
-  # Как у context-handoff: разрешение сторож читает из первой записи журнала
-  # субагента и верит ему по spawnDepth в agent-<id>.meta.json, а ошибки
-  # глотает нарочно. Поменяет Claude Code раскладку — сторож тихо перестанет
-  # пускать разрешения или отличать вложенных. Поэтому на самом свежем
-  # журнале субагента проверяем: рядом есть meta с spawnDepth, первая запись —
-  # текст задания, и установленный хук на собранном входе с этим agent_id
-  # запрещает правку существующего арх-теста (файл — во временном каталоге).
-  # Вывод: ok / silent / moved — проверено; skip — проверить было нечем.
-  ansible.builtin.command:
-    argv:
-      - python3
-      - -I
-      - -c
-      - |
-        import glob, json, os, subprocess, sys, tempfile, time
-
-        def fresh(pattern):
-            found = []
-            for path in glob.glob(pattern):
-                try:
-                    mtime = os.path.getmtime(path)
-                except OSError:
-                    continue
-                if time.time() - mtime < 7 * 86400:
-                    found.append((mtime, path))
-            return [path for _, path in sorted(found, reverse=True)]
-
-        def task_text(path):
-            with open(path, encoding="utf-8") as journal:
-                first = json.loads(journal.readline())
-            content = (first.get("message") or {}).get("content")
-            return first.get("type") == "user" and isinstance(content, (str, list))
-
-        def main(hook, home):
-            if not os.path.exists(hook):
-                return "skip: хук ещё не установлен"
-            metas = fresh(home + "/.claude/projects/*/*/subagents/agent-*.meta.json")
-            if not metas:
-                if fresh(home + "/.claude/projects/*/*/subagents/agent-*.jsonl"):
-                    return "moved: журналы субагентов за неделю есть, а agent-<id>.meta.json рядом нет"
-                return "skip: за неделю не было субагентов"
-            for meta in metas:
-                try:
-                    with open(meta, encoding="utf-8") as fh:
-                        if "spawnDepth" in json.load(fh):
-                            break
-                except (OSError, ValueError, TypeError):
-                    continue
-            else:
-                return "moved: ни в одном agent-<id>.meta.json за неделю нет spawnDepth"
-            journal = meta[:-len(".meta.json")] + ".jsonl"
-            try:
-                if not task_text(journal):
-                    return "moved: первая запись журнала субагента — не текст задания: " + journal
-            except (OSError, ValueError, AttributeError):
-                return "moved: журнала задания рядом с meta нет или он не читается: " + journal
-            session = os.path.dirname(os.path.dirname(meta))
-            with tempfile.TemporaryDirectory() as tmp:
-                arch = os.path.join(tmp, "tests", "Arch", "ProbeTest.php")
-                os.makedirs(os.path.dirname(arch))
-                with open(arch, "w", encoding="utf-8") as fh:
-                    fh.write("<?php\n")
-                hook_in = json.dumps({"session_id": os.path.basename(session),
-                                      "transcript_path": session + ".jsonl", "cwd": tmp,
-                                      "agent_id": os.path.basename(meta)[6:-len(".meta.json")],
-                                      "agent_type": "general-purpose",
-                                      "hook_event_name": "PreToolUse", "tool_name": "Edit",
-                                      "tool_input": {"file_path": arch, "old_string": "<?php",
-                                                     "new_string": "<?php // x"}})
-                try:
-                    rc = subprocess.run([hook], input=hook_in, capture_output=True, text=True,
-                                        timeout=30, env={"HOME": tmp, "PATH": "/usr/bin:/bin"}).returncode
-                except subprocess.TimeoutExpired:
-                    return "skip: хук не ответил за 30 с"
-            return ("ok: " if rc == 2 else f"silent: код {rc}, ждали 2: ") + meta
-
-        try:
-            print(main(*sys.argv[1:3]))
-        except Exception as exc:
-            print(f"skip: проверка не удалась: {exc!r}")
-      - "{{ style_install_dir }}/guard-decisions"
-      - "/home/{{ style_user }}"
-  become: true
-  become_user: "{{ style_user }}"
-  register: style_decisions_probe
-  check_mode: false
-  changed_when: false
-  failed_when: false
-
-- name: ВНИМАНИЕ — сторож guard-decisions не узнаёт субагента в журналах
-  ansible.builtin.fail:
     msg: >-
-      ВНИМАНИЕ: установленный сторож guard-decisions не прошёл проверку на свежем журнале субагента.
-      Скорее всего, Claude Code поменял раскладку <сессия>/subagents/agent-<id>.jsonl и .meta.json.
-      Сторож тогда не отличит вложенного субагента и не прочтёт разрешение в задании.
-      Проверка: {{ (style_decisions_probe.stdout | default('', true) ~ ' ' ~ style_decisions_probe.stderr | default('', true)) | trim }}
-      Сверь с docstring скрипта и поправь его в роли style.
+      {{ item.item }}: в роли лежит другая версия хука или пробы — она встанет при выкатке;
+      проверен установленный: {{ item.stdout | default(item.msg | default(''), true) | trim }}
+  loop: "{{ style_hook_probes.results }}"
+  loop_control:
+    label: "{{ item.item }}"
   when:
-    - style_decisions_probe.rc != 0 or style_decisions_probe.stdout is match('(silent|moved):')
-    - not (ansible_check_mode and style_guard_decisions_file.changed)
-
-- name: ВНИМАНИЕ — сторож guard-decisions не узнаёт субагента в журналах (проверка шла по прежней версии)
-  ansible.builtin.debug:
-    msg: "В роли лежит другая версия — она встанет при выкатке; проверен установленный: {{ style_decisions_probe.stdout | default('', true) | trim }}"
-  when:
-    - style_decisions_probe.rc != 0 or style_decisions_probe.stdout is match('(silent|moved):')
-    - ansible_check_mode and style_guard_decisions_file.changed
+    - item.rc | default(1) != 0 or item.stdout | default('') is match('(silent|moved):')
+    - ansible_check_mode and style_hook_new[item.item] | bool
 
 # ═══ Служба ══════════════════════════════════════════════════════════
 
