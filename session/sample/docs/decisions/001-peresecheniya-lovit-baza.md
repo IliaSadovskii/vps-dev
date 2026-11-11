@@ -8,4 +8,6 @@
 
 **Отвергли.** Проверка в `SaveBooking` с блокировкой строки комнаты: работает, но дублирует то, что база делает сама, и не защищает от прямой записи.
 
-**Где.** `database/migrations/*_create_bookings_table.php`, `tests/Feature/Bookings/OverlapTest.php`.
+**Где.** `database/migrations/*_create_bookings_table.php`.
+
+**Проверка.** `tests/Feature/Bookings/OverlapTest.php`: две брони на один слот — вторая падает с ошибкой базы.

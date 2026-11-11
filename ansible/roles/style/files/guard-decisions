@@ -1,0 +1,183 @@
+#!/usr/bin/python3 -IS
+"""Хук PreToolUse Claude Code: исполнитель не правит арх-тесты и решения плана.
+
+    guard-decisions   (вход хука — JSON на stdin; запрет — код 2 и причина в stderr)
+
+Повод: агенты «чинят» тест, который держит решение, вместо кода, и
+переписывают решения в плане под сделанное (план decisions-hold, решение
+владельца 2026-11-11). Субагенту (во входе есть agent_id) запрещено:
+- править что-либо под tests/Arch/;
+- менять раздел «## Решения…» файла плана — .md в каталоге plans/ или с
+  именем plan*.md; остальной план (передача и прочее) он правит как обычно.
+Главная сессия (нет agent_id) правит всё. Правило передачи и ревью — в общем
+промпте (prompt-work.md.j2 роли style).
+
+Исключение — строка в тексте задания субагенту, отдельной строкой:
+    guard-decisions: tests/Arch, Решения
+(одно или оба слова). Её пишет мастер (когда — правило в общем промпте). Хук ищет её в первой
+записи журнала субагента (<сессия>/subagents/agent-<id>.jsonl — это и есть
+текст задания) и верит ей, только если субагента запустила главная сессия:
+в agent-<id>.meta.json spawnDepth 1 и нет parentAgentId. Иначе исполнитель
+выдал бы разрешение сам, вписав строку в задание своему субагенту.
+Раскладка журналов проверена на Claude Code 2.1.316.
+
+Bash: запрет, если команда пишет в tests/Arch (перенаправление, tee, sed -i,
+perl -i, а mv, cp, rm, git checkout/restore… — если путь назван) или пишет в
+файл плана перенаправлением, tee, sed -i — раздел так не различить, план
+правится через Edit. Чтение не задевается.
+Защита от ошибки агента, а не от умысла: файл можно поменять и в обход.
+Любая ошибка разбора — тихий выход 0, как у соседних хуков: хук не должен
+ломать работу. Не прочиталось разрешение — его нет. Примеры решений —
+scripts/test-guard-decisions.sh. Только stdlib, запуск с -I -S.
+"""
+import json
+import os
+import re
+import sys
+
+MARKER = re.compile(r"^\s*guard-decisions:\s*(.+?)\s*$", re.M)
+ARCH = "tests/Arch"
+DECISIONS = "Решения"
+ARCH_PATH = re.compile(r"(^|/)tests/Arch(/|$)")
+SECTION = re.compile(r"^##\s+Решения")
+HEADING = re.compile(r"^#{1,2}\s")
+# Оболочка: куда пишет команда. Перенаправление и tee — в свой файл;
+# sed -i и perl -i — в любой из названных; mv, cp, rm, git checkout… — тоже.
+TOKEN = re.compile(r"[^\s'\"|;&<>()]+")
+REDIRECT = re.compile(r"(?:>>?|\btee(?:\s+-a)?)\s*['\"]?([^\s'\"|;&<>()]+)")
+INPLACE = re.compile(r"\b(sed|perl)\b[^|;&\n]*\s-[a-zA-Z]*i")
+FILE_OPS = re.compile(r"\b(mv|cp|rm|truncate|patch)\s|\bgit\s+(checkout|restore|rm|mv|apply)\b")
+PLANS_DIR = re.compile(r"(^|/)plans/")
+
+
+def deny(why, word):
+    print(f"Заблокировано сторожем (guard-decisions): {why}. Исполнитель это не правит: "
+          "код разошёлся с решением или тестом — чини код или верни вопрос мастеру. "
+          f"Разрешение — только в задании от мастера, строкой «guard-decisions: {word}» "
+          "в задании.", file=sys.stderr)
+    sys.exit(2)
+
+
+def is_plan(path):
+    if not path.lower().endswith(".md"):
+        return False
+    return bool(PLANS_DIR.search(path)) or os.path.basename(path).lower().startswith("plan")
+
+
+def decisions(text):
+    """Строки всех разделов «## Решения…» до следующего заголовка уровня 1–2."""
+    out, inside = [], False
+    for line in text.splitlines():
+        if HEADING.match(line):
+            inside = bool(SECTION.match(line))
+        if inside:
+            out.append(line)
+    return out
+
+
+def after_edits(text, edits):
+    for edit in edits:
+        old, new = edit.get("old_string") or "", edit.get("new_string") or ""
+        if not old:
+            return None
+        if old not in text:
+            return None  # правка всё равно не применится
+        text = text.replace(old, new) if edit.get("replace_all") else text.replace(old, new, 1)
+    return text
+
+
+def allowed(hook):
+    """Слова разрешения из задания субагента, если его запустила главная сессия."""
+    base = os.path.join(os.path.splitext(hook["transcript_path"])[0], "subagents", f"agent-{hook['agent_id']}")
+    try:
+        with open(base + ".meta.json", encoding="utf-8") as fh:
+            meta = json.load(fh)
+        if meta.get("spawnDepth") != 1 or meta.get("parentAgentId"):
+            return set()
+        with open(base + ".jsonl", encoding="utf-8") as fh:
+            first = json.loads(fh.readline())
+    except (OSError, ValueError, KeyError, TypeError):
+        return set()
+    if first.get("type") != "user":
+        return set()
+    content = (first.get("message") or {}).get("content")
+    if isinstance(content, list):
+        content = "\n".join(b.get("text", "") for b in content if isinstance(b, dict))
+    if not isinstance(content, str):
+        return set()
+    words = set()
+    for line in MARKER.findall(content):
+        words.update(w.strip() for w in re.split(r"[,\s]+", line) if w.strip())
+    return words
+
+
+def main():
+    raw = sys.stdin.buffer.read()
+    if b'"agent_id"' not in raw:
+        return
+    hook = json.loads(raw)
+    agent_id = hook.get("agent_id")
+    if not isinstance(agent_id, str) or not agent_id:
+        return
+    if not all(ch.isascii() and (ch.isalnum() or ch in "_-") for ch in agent_id):
+        return
+    tool = hook.get("tool_name")
+    args = hook.get("tool_input") or {}
+    grant = None  # разрешение читается лениво: только когда дошло до запрета
+
+    def granted(word):
+        nonlocal grant
+        if grant is None:
+            grant = allowed(hook) if isinstance(hook.get("transcript_path"), str) else set()
+        return word in grant
+
+    if tool == "Bash":
+        cmd = args.get("command") or ""
+        if not isinstance(cmd, str):
+            return
+        named = TOKEN.findall(cmd)
+        written = REDIRECT.findall(cmd) + (named if INPLACE.search(cmd) else [])
+        touched = named if FILE_OPS.search(cmd) else written
+        if any(ARCH_PATH.search(t) for t in touched) and not granted(ARCH):
+            deny("команда пишет в tests/Arch — там арх-тесты, которые держат решения", ARCH)
+        if any(is_plan(t) for t in written) and not granted(DECISIONS):
+            deny("команда оболочки пишет в файл плана, а раздел «Решения» так не отличить — "
+                 "план правь через Edit, раздел «Решения» не трогай", DECISIONS)
+        return
+
+    path = args.get("file_path") or args.get("notebook_path") or ""
+    if not isinstance(path, str) or not path:
+        return
+    if ARCH_PATH.search(path):
+        if not granted(ARCH):
+            deny(f"{path} — арх-тест, он держит решение", ARCH)
+        return
+    if not is_plan(path):
+        return
+    try:
+        with open(path, encoding="utf-8") as fh:
+            before = fh.read()
+    except FileNotFoundError:
+        before = ""
+    if tool == "Write":
+        after = args.get("content")
+    elif tool == "Edit":
+        after = after_edits(before, [args])
+    elif tool == "MultiEdit":
+        after = after_edits(before, args.get("edits") or [])
+    else:
+        return
+    if not isinstance(after, str):
+        return
+    if decisions(before) != decisions(after) and not granted(DECISIONS):
+        deny(f"правка меняет раздел «Решения» плана {path}", DECISIONS)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception:  # noqa: BLE001 — хук не должен ломать работу агента
+        pass
+    sys.exit(0)

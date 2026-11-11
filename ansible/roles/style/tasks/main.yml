@@ -159,6 +159,16 @@
     group: root
     mode: '0755'
 
+- name: Сторож арх-тестов и решений плана (guard-decisions)
+  # Субагент не правит tests/Arch и раздел «Решения» плана, кроме
+  # разрешения в задании; почему и как — в docstring скрипта.
+  ansible.builtin.copy:
+    src: guard-decisions
+    dest: "{{ style_install_dir }}/guard-decisions"
+    owner: root
+    group: root
+    mode: '0755'
+
 - name: Есть ли settings.json Claude Code
   ansible.builtin.stat:
     path: "/home/{{ style_user }}/.claude/settings.json"
@@ -245,7 +255,7 @@
           timeout: 10
 
 - name: Чужие группы хуков PreToolUse — начать с пустого
-  # Как с PostToolBatch: своя группа — один хук с этим сторожем, в том числе
+  # Как с PostToolBatch: своя группа — один хук с одним из сторожей, в том числе
   # по прежнему пути в ~/.claude/hooks, где он жил до переноса в репозиторий.
   ansible.builtin.set_fact:
     style_claude_pre_others: []
@@ -260,13 +270,14 @@
     not ((item.hooks | default([], true) | length) == 1
          and ((item.hooks | default([], true) | first).command | default('', true) | string)
              in [style_install_dir ~ '/guard-destructive-db',
+                 style_install_dir ~ '/guard-decisions',
                  '/home/' ~ style_user ~ '/.claude/hooks/guard-destructive-db.sh'])
 
-- name: Желаемый сторож в PreToolUse
+- name: Желаемые сторожа в PreToolUse
   ansible.builtin.set_fact:
     style_claude_want: >-
       {{ style_claude_want | combine({'hooks': (style_claude_want.hooks | default({}, true)) | combine({
-           'PreToolUse': style_claude_pre_others + [style_claude_guard_hook]})}) }}
+           'PreToolUse': style_claude_pre_others + [style_claude_guard_hook, style_claude_decisions_hook]})}) }}
   vars:
     style_claude_guard_hook:
       matcher: Bash
@@ -274,8 +285,14 @@
         - type: command
           command: "{{ style_install_dir }}/guard-destructive-db"
           timeout: 10
+    style_claude_decisions_hook:
+      matcher: "Edit|Write|MultiEdit|NotebookEdit|Bash"
+      hooks:
+        - type: command
+          command: "{{ style_install_dir }}/guard-decisions"
+          timeout: 10
 
-- name: Ключи outputStyle, skillOverrides и хуки context-handoff и сторож в settings.json, без хуков aoe
+- name: Ключи outputStyle, skillOverrides и хуки context-handoff и сторожа в settings.json, без хуков aoe
   # Файлом владеет сам Claude Code (тема, уведомления, чужие хуки), поэтому
   # меняем свои ключи, вычищаем хуки aoe и переписываем остальное как было.
   ansible.builtin.copy:
