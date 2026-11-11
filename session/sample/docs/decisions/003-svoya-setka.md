@@ -8,6 +8,4 @@
 
 **Отвергли.** FullCalendar: 300 КБ и своя тема; переопределять её дороже, чем нарисовать сетку.
 
-**Где.** `resources/js/components/rooms/SlotGrid.vue`.
-
-**Проверка.** `tests/Browser/RoomsIndexTest.php`: сетка рисуется без календаря-компонента.
+**Где.** `resources/js/components/rooms/SlotGrid.vue`, `tests/Browser/RoomsIndexTest.php`.
