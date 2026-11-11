@@ -14,7 +14,8 @@
 - менять раздел «## Решения…» файла плана — .md в каталоге plans/ или файл
   plan-*.md (asides/plan-x.md); остальной план (передача и прочее) он правит;
 - писать в ~/.claude/projects/** (журналы и agent-<id>.meta.json): оттуда
-  хук читает разрешение, и выписать его себе нельзя.
+  хук читает разрешение, и выписать его себе нельзя; автопамять
+  <проект>/memory/ — можно.
 Главная сессия (нет agent_id) правит всё. Пути сравниваются после
 os.path.realpath: симлинк на tests/Arch или на план — то же, что сам путь.
 Заголовки внутри блоков кода — не заголовки; блок закрывает только ограда
@@ -695,8 +696,16 @@ def main():
             grant = allowed(hook) if isinstance(hook.get("transcript_path"), str) else set()
         return word in grant
 
+    def in_journals(path):
+        # Журналы и meta — да; автопамять <проект>/memory/ — нет: разрешение оттуда не читается.
+        for r in roots:
+            if path == r or path.startswith(r + "/"):
+                parts = path[len(r) + 1:].split("/")
+                return not (len(parts) > 2 and parts[1] == "memory")
+        return False
+
     def guard_path(path, how):
-        if any(path == r or path.startswith(r + "/") for r in roots):
+        if in_journals(path):
             deny(f"{how}{path} {JOURNALS}")
         if ARCH_PATH.search(path):
             if existing(path):

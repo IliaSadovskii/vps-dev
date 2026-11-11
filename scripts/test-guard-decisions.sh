@@ -359,6 +359,8 @@ deny_bash "echo '{}' > ~/.claude/projects/-proj/s1/subagents/agent-plain.meta.js
 deny_bash "sed -i s/a/b/ \$HOME/.claude/projects/-proj/s1/subagents/agent-plain.jsonl"
 deny_bash "cp /tmp/m.json $session/subagents/agent-plain.meta.json"
 pass_bash "cat ~/.claude/projects/-proj/s1/subagents/agent-plain.jsonl | head -1"
+check 0 plain Write "$(write "$home/.claude/projects/-proj/memory/note.md" "x")"
+check 2 plain Write "$(write "$home/.claude/projects/-proj/memory.jsonl" "x")"
 
 # Разрешение в задании: своя строка без отступа, вне блока кода, до «Передачи»
 check 2 arch Edit "$(edit "$plan" "своим контрактом" "в ядре")"
