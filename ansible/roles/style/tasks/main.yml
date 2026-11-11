@@ -394,16 +394,22 @@
   failed_when: false
 
 - name: ВНИМАНИЕ — хук context-handoff не находит размер контекста в журналах
+  ansible.builtin.fail:
+    msg: >-
+      ВНИМАНИЕ: установленный хук context-handoff не нашёл размер контекста в свежем журнале субагента.
+      Скорее всего, Claude Code поменял формат журнала или раскладку <сессия>/subagents/agent-<id>.jsonl — хук молчит, передачи по порогу не будет.
+      Проверка: {{ (style_context_probe.stdout | default('', true) ~ ' ' ~ style_context_probe.stderr | default('', true)) | trim }}
+      Сверь с docstring скрипта и поправь его в роли style.
+  when:
+    - style_context_probe.rc != 0 or style_context_probe.stdout is match('(silent|moved):')
+    - not (ansible_check_mode and style_context_handoff_file.changed)
+
+- name: ВНИМАНИЕ — хук context-handoff не находит размер контекста в журналах (проверка шла по прежней версии)
   ansible.builtin.debug:
-    msg:
-      - "ВНИМАНИЕ: установленный хук context-handoff не нашёл размер контекста в свежем журнале субагента."
-      - "Скорее всего, Claude Code поменял формат журнала или раскладку <сессия>/subagents/agent-<id>.jsonl — хук молчит, передачи по порогу не будет."
-      - "Проверка: {{ (style_context_probe.stdout | default('', true) ~ ' ' ~ style_context_probe.stderr | default('', true)) | trim }}"
-      - >-
-        {{ 'В роли лежит другая версия хука — она встанет при выкатке; проверен установленный.'
-           if (ansible_check_mode and style_context_handoff_file.changed)
-           else 'Сверь с docstring скрипта и поправь его в роли style.' }}
-  when: style_context_probe.rc != 0 or style_context_probe.stdout is match('(silent|moved):')
+    msg: "В роли лежит другая версия — она встанет при выкатке; проверен установленный: {{ style_context_probe.stdout | default('', true) | trim }}"
+  when:
+    - style_context_probe.rc != 0 or style_context_probe.stdout is match('(silent|moved):')
+    - ansible_check_mode and style_context_handoff_file.changed
 
 - name: Сторож guard-decisions узнаёт субагента и его задание в живом журнале
   # Как у context-handoff: разрешение сторож читает из первой записи журнала
@@ -496,17 +502,23 @@
   failed_when: false
 
 - name: ВНИМАНИЕ — сторож guard-decisions не узнаёт субагента в журналах
+  ansible.builtin.fail:
+    msg: >-
+      ВНИМАНИЕ: установленный сторож guard-decisions не прошёл проверку на свежем журнале субагента.
+      Скорее всего, Claude Code поменял раскладку <сессия>/subagents/agent-<id>.jsonl и .meta.json.
+      Сторож тогда не отличит вложенного субагента и не прочтёт разрешение в задании.
+      Проверка: {{ (style_decisions_probe.stdout | default('', true) ~ ' ' ~ style_decisions_probe.stderr | default('', true)) | trim }}
+      Сверь с docstring скрипта и поправь его в роли style.
+  when:
+    - style_decisions_probe.rc != 0 or style_decisions_probe.stdout is match('(silent|moved):')
+    - not (ansible_check_mode and style_guard_decisions_file.changed)
+
+- name: ВНИМАНИЕ — сторож guard-decisions не узнаёт субагента в журналах (проверка шла по прежней версии)
   ansible.builtin.debug:
-    msg:
-      - "ВНИМАНИЕ: установленный сторож guard-decisions не прошёл проверку на свежем журнале субагента."
-      - "Скорее всего, Claude Code поменял раскладку <сессия>/subagents/agent-<id>.jsonl и .meta.json."
-      - "Сторож тогда не отличит вложенного субагента и не прочтёт разрешение в задании."
-      - "Проверка: {{ (style_decisions_probe.stdout | default('', true) ~ ' ' ~ style_decisions_probe.stderr | default('', true)) | trim }}"
-      - >-
-        {{ 'В роли лежит другая версия сторожа — она встанет при выкатке; проверен установленный.'
-           if (ansible_check_mode and style_guard_decisions_file.changed)
-           else 'Сверь с docstring скрипта и поправь его в роли style.' }}
-  when: style_decisions_probe.rc != 0 or style_decisions_probe.stdout is match('(silent|moved):')
+    msg: "В роли лежит другая версия — она встанет при выкатке; проверен установленный: {{ style_decisions_probe.stdout | default('', true) | trim }}"
+  when:
+    - style_decisions_probe.rc != 0 or style_decisions_probe.stdout is match('(silent|moved):')
+    - ansible_check_mode and style_guard_decisions_file.changed
 
 # ═══ Служба ══════════════════════════════════════════════════════════
 
