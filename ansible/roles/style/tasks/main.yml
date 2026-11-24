@@ -197,12 +197,14 @@
   # нужен — свои правила в теле, остальное в задании; так каждая роль
   # грузит своё (план executor-questions, Р9). Правила ревьюера — один
   # текст part-reviewer.md.j2: его же включает шаблон review.md для
-  # других CLI. Чужие файлы в каталоге не трогаем. omitClaudeMd — с
+  # других CLI. Чужие файлы в каталоге не трогаем; файл с нашим именем перед заменой сохраняется копией (backup). omitClaudeMd — с
   # Claude Code 2.1.271 (code.claude.com/docs/en/sub-agents, прочитано
   # 2026-11-24; на машине 2.1.326).
   ansible.builtin.template:
     src: "agent-{{ item }}.md.j2"
     dest: "/home/{{ style_user }}/.claude/agents/{{ item }}.md"
+    # Правка владельца в файле с тем же именем не пропадает без следа.
+    backup: true
     owner: "{{ style_user }}"
     group: "{{ style_user }}"
     mode: '0644'
