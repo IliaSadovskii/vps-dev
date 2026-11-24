@@ -10,7 +10,7 @@
 - `{{ style_machine_dir }}/ports.md` — порты: как поднять проект или второй
   стенд, ничего ни у кого не заняв (`ports claim`, `ports run`). Копию
   репозитория под стенд — только в `{{ diskguard_stands_dir | default('/projects/.stands') }}`, не в `/tmp`;
-  после задачи — `down -v` и удалить копию
+  после задачи — `ports run … -- docker compose down -v` и удалить копию
 - `{{ style_machine_dir }}/mail.md` — куда проект шлёт письма (наружу они
   не уходят)
 - `{{ style_machine_dir }}/context7.md` — документация чужих библиотек:
