@@ -4,6 +4,8 @@
 .playwright-mcp/
 __pycache__/
 *.pyc
-# Скиллы claude.ai: Claude Code скачивает их сам через ссылку
-# ~/.claude/skills → session/skills, в репозитории им не место.
+# Остатки времён, когда ~/.claude/skills был ссылкой на session/skills:
+# скиллы claude.ai (Claude Code) и его корзина. Теперь скиллы раскладываются
+# копией (roles/session), сюда никто не пишет; в клоне их можно удалить.
 session/skills/synced/
+session/skills/.trash/

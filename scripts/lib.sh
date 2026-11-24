@@ -264,10 +264,14 @@ ansible_pull_run() {
     local opts; opts="$(ssh_opts)"
 
     say "${name}: Ansible на самой машине — присылаю репозиторий"
+    # session/ — источник скиллов агентам (roles/session копирует их из
+    # ../session от playbook). synced/ и .trash/ в нём — остатки времён,
+    # когда каталог был целью ссылки ~/.claude/skills; везти их незачем.
     # shellcheck disable=SC2086  # флаги должны разбиться на слова
     rsync -az --mkpath --delete --exclude .facts --exclude .ansible --exclude known_hosts \
+        --exclude /session/skills/synced --exclude /session/skills/.trash \
         -e "ssh ${opts}" \
-        "${ROOT_DIR}/ansible" "${ROOT_DIR}/servers.yml" "dev@${addr}:${PULL_SRC}/" \
+        "${ROOT_DIR}/ansible" "${ROOT_DIR}/session" "${ROOT_DIR}/servers.yml" "dev@${addr}:${PULL_SRC}/" \
         || die "Не смог прислать репозиторий на ${name}"
 
     local pubkey; pubkey="$(ssh-keygen -y -f "$SSH_KEY")"
@@ -338,6 +342,7 @@ ansible_run() {
         --env-file "$env_file" \
         --user "$(id -u):$(id -g)" \
         -v "${ROOT_DIR}/ansible:/work" \
+        -v "${ROOT_DIR}/session:/session:ro" \
         -v "${ROOT_DIR}/servers.yml:/servers.yml:ro" \
         "${key_mount[@]}" \
         -v /etc/passwd:/etc/passwd:ro \

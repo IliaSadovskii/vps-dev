@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+#
+# Разложить скиллы vps-dev в каталог скиллов CLI (роль session).
+#
+#   session-skills [--dry-run] --owner ПОЛЬЗОВАТЕЛЬ --carry all|paseo ИСТОЧНИК КАТАЛОГ
+#
+# ИСТОЧНИК — копия из выкатываемого репозитория: skills/ (только наши
+# записи, список — session_skills в defaults роли) и sample/. КАТАЛОГ —
+# ~/.claude/skills или ~/.agents/skills.
+#
+# Каталог общий. Туда же пишут Paseo (paseo*, с .paseo-managed-files.json)
+# и Claude Code (synced/, .trash/ — скиллы claude.ai). Наши записи — по
+# списку КАТАЛОГ/.vps-dev-skills; что не в списке, скрипт не меняет и не
+# удаляет.
+#
+# Шаги:
+# 1. КАТАЛОГ — ссылка (прежняя раскладка: ссылка на session/skills в клоне).
+#    Заменяется обычным каталогом; чужие записи из цели ссылки переносятся
+#    копией: --carry all — все, --carry paseo — только скиллы Paseo
+#    (Claude Code в ~/.agents/skills не пишет). Клон не меняется.
+# 2. Наша запись отличается от источника — заменяется целиком. Чужая запись
+#    с нашим именем (её нет в прежнем списке) откладывается в
+#    КАТАЛОГ.before-session/, а не стирается.
+# 3. Запись из прежнего списка, которой нет в источнике, удаляется.
+# 4. sample/ — рядом с КАТАЛОГОМ: скиллы ссылаются на него как ../../sample,
+#    в списке он записан так же — ../sample.
+#
+# Каждое изменение — строка «изменено: …» (с --dry-run — «будет: …»);
+# нет таких строк — ничего не менялось. Строка «внимание: …» — не изменение.
+
+set -euo pipefail
+
+dry=0
+owner=""
+carry=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dry-run) dry=1; shift ;;
+        --owner) owner="${2:-}"; shift 2 ;;
+        --carry) carry="${2:-}"; shift 2 ;;
+        --) shift; break ;;
+        -*) echo "session-skills: неизвестный ключ $1" >&2; exit 2 ;;
+        *) break ;;
+    esac
+done
+if [ $# -ne 2 ] || [ -z "$owner" ] || { [ "$carry" != all ] && [ "$carry" != paseo ]; }; then
+    echo "usage: session-skills [--dry-run] --owner ПОЛЬЗОВАТЕЛЬ --carry all|paseo ИСТОЧНИК КАТАЛОГ" >&2
+    exit 2
+fi
+src="${1%/}"
+target="${2%/}"
+manifest="$target/.vps-dev-skills"
+
+[ -d "$src/skills" ] || { echo "session-skills: нет $src/skills" >&2; exit 1; }
+
+changed() {
+    if [ "$dry" = 1 ]; then echo "будет: $*"; else echo "изменено: $*"; fi
+}
+
+# Имя записи из списка: имя без «/» или ровно «../sample». Остальное —
+# не наше: список лежит в каталоге, который правят и другие.
+valid_entry() {
+    [ "$1" = "../sample" ] && return 0
+    case "$1" in
+        ""|.|..|*/*) return 1 ;;
+    esac
+    return 0
+}
+
+is_paseo() { [ -d "$1" ] && [ -f "$1/.paseo-managed-files.json" ]; }
+
+# Наши записи сейчас — что лежит в источнике.
+ours=()
+while IFS= read -r -d '' p; do
+    ours+=( "$(basename "$p")" )
+done < <(find "$src/skills" -mindepth 1 -maxdepth 1 -print0 | sort -z)
+[ -d "$src/sample" ] && ours+=( "../sample" )
+
+is_ours() {
+    local n
+    for n in "${ours[@]}"; do [ "$n" = "$1" ] && return 0; done
+    return 1
+}
+
+# Отложить чужую запись, не стирая.
+put_aside() {
+    local path="$1" aside
+    aside="$target.before-session/$(basename "$path")"
+    [ -e "$aside" ] || [ -L "$aside" ] && aside="$aside.$(date +%Y%m%d%H%M%S)"
+    changed "$path — не наше, отложено в $aside"
+    [ "$dry" = 1 ] && return 0
+    mkdir -p "$target.before-session"
+    chown "$owner:" "$target.before-session"
+    mv -T "$path" "$aside"
+}
+
+# 1. Ссылка → каталог.
+if [ -L "$target" ]; then
+    old="$(readlink -f "$target" || true)"
+    carried=()
+    if [ -n "$old" ] && [ -d "$old" ]; then
+        while IFS= read -r -d '' p; do
+            n="$(basename "$p")"
+            is_ours "$n" && continue
+            [ "$carry" = paseo ] && ! is_paseo "$p" && continue
+            carried+=( "$n" )
+        done < <(find "$old" -mindepth 1 -maxdepth 1 -print0 | sort -z)
+    fi
+    changed "$target — была ссылка на ${old:-?}, теперь каталог; перенесено копией: ${carried[*]:-ничего}"
+    if [ "$dry" = 1 ]; then
+        changed "наши записи разложатся в $target: ${ours[*]}"
+        exit 0
+    fi
+    staged="$target.vps-dev-new"
+    rm -rf "$staged"
+    mkdir "$staged"
+    for n in "${carried[@]}"; do
+        cp -a "$old/$n" "$staged/$n"
+    done
+    chown -R "$owner:" "$staged"
+    rm "$target"
+    mv -T "$staged" "$target"
+elif [ ! -e "$target" ]; then
+    changed "$target — создан каталог"
+    if [ "$dry" = 1 ]; then
+        changed "наши записи разложатся в $target: ${ours[*]}"
+        exit 0
+    fi
+    mkdir "$target"
+    chown "$owner:" "$target"
+elif [ ! -d "$target" ]; then
+    echo "session-skills: $target — не каталог и не ссылка, не трогаю" >&2
+    exit 1
+fi
+
+# Прежний список.
+previous=()
+if [ -f "$manifest" ]; then
+    while IFS= read -r line; do
+        valid_entry "$line" && previous+=( "$line" )
+    done < "$manifest"
+fi
+was_ours() {
+    local n
+    for n in "${previous[@]}"; do [ "$n" = "$1" ] && return 0; done
+    return 1
+}
+
+# 2. Наши записи.
+for n in "${ours[@]}"; do
+    from="$src/skills/$n"
+    [ "$n" = "../sample" ] && from="$src/sample"
+    to="$target/$n"
+    if [ -e "$to" ] || [ -L "$to" ]; then
+        if was_ours "$n"; then
+            diff -rq --no-dereference "$from" "$to" >/dev/null 2>&1 && continue
+        else
+            put_aside "$to"
+        fi
+    fi
+    changed "$to"
+    [ "$dry" = 1 ] && continue
+    staged="$(dirname "$to")/.vps-dev-new.$(basename "$to")"
+    rm -rf "$staged"
+    cp -a "$from" "$staged"
+    chown -R "$owner:" "$staged"
+    rm -rf "$to"
+    mv -T "$staged" "$to"
+done
+
+# 3. Убранные из репозитория.
+for n in "${previous[@]}"; do
+    is_ours "$n" && continue
+    [ -e "$target/$n" ] || [ -L "$target/$n" ] || continue
+    changed "$target/$n — удалён: в репозитории его больше нет"
+    [ "$dry" = 1 ] && continue
+    rm -rf "${target:?}/$n"
+done
+
+# 4. Список.
+want="$(printf '%s\n' "${ours[@]}")"
+have="$(cat "$manifest" 2>/dev/null || true)"
+if [ "$want" != "$have" ]; then
+    changed "$manifest"
+    if [ "$dry" = 0 ]; then
+        printf '%s\n' "$want" > "$manifest.new"
+        chown "$owner:" "$manifest.new"
+        mv "$manifest.new" "$manifest"
+    fi
+fi
+
+# Paseo стоит, а его скиллов в каталоге нет: сам он их не вернёт —
+# при запуске он чинит только частично поставленное (operations.js,
+# autoUpdateInstalledSkills: «not-installed» не трогает).
+if command -v paseo >/dev/null 2>&1 && ! compgen -G "$target/*/.paseo-managed-files.json" >/dev/null; then
+    echo "внимание: в $target нет скиллов Paseo — поставь их в настройках Paseo (скиллы агентам)"
+fi
+exit 0
