@@ -56,12 +56,14 @@
     owner: "{{ style_user }}"
     group: "{{ style_user }}"
     mode: '0644'
-  loop: [review]
+  loop: [review, master]
 
 - name: Как работать — общие правила для любого агента и проекта
   # Стиль работы владельца, не зависит ни от стека, ни от проекта
-  # (аудит промптов 2026-10-19; раздел «Ревью» и передача по порогу
-  # контекста — 2026-10-27). Первым в файле:
+  # (аудит промптов 2026-10-19; передача по порогу контекста —
+  # 2026-10-27). Здесь только то, что нужно каждой роли: процедуры
+  # мастера — в work/master.md, ревьюеру и исследователю — свои типы
+  # субагентов (2026-11-24, план executor-questions, Р9). Первым в файле:
   # правила, читаемые раньше, держатся лучше. Свои маркеры — как у блока
   # «Эта машина» ниже.
   ansible.builtin.blockinfile:
@@ -180,6 +182,31 @@
     owner: root
     group: root
     mode: '0755'
+
+- name: Каталог своих типов субагентов Claude Code  # noqa: risky-file-permissions
+  # После «Каталоги CLI»: ~/.claude уже есть и принадлежит style_user.
+  # Права не задаём: каталог мог завести сам Claude Code или человек.
+  ansible.builtin.file:
+    path: "/home/{{ style_user }}/.claude/agents"
+    state: directory
+    owner: "{{ style_user }}"
+    group: "{{ style_user }}"
+
+- name: Свои типы субагентов — ревьюер и исследователь
+  # omitClaudeMd: общий промпт (правила мастера и исполнителя) им не
+  # нужен — свои правила в теле, остальное в задании; так каждая роль
+  # грузит своё (план executor-questions, Р9). Правила ревьюера — один
+  # текст part-reviewer.md.j2: его же включает шаблон review.md для
+  # других CLI. Чужие файлы в каталоге не трогаем. omitClaudeMd — с
+  # Claude Code 2.1.271 (code.claude.com/docs/en/sub-agents, прочитано
+  # 2026-11-24; на машине 2.1.326).
+  ansible.builtin.template:
+    src: "agent-{{ item }}.md.j2"
+    dest: "/home/{{ style_user }}/.claude/agents/{{ item }}.md"
+    owner: "{{ style_user }}"
+    group: "{{ style_user }}"
+    mode: '0644'
+  loop: [reviewer, researcher]
 
 - name: Есть ли settings.json Claude Code
   ansible.builtin.stat:
