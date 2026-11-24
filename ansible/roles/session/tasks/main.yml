@@ -1,118 +1,72 @@
-# Скиллы одной сессии: копия session/skills и session/sample из
-# выкатываемого репозитория в каталоги скиллов CLI. См. defaults/main.yml —
-# зачем так; что именно меняется — files/session-skills.
+# Скиллы одной сессии: два каталога CLI — ссылки на session/skills
+# в клоне репозитория. См. defaults/main.yml — зачем так.
 
-- name: Каталоги CLI, где лежат каталоги скиллов  # noqa: risky-file-permissions
-  # Права не задаём: у существующих каталогов они свои.
-  ansible.builtin.file:
-    path: "/home/{{ session_user }}/{{ item.path | dirname }}"
-    state: directory
-    owner: "{{ session_user }}"
-    group: "{{ session_user }}"
-  loop: "{{ session_links }}"
-  loop_control:
-    label: "{{ item.name }}"
+- name: Есть ли session/skills в клоне
+  ansible.builtin.stat:
+    path: "{{ session_src }}/skills"
+  register: session_skills_dir
 
-# Копия сначала — во временный каталог, каждый раз заново: так в ней ровно
-# то, что в репозитории, и файл, удалённый из скилла, не доживает. Едет
-# одним архивом: поштучная copy — по секунде на файл. Что изменилось на
-# самом деле, говорит session-skills. Эти шаги идут и при make check:
-# скрипт тогда только перечисляет, что изменит (--dry-run).
-- name: Временный каталог для копии
-  ansible.builtin.tempfile:
-    state: directory
-    suffix: .session-skills
-  register: session_stage
-  check_mode: false
-  changed_when: false
+- name: Клона нет — скиллы не подключаю
+  ansible.builtin.debug:
+    msg: "{{ session_src }}/skills не найден — ссылки на скиллы не ставлю. Клон репозитория появляется после роли pull."
+  when: not session_skills_dir.stat.exists
 
-- name: Временный файл архива на управляющей машине
-  ansible.builtin.tempfile:
-    state: file
-    suffix: .session-skills.tgz
-  register: session_archive
-  delegate_to: localhost
-  become: false
-  check_mode: false
-  changed_when: false
-
-- name: Раскладка скиллов
+- name: Ссылки на скиллы
+  when: session_skills_dir.stat.exists
   block:
 
-    - name: Наши скиллы и образец — в архив
-      # tar, а не community.general.archive: нужны пути от session/
-      # (skills/…, sample/), а модуль сам решает, какой префикс срезать.
-      ansible.builtin.command:
-        argv: >-
-          {{ ['tar', '-czf', session_archive.path, '-C', session_repo]
-             + (session_skills | map('regex_replace', '^', 'skills/') | list)
-             + ['sample'] }}
-      delegate_to: localhost
-      become: false
-      check_mode: false
-      changed_when: false
-
-    - name: Архив — во временный каталог
-      ansible.builtin.copy:
-        src: "{{ session_archive.path }}"
-        dest: "{{ session_stage.path }}/session.tgz"
-        mode: "0600"
-      check_mode: false
-      changed_when: false
-
-    - name: Распаковать архив
-      ansible.builtin.command:  # noqa: command-instead-of-module
-        # unarchive сравнивает с назначением и тянет zipinfo; здесь каталог
-        # пустой, сравнивать не с чем.
-        argv: [tar, -xzf, "{{ session_stage.path }}/session.tgz", -C, "{{ session_stage.path }}"]
-      check_mode: false
-      changed_when: false
-
-    - name: Скрипт раскладки — во временный каталог
-      ansible.builtin.copy:
-        src: session-skills
-        dest: "{{ session_stage.path }}/session-skills"
-        mode: "0755"
-      check_mode: false
-      changed_when: false
-
-    - name: Разложить в каталоги скиллов CLI
-      ansible.builtin.command:
-        argv: >-
-          {{ [session_stage.path ~ '/session-skills']
-             + (['--dry-run'] if ansible_check_mode else [])
-             + ['--owner', session_user, '--carry', item.carry,
-                session_stage.path, '/home/' ~ session_user ~ '/' ~ item.path] }}
+    - name: Каталоги CLI, куда ведут ссылки  # noqa: risky-file-permissions
+      # Права не задаём: у существующих каталогов они свои.
+      ansible.builtin.file:
+        path: "/home/{{ session_user }}/{{ item.path | dirname }}"
+        state: directory
+        owner: "{{ session_user }}"
+        group: "{{ session_user }}"
       loop: "{{ session_links }}"
       loop_control:
         label: "{{ item.name }}"
-      register: session_result
-      check_mode: false
-      changed_when: >-
-        session_result.stdout_lines
-        | select('match', '^(изменено|будет): ') | list | length > 0
 
-  always:
+    - name: Что сейчас на месте ссылок
+      ansible.builtin.stat:
+        path: "/home/{{ session_user }}/{{ item.path }}"
+      loop: "{{ session_links }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: session_present
 
-    - name: Убрать временный каталог
+    - name: Обычный каталог на месте ссылки — отложить рядом
+      # Человек мог завести свои скиллы до этой роли. Не стираем.
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "-n"
+          - "/home/{{ session_user }}/{{ item.item.path }}"
+          - "/home/{{ session_user }}/{{ item.item.path }}.before-session"
+      loop: "{{ session_present.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when:
+        - item.stat.exists
+        - not item.stat.islnk
+      changed_when: true
+
+    - name: Ссылки на session/skills
       ansible.builtin.file:
-        path: "{{ session_stage.path }}"
-        state: absent
-      check_mode: false
-      changed_when: false
+        src: "{{ session_src }}/skills"
+        dest: "/home/{{ session_user }}/{{ item.path }}"
+        state: link
+        owner: "{{ session_user }}"
+        group: "{{ session_user }}"
+        force: true
+      loop: "{{ session_links }}"
+      loop_control:
+        label: "{{ item.name }}"
 
-    - name: Убрать архив на управляющей машине
-      ansible.builtin.file:
-        path: "{{ session_archive.path }}"
-        state: absent
-      delegate_to: localhost
-      become: false
-      check_mode: false
-      changed_when: false
-
-- name: Что сделано со скиллами
-  ansible.builtin.debug:
-    msg: "{{ item.item.name }}: {{ item.stdout_lines if item.stdout_lines else 'без изменений' }}"
-  loop: "{{ session_result.results }}"
-  loop_control:
-    label: "{{ item.item.name }}"
+    - name: Куда смотреть
+      ansible.builtin.debug:
+        msg: >-
+          Скиллы одной сессии: {{ session_src }}/skills, ссылки
+          {{ session_links | map(attribute='path') | join(', ') }}.
+          Образец файлов проекта: {{ session_src }}/sample.
+          {% set moved = session_present.results | selectattr('stat.exists') | rejectattr('stat.islnk') | map(attribute='item.path') | list %}
+          {% if moved %}Прежние каталоги отложены с суффиксом .before-session: {{ moved | join(', ') }}.{% endif %}

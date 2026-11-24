@@ -11,7 +11,7 @@ session/PLAN.md            этот файл
 session/sample/            образец пяти файлов на выдуманном приложении «Переговорки»
 session/skills/            два скилла; PRINCIPLES.md — что спрашивать, выводить, как делить
                            (из редакций 1–2); asking.md — правила опроса
-ansible/roles/session/     копия session/skills в ~/.claude/skills и ~/.agents/skills при выкатке
+ansible/roles/session/     ссылки ~/.claude/skills и ~/.agents/skills → session/skills
 ```
 
 ---
@@ -113,11 +113,10 @@ PR слоя несёт слой и первый настоящий экран, �
 |---|---|---|---|
 | `AGENTS.md` при старте | через `CLAUDE.md` = `@AGENTS.md` | сам | сам |
 | правило области | строка оглавления | то же | то же |
-| скиллы | копия `session/skills` в `~/.claude/skills` | копия в `~/.agents/skills` | то же |
+| скиллы | `~/.claude/skills` → `session/skills` | `~/.agents/skills` → `session/skills` | то же |
 | сдача | CI | CI | CI |
 
-Клиентского в схеме — два каталога скиллов, их раскладывает роль `session`
-(копией с 2026-11-24, раньше — ссылками на клон). Что не
+Клиентского в схеме — две ссылки, их ставит роль `session`. Что не
 уравнивается — следует ли модель написанному; это предмет шага 4.
 
 ## 7. Два скилла

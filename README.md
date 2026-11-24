@@ -458,15 +458,9 @@ docker-сетям. Новое подключение: host — имя конте
 Два скилла приводят документацию любого проекта к одной форме и держат её
 в ней, чтобы агент в любой сессии знал, что за продукт, какие правила и
 что из каркаса уже построено, а владелец не проговаривал это каждый раз.
-Лежат в [`session/skills/`](session/skills/); выкатка роли `session` копирует
-их в `~/.claude/skills` и `~/.agents/skills` (образец `session/sample/` — рядом,
-в `~/.claude/sample`, `~/.agents/sample`), и они видны всем CLI как свои:
-Claude Code — `/docs-base`, `/docs-skeleton`; Codex и OpenCode — назови скилл
-по имени в сообщении, он подхватится из `~/.agents/skills`. Копия, а не ссылка
-на клон: агенты видят выкатанное, а не открытую ветку, — правка скилла
-действует после `make apply`. В тех же каталогах свои скиллы держат Paseo
-(`paseo*`) и Claude Code (`synced/`); выкатка меняет только свои записи,
-список — `session_skills` в `ansible/roles/session/defaults/main.yml`.
+Лежат в [`session/skills/`](session/skills/), после выкатки роли `session`
+видны всем CLI как свои: Claude Code — `/docs-base`, `/docs-skeleton`; Codex и OpenCode —
+назови скилл по имени в сообщении, он подхватится из `~/.agents/skills`.
 
 Порядок один для любого проекта, есть там документация или нет:
 

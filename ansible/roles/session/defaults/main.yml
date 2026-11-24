@@ -2,49 +2,27 @@
 # Скиллы разработки в одной сессии: два скилла и образец файлов
 # проекта (session/ в этом репозитории, план — session/PLAN.md).
 #
-# Зачем копией. У каждого CLI агента есть каталог пользовательских
-# скиллов: Claude Code — ~/.claude/skills, Codex, Gemini и OpenCode —
-# ~/.agents/skills. Раньше оба были ссылками на session/skills в клоне,
-# и агенты всех проектов видели скиллы открытой ветки с незакоммиченным.
-# Теперь выкатка копирует скиллы из выкатываемого репозитория в оба
-# каталога (решение владельца 2026-11-24): правка скилла действует после
-# make apply. Скилл ссылается на образец как ../../sample, поэтому
-# sample/ ложится рядом с каталогом скиллов: ~/.claude/sample,
-# ~/.agents/sample.
-#
-# Каталоги общие: туда же пишут Paseo (paseo*, он сам ставит и обновляет
-# их в оба каталога) и Claude Code (synced/, .trash/ — скиллы claude.ai).
-# Наши записи выкатка помнит списком в <каталог>/.vps-dev-skills и меняет
-# только их — files/session-skills.
+# Зачем. У каждого CLI агента есть каталог пользовательских скиллов:
+# Claude Code — ~/.claude/skills, Codex, Gemini и OpenCode — ~/.agents/skills.
+# Два каталога с одним содержимым разъедутся, поэтому оба — ссылки на
+# каталог в клоне репозитория на машине. Скилл ссылается на образец как
+# ../sample/, значит рядом со skills/ должен лежать sample/ — так и есть
+# в session/.
 
-# Откуда копировать: session/ выкатываемого репозитория, на управляющей
-# машине (при выкатке на саму машину — её присланная копия).
-session_repo: "{{ (playbook_dir ~ '/../session') | realpath }}"
+# Клон репозитория на машине — через ~/projects, bind-монтирование
+# /projects (roles/base, projects-dir.yml).
+session_src: /home/{{ base_deploy_user }}/projects/vps-dev/session
 
-# Наши записи в session/skills. Скилл, добавленный в репозиторий, —
-# сюда же; расхождение со списком git ловит scripts/test-session-skills.sh.
-# Удалённый отсюда выкатка убирает с машины.
-session_skills:
-  - FORMAT.md
-  - PRINCIPLES.md
-  - asking.md
-  - docs-base
-  - docs-skeleton
-  - security-audit
-
-# Кому принадлежат файлы: пользователь, под которым запускаются агенты.
+# Кому принадлежат ссылки: пользователь, под которым запускаются агенты.
 session_user: "{{ base_deploy_user }}"
 
 # Каталоги скиллов CLI, пути от домашнего каталога. Подтверждено
 # документацией 2026-09-10: Claude читает только .claude/skills;
 # Codex, Gemini, OpenCode — .agents/skills (OpenCode ещё и .claude/skills).
-# carry — что взять из прежней ссылки при переезде в каталог: all — все
-# чужие записи, paseo — только скиллы Paseo (Claude Code в .agents не
-# пишет, его synced/ там был бы замёрзшей копией).
+# Обычный каталог на этом месте роль не стирает — откладывает рядом
+# с суффиксом .before-session.
 session_links:
   - name: Claude Code
     path: .claude/skills
-    carry: all
   - name: Codex, Gemini, OpenCode
     path: .agents/skills
-    carry: paseo

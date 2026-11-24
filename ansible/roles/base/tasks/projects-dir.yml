@@ -3,7 +3,8 @@
 # {{ base_projects_dir }} — настоящий каталог: на него смотрят Paseo,
 # docs/MACHINE.md, терминал, VS Code. Тот же каталог ещё и ПОДМОНТИРОВАН
 # (bind) как ~/projects: это одни и те же файлы, просто второй путь внутри
-# дома.
+# дома. Через него роль session ведёт ссылки ~/.claude/skills и
+# ~/.agents/skills в клон репозитория (session_src).
 #
 # 2775: setgid-бит (2) — новые файлы и подкаталоги наследуют группу каталога,
 # а не группу того, кто их создал (root через Ansible, сам {{ base_deploy_user }}
@@ -76,8 +77,7 @@
     mode: '2775'
 
 - name: Тот же каталог виден и как {{ base_projects_home_dir }}
-  # Через ~/projects шли ссылки на скиллы; roles/session теперь их
-  # копирует, а путь оставлен — привычный второй путь к тем же файлам.
+  # Путь ~/projects — у session_src и ссылок на скиллы (roles/session).
   # bind, а не ссылка: так на машине уже стоит, и менять способ незачем.
   ansible.posix.mount:
     path: "{{ base_projects_home_dir }}"
