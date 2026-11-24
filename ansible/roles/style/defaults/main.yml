@@ -51,7 +51,7 @@ style_targets:
 # ~/.claude/settings.json, остальное содержимое файла не трогается.
 style_claude_output_style: Concise
 
-# Скиллы claude.ai, которые на сервере разработки не нужны: инструменты
+# Скиллы, которые на сервере разработки не нужны. claude.ai: инструменты
 # настольного приложения (браузер, экран), утренняя сводка, документы
 # Office и Google. В claude.ai они остаются — выключены только здесь
 # (`skillOverrides`, «off» убирает и описание из контекста агента).
@@ -66,6 +66,9 @@ style_claude_skill_overrides:
   "anthropic-skills:docs": "off"
   "anthropic-skills:docx": "off"
   "anthropic-skills:pptx": "off"
+  # Скиллы Paseo: handoff спорит с «Передачей» общих правил, plugin не нужен.
+  "paseo-handoff": "off"
+  "paseo-plugin": "off"
 
 # Куда ставится сам скрипт службы.
 style_install_dir: /usr/local/bin
