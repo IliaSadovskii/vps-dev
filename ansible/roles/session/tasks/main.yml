@@ -67,6 +67,6 @@
         msg: >-
           Скиллы одной сессии: {{ session_src }}/skills, ссылки
           {{ session_links | map(attribute='path') | join(', ') }}.
-          Образец пяти файлов: {{ session_src }}/sample.
+          Образец файлов проекта: {{ session_src }}/sample.
           {% set moved = session_present.results | selectattr('stat.exists') | rejectattr('stat.islnk') | map(attribute='item.path') | list %}
           {% if moved %}Прежние каталоги отложены с суффиксом .before-session: {{ moved | join(', ') }}.{% endif %}
