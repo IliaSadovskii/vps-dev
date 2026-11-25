@@ -5,5 +5,6 @@
 __pycache__/
 *.pyc
 # Скиллы claude.ai: Claude Code скачивает их сам через ссылку
-# ~/.claude/skills → session/skills, в репозитории им не место.
+# ~/.claude/skills → session/skills, в репозитории им не место; .trash — его корзина.
 session/skills/synced/
+session/skills/.trash/
